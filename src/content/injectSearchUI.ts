@@ -93,9 +93,20 @@ function extractVideoId(): string | null {
 
 /**
  * Prefer mounting under the video title (native feel).
- * ALWAYS fall back to a fixed floating panel so the green control never disappears.
+ * On narrow screens, float so it doesn't crush the player layout.
+ * ALWAYS fall back to a fixed panel so the control never disappears.
  */
 function placeRoot(wrap: HTMLElement): void {
+  const narrow =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(max-width: 700px)").matches;
+
+  if (narrow) {
+    wrap.setAttribute("data-vsa-float", "1");
+    document.documentElement.appendChild(wrap);
+    return;
+  }
+
   const preferred =
     document.querySelector<HTMLElement>("#below ytd-watch-metadata") ??
     document.querySelector<HTMLElement>("ytd-watch-metadata") ??
@@ -109,7 +120,6 @@ function placeRoot(wrap: HTMLElement): void {
     return;
   }
 
-  // Guaranteed visible: fixed top-right
   wrap.setAttribute("data-vsa-float", "1");
   document.documentElement.appendChild(wrap);
 }
