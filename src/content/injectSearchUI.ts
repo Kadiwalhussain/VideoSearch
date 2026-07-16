@@ -27,7 +27,10 @@ async function ensureTopics(
   index: VideoIndex,
   panel: SearchPanel,
   force = false
-): Promise<{ topics: VideoTopic[]; source: "llm" | "local" }> {
+): Promise<{
+  topics: VideoTopic[];
+  source: "chapters" | "llm" | "local" | "mixed";
+}> {
   if (!force && sessionTopics.has(videoId)) {
     return sessionTopics.get(videoId)!;
   }
