@@ -8,8 +8,8 @@ import type { TranscriptChunk } from "../types/schema";
 import { isGoodUserLabel, type VideoTopic } from "./extractTopics";
 import { estimateDurationSec, topicBudget } from "./topicBudget";
 
-/** v4: human chapter-style topics; reject brand spam */
-const TOPIC_CACHE_PREFIX = "vsa_topics_v4_";
+/** v5: English-only chapter topics; reject brand spam */
+const TOPIC_CACHE_PREFIX = "vsa_topics_v5_";
 
 export async function loadCachedTopics(
   videoId: string,
@@ -114,6 +114,7 @@ Schema:
 ]
 
 Rules:
+- ALL titles and queries MUST be in English only (never other languages).
 - Write like YouTube chapters / table of contents — human, specific, useful.
 - Spread across the FULL timeline (start, middle, end).
 - startTime = seconds (number), e.g. 5:30 → 330. Use times near the excerpts.

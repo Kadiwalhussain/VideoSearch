@@ -235,6 +235,7 @@ async function askModel(
   const system = overview
     ? `You summarize and explain ONE video for a viewer using ONLY the transcript excerpts provided (spread across the episode).
 Rules:
+- Respond ONLY in clear, natural English (never any other language).
 - Give a clear overview of what happens / what is taught / discussed, in order when possible.
 - For behavior questions, describe only what is evidenced in the excerpts (speech, tone, actions described).
 - Be concrete (3–8 sentences).
@@ -244,6 +245,7 @@ Rules:
 - If excerpts are thin, still give the best overview you can and note uncertainty briefly.`
     : `You answer questions about ONE video using ONLY the transcript excerpts provided.
 Rules:
+- Respond ONLY in clear, natural English (never any other language).
 - Base every claim on the excerpts. If unclear, say so briefly.
 - Be concise (2–6 sentences) unless more detail is needed.
 - ALWAYS mention timestamps using ONLY (m:ss) or (h:mm:ss) format, e.g. (3:42), taken from the excerpt times, so the viewer can jump there.
