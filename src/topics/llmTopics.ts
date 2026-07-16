@@ -8,8 +8,8 @@ import type { TranscriptChunk } from "../types/schema";
 import { isGoodUserLabel, type VideoTopic } from "./extractTopics";
 import { estimateDurationSec, topicBudget } from "./topicBudget";
 
-/** v5: English-only chapter topics; reject brand spam */
-const TOPIC_CACHE_PREFIX = "vsa_topics_v5_";
+/** v6: native caption language for transcript; English AI topic titles */
+const TOPIC_CACHE_PREFIX = "vsa_topics_v6_";
 
 export async function loadCachedTopics(
   videoId: string,
@@ -124,12 +124,15 @@ Rules:
 
   const user = `Video id: ${videoId}
 Approx duration: ${Math.round(durationSec / 60)} minutes
-Required: ${minTopics}–${maxTopics} clear chapter titles
+Required: ${minTopics}–${maxTopics} clear chapter titles in English
+
+The transcript excerpts below may be in Hindi or another language.
+Still write every "title" and "query" in English only (translate the ideas).
 
 Excerpts (seconds | mm:ss | text):
 ${excerpts.map((e) => `${e.t.toFixed(1)} | ${formatTs(e.t)} | ${e.text}`).join("\n")}
 
-Return JSON array of human-readable chapter topics now.`;
+Return JSON array of English chapter topics now.`;
 
   const url = `${settings.baseUrl}/chat/completions`;
 

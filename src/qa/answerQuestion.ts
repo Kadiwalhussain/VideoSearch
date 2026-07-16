@@ -255,18 +255,23 @@ Rules:
   const user = overview
     ? `Viewer question: ${question}
 
-These excerpts are sampled across the full video timeline (start → end):
+These excerpts may be in Hindi or another language — that is OK.
+Still write your full answer in English only.
+
+Excerpts (start → end of video):
 ${context}
 
-Write a helpful answer about what happens / is covered in this episode/video.
+Write a helpful English answer about what happens / is covered.
 Include several (m:ss) timestamps inline so the viewer can click them to jump.`
     : `Question: ${question}
 
-Transcript excerpts:
+Transcript excerpts may be in Hindi or another language — that is OK.
+Still answer in English only.
+
+Excerpts:
 ${context}
 
-Answer for a viewer of this video.
-Include (m:ss) timestamps inline next to important points so they can jump in the player.`;
+Answer in English. Include (m:ss) timestamps next to important points.`;
 
   const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
