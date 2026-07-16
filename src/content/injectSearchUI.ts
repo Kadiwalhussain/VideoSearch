@@ -18,7 +18,7 @@ const sessionIndex = new Map<string, VideoIndex>();
 const sessionSegments = new Map<string, RawCaptionSegment[]>();
 const sessionTopics = new Map<
   string,
-  { topics: VideoTopic[]; source: "llm" | "local" }
+  { topics: VideoTopic[]; source: "chapters" | "llm" | "local" | "mixed" }
 >();
 const indexingJobs = new Map<string, Promise<VideoIndex | null>>();
 
@@ -59,7 +59,7 @@ function readyStatus(
   index: VideoIndex,
   fromCache: boolean,
   topics: VideoTopic[],
-  topicSource: "llm" | "local"
+  topicSource: "chapters" | "llm" | "local" | "mixed"
 ) {
   return {
     kind: "ready" as const,

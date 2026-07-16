@@ -8,8 +8,8 @@ import type { TranscriptChunk } from "../types/schema";
 import { isGoodUserLabel, type VideoTopic } from "./extractTopics";
 import { estimateDurationSec, topicBudget } from "./topicBudget";
 
-/** v6: native caption language for transcript; English AI topic titles */
-const TOPIC_CACHE_PREFIX = "vsa_topics_v6_";
+/** v7: chapters-first topics; English AI titles when filling */
+const TOPIC_CACHE_PREFIX = "vsa_topics_v7_";
 
 export async function loadCachedTopics(
   videoId: string,

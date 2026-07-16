@@ -23,7 +23,7 @@ export type PanelStatus =
       chunkCount: number;
       fromCache: boolean;
       topics: VideoTopic[];
-      topicSource?: "llm" | "local";
+      topicSource?: "chapters" | "llm" | "local" | "mixed";
     }
   | { kind: "no-captions"; message: string }
   | { kind: "error"; message: string }
@@ -317,14 +317,18 @@ export class SearchPanel {
         this.lockInput(false);
         {
           const src =
-            status.topicSource === "llm"
-              ? "AI"
-              : status.topicSource === "local"
-                ? "local"
-                : "";
+            status.topicSource === "chapters"
+              ? "chapters"
+              : status.topicSource === "mixed"
+                ? "chapters+"
+                : status.topicSource === "llm"
+                  ? "AI"
+                  : status.topicSource === "local"
+                    ? "local"
+                    : "";
           this.statusEl.textContent = status.fromCache
-            ? `Ready · ${status.topics.length} topics${src ? ` (${src})` : ""}`
-            : `Ready · ${status.chunkCount} chunks`;
+            ? `Ready · ${status.topics.length} topics${src ? ` · ${src}` : ""}`
+            : `Ready · ${status.chunkCount} chunks · ${status.topics.length} topics`;
         }
         this.badgeEl.textContent = String(
           status.topics.length || status.chunkCount
@@ -638,7 +642,7 @@ export class SearchPanel {
 
   private renderTopics(
     topics: VideoTopic[],
-    source?: "llm" | "local"
+    source?: "chapters" | "llm" | "local" | "mixed"
   ): void {
     this.topicsEl.innerHTML = "";
     if (!topics.length) {
@@ -648,10 +652,15 @@ export class SearchPanel {
 
     const heading = document.createElement("div");
     heading.className = "vsa-topics-label";
-    heading.textContent =
-      source === "llm"
-        ? "Main topics — click to jump & search"
-        : "Topics — click to jump & search";
+    if (source === "chapters") {
+      heading.textContent = `Video chapters (${topics.length}) — click to jump`;
+    } else if (source === "mixed") {
+      heading.textContent = `Chapters + topics (${topics.length}) — click to jump`;
+    } else if (source === "llm") {
+      heading.textContent = `Main topics (${topics.length}) — click to jump & search`;
+    } else {
+      heading.textContent = `Topics (${topics.length}) — click to jump & search`;
+    }
     this.topicsEl.appendChild(heading);
 
     const row = document.createElement("div");
