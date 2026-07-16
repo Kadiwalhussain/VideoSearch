@@ -74,6 +74,8 @@ interface YtCaptionTrack {
   baseUrl: string;
   languageCode?: string;
   kind?: string;
+  /** e.g. "a.en" for English ASR */
+  vssId?: string;
   name?:
     | string
     | { simpleText?: string; runs?: Array<{ text?: string }> };
