@@ -92,36 +92,16 @@ function extractVideoId(): string | null {
 }
 
 /**
- * Prefer mounting under the video title (native feel).
- * On narrow screens, float so it doesn't crush the player layout.
- * ALWAYS fall back to a fixed panel so the control never disappears.
+ * Compact floating widget overlaid on the watch page (near the player).
+ * Never injects into the document flow under the title — keeps the page clean.
  */
 function placeRoot(wrap: HTMLElement): void {
-  const narrow =
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(max-width: 700px)").matches;
-
-  if (narrow) {
-    wrap.setAttribute("data-vsa-float", "1");
-    document.documentElement.appendChild(wrap);
-    return;
-  }
-
-  const preferred =
-    document.querySelector<HTMLElement>("#below ytd-watch-metadata") ??
-    document.querySelector<HTMLElement>("ytd-watch-metadata") ??
-    document.querySelector<HTMLElement>("#above-the-fold") ??
-    document.querySelector<HTMLElement>("#primary-inner") ??
-    document.querySelector<HTMLElement>("#below");
-
-  if (preferred && preferred.isConnected) {
-    wrap.removeAttribute("data-vsa-float");
-    preferred.insertBefore(wrap, preferred.firstChild);
-    return;
-  }
-
   wrap.setAttribute("data-vsa-float", "1");
-  document.documentElement.appendChild(wrap);
+  wrap.setAttribute("data-vsa-compact", "1");
+  // Fixed overlay lives on <html> so it stays above YT chrome
+  if (wrap.parentElement !== document.documentElement) {
+    document.documentElement.appendChild(wrap);
+  }
 }
 
 function seekTo(seconds: number): void {
@@ -431,6 +411,9 @@ function mountPanel(videoId: string): void {
 
     wrap.appendChild(panel.root);
     placeRoot(wrap);
+    // Compact pill by default (after host exists so classes stick on #videosearch-ai-root)
+    wrap.classList.add("is-collapsed");
+    panel.root.classList.add("is-collapsed");
 
     panel.setStatus({ kind: "indexing", message: "Preparing…" });
     console.info(LOG, "Panel MOUNTED for", videoId);

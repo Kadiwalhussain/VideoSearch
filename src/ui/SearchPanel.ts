@@ -242,6 +242,9 @@ export class SearchPanel {
       e.stopPropagation();
       this.fireSearchNow();
     });
+
+    // Start as a small floating pill so it doesn't dominate the video
+    this.setExpanded(false);
   }
 
   setTranscript(segments: RawCaptionSegment[]): void {
@@ -435,6 +438,13 @@ export class SearchPanel {
     this.panelBody.hidden = !open;
     this.root.querySelector(".vsa-tabs")?.toggleAttribute("hidden", !open);
     this.root.classList.toggle("is-collapsed", !open);
+    this.root.classList.toggle("is-expanded", open);
+    // Parent float wrapper (same node if root is inside #videosearch-ai-root)
+    const host = this.root.closest("#videosearch-ai-root") as HTMLElement | null;
+    if (host) {
+      host.classList.toggle("is-collapsed", !open);
+      host.classList.toggle("is-expanded", open);
+    }
     const btn = this.root.querySelector(
       ".vsa-collapse-btn"
     ) as HTMLButtonElement | null;
@@ -468,7 +478,7 @@ export class SearchPanel {
     if (tab === "settings") {
       void loadLlmSettings().then((s) => this.fillSettingsForm(s));
     }
-    if (tab === "search" && !this.inputLocked) {
+    if (tab === "search" && !this.inputLocked && this.expanded) {
       this.inputEl.focus({ preventScroll: true });
     }
   }
@@ -748,71 +758,79 @@ export function injectSearchPanelStyles(): void {
 
 /** Broadcast-studio UI: ink glass + signal mint. Fully scoped under #videosearch-ai-*. */
 const VSA_STYLES = `
+  /* ═══════════════════════════════════════════════════════════
+     Compact floating widget — lives on the video, not the page
+     ═══════════════════════════════════════════════════════════ */
   #videosearch-ai-root {
     --vsa-font: "Sora", system-ui, -apple-system, "Segoe UI", sans-serif;
-    --vsa-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
-    --vsa-bg: #0c0f12;
-    --vsa-bg-elevated: #12171c;
-    --vsa-surface: #181e25;
-    --vsa-surface-2: #1f2730;
-    --vsa-border: rgba(255,255,255,0.08);
+    --vsa-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    --vsa-bg: #0a0d10;
+    --vsa-bg-elevated: #10151b;
+    --vsa-surface: #161c24;
+    --vsa-surface-2: #1c2430;
+    --vsa-border: rgba(255,255,255,0.09);
     --vsa-border-strong: rgba(255,255,255,0.14);
-    --vsa-text: #f3f6f8;
+    --vsa-text: #f2f5f7;
     --vsa-muted: #8b98a5;
     --vsa-faint: #5c6b78;
     --vsa-accent: #2dd4a8;
     --vsa-accent-2: #22b8cf;
     --vsa-accent-dim: rgba(45, 212, 168, 0.14);
-    --vsa-accent-glow: rgba(45, 212, 168, 0.35);
-    --vsa-danger: #f87171;
-    --vsa-warn: #fbbf24;
-    --vsa-radius: 16px;
-    --vsa-radius-sm: 10px;
-    --vsa-shadow: 0 12px 40px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.04) inset;
+    --vsa-accent-glow: rgba(45, 212, 168, 0.4);
+    --vsa-radius: 18px;
     --vsa-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --vsa-shadow:
+      0 0 0 1px rgba(255,255,255,0.06) inset,
+      0 18px 50px rgba(0,0,0,0.55),
+      0 0 40px rgba(45,212,168,0.08);
 
-    position: relative;
+    position: fixed !important;
     z-index: 2147483646;
-    margin: 10px 0 14px;
-    width: 100%;
-    max-width: min(720px, 100%);
     box-sizing: border-box;
     font-family: var(--vsa-font);
     -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
+    /* Dock over the player — bottom-right of viewport */
+    right: max(16px, env(safe-area-inset-right, 0px));
+    bottom: max(88px, env(safe-area-inset-bottom, 0px));
+    left: auto;
+    top: auto;
+    width: min(340px, calc(100vw - 24px));
+    max-height: min(72vh, 560px);
+    margin: 0;
   }
 
   #videosearch-ai-root *,
   #videosearch-ai-root *::before,
-  #videosearch-ai-root *::after {
-    box-sizing: border-box;
-  }
+  #videosearch-ai-root *::after { box-sizing: border-box; }
 
-  /* Floating fallback (narrow / SPA mount miss) */
-  #videosearch-ai-root[data-vsa-float="1"] {
-    position: fixed !important;
-    top: max(12px, env(safe-area-inset-top, 0px));
-    right: max(12px, env(safe-area-inset-right, 0px));
-    left: auto;
-    bottom: auto;
-    width: min(400px, calc(100vw - 24px));
-    max-width: calc(100vw - 24px);
-    margin: 0;
-    z-index: 2147483647;
+  /* Collapsed = tiny glowing pill only */
+  #videosearch-ai-root.is-collapsed,
+  #videosearch-ai-panel.is-collapsed {
+    width: auto;
+    max-width: none;
+  }
+  #videosearch-ai-root.is-collapsed {
+    bottom: max(96px, env(safe-area-inset-bottom, 0px));
   }
 
   #videosearch-ai-panel {
     position: relative;
     border-radius: var(--vsa-radius);
     background:
-      radial-gradient(120% 80% at 0% 0%, rgba(45,212,168,0.12), transparent 55%),
-      radial-gradient(90% 60% at 100% 0%, rgba(34,184,207,0.10), transparent 50%),
-      linear-gradient(180deg, var(--vsa-bg-elevated), var(--vsa-bg));
+      radial-gradient(120% 90% at 0% 0%, rgba(45,212,168,0.18), transparent 50%),
+      radial-gradient(100% 80% at 100% 0%, rgba(34,184,207,0.12), transparent 45%),
+      linear-gradient(165deg, var(--vsa-bg-elevated) 0%, var(--vsa-bg) 100%);
     color: var(--vsa-text);
     border: 1px solid var(--vsa-border);
     box-shadow: var(--vsa-shadow);
     overflow: hidden;
     isolation: isolate;
+    backdrop-filter: blur(20px) saturate(1.2);
+    -webkit-backdrop-filter: blur(20px) saturate(1.2);
+    max-height: inherit;
+    display: flex;
+    flex-direction: column;
+    transition: box-shadow 0.25s var(--vsa-ease), transform 0.25s var(--vsa-ease);
   }
 
   #videosearch-ai-panel::before {
@@ -820,41 +838,83 @@ const VSA_STYLES = `
     pointer-events: none;
     position: absolute;
     inset: 0;
-    opacity: 0.35;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+    opacity: 0.28;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
     mix-blend-mode: soft-light;
     z-index: 0;
   }
-
   #videosearch-ai-panel > * { position: relative; z-index: 1; }
 
-  /* —— Header —— */
+  /* ── Collapsed pill mode ── */
+  #videosearch-ai-root.is-collapsed #videosearch-ai-panel {
+    border-radius: 999px;
+    background: linear-gradient(135deg, #3ee6b5 0%, #2dd4a8 40%, #1eb8c9 100%);
+    border: none;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.2) inset,
+      0 10px 32px rgba(45,212,168,0.45),
+      0 0 48px rgba(45,212,168,0.2);
+    animation: vsa-pulse-glow 2.8s ease-in-out infinite;
+  }
+  #videosearch-ai-root.is-collapsed #videosearch-ai-panel::before { display: none; }
+  #videosearch-ai-root.is-collapsed .vsa-tabs,
+  #videosearch-ai-root.is-collapsed .vsa-panel-body,
+  #videosearch-ai-root.is-collapsed .vsa-status,
+  #videosearch-ai-root.is-collapsed .vsa-collapse-btn { display: none !important; }
+
+  #videosearch-ai-root.is-collapsed .vsa-bar {
+    padding: 0;
+    gap: 0;
+  }
+  #videosearch-ai-root.is-collapsed .vsa-brand {
+    background: transparent;
+    box-shadow: none;
+    color: #04120e;
+    padding: 10px 16px 10px 10px;
+    gap: 8px;
+  }
+  #videosearch-ai-root.is-collapsed .vsa-logo {
+    width: 28px;
+    height: 28px;
+    background: rgba(0,0,0,0.15);
+  }
+  #videosearch-ai-root.is-collapsed .vsa-title { font-size: 13px; color: #04120e; }
+  #videosearch-ai-root.is-collapsed .vsa-title-sub { color: #04120e; opacity: 0.7; }
+  #videosearch-ai-root.is-collapsed .vsa-badge {
+    background: rgba(0,0,0,0.18);
+    color: #04120e;
+  }
+
+  @keyframes vsa-pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 1px rgba(255,255,255,0.2) inset, 0 10px 32px rgba(45,212,168,0.4), 0 0 40px rgba(45,212,168,0.15); }
+    50% { box-shadow: 0 0 0 1px rgba(255,255,255,0.25) inset, 0 12px 40px rgba(45,212,168,0.55), 0 0 56px rgba(45,212,168,0.28); }
+  }
+
+  /* ── Header (expanded) ── */
   #videosearch-ai-panel .vsa-bar {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 12px 8px;
+    gap: 8px;
+    padding: 8px 8px 6px;
+    flex-shrink: 0;
   }
-
   #videosearch-ai-panel .vsa-brand {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 7px;
     border: none;
     cursor: pointer;
-    padding: 5px 12px 5px 5px;
+    padding: 4px 10px 4px 4px;
     border-radius: 999px;
     color: #04120e;
     background: linear-gradient(135deg, #3ee6b5 0%, #2dd4a8 45%, #1fb8c9 100%);
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset, 0 6px 18px var(--vsa-accent-glow);
-    transition: transform 0.18s var(--vsa-ease), filter 0.18s var(--vsa-ease);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset, 0 4px 14px var(--vsa-accent-glow);
+    transition: transform 0.18s var(--vsa-ease), filter 0.18s;
   }
-  #videosearch-ai-panel .vsa-brand:hover { filter: brightness(1.05); transform: translateY(-1px); }
-  #videosearch-ai-panel .vsa-brand:active { transform: translateY(0); }
+  #videosearch-ai-panel .vsa-brand:hover { filter: brightness(1.06); transform: translateY(-1px); }
   #videosearch-ai-panel .vsa-brand[data-state="loading"] {
     background: linear-gradient(135deg, #60a5fa, #a78bfa);
     color: #0b1020;
-    box-shadow: 0 6px 18px rgba(96,165,250,0.35);
   }
   #videosearch-ai-panel .vsa-brand[data-state="error"] {
     background: linear-gradient(135deg, #f87171, #ef4444);
@@ -864,49 +924,47 @@ const VSA_STYLES = `
     background: linear-gradient(135deg, #fbbf24, #f59e0b);
     color: #1a1000;
   }
-
   #videosearch-ai-panel .vsa-logo {
     display: inline-flex;
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     align-items: center;
     justify-content: center;
-    background: rgba(0,0,0,0.18);
+    background: rgba(0,0,0,0.16);
     flex-shrink: 0;
   }
   #videosearch-ai-panel .vsa-title-wrap {
     display: inline-flex;
     align-items: baseline;
-    gap: 4px;
+    gap: 3px;
     line-height: 1;
   }
   #videosearch-ai-panel .vsa-title {
-    font-size: 12.5px;
+    font-size: 11.5px;
     font-weight: 700;
     letter-spacing: -0.02em;
   }
   #videosearch-ai-panel .vsa-title-sub {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
-    letter-spacing: 0.08em;
-    opacity: 0.75;
+    letter-spacing: 0.1em;
+    opacity: 0.72;
   }
   #videosearch-ai-panel .vsa-badge {
-    min-width: 20px;
-    padding: 2px 6px;
+    min-width: 18px;
+    padding: 1px 5px;
     border-radius: 999px;
-    background: rgba(0,0,0,0.2);
+    background: rgba(0,0,0,0.18);
     font-family: var(--vsa-mono);
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 600;
     text-align: center;
   }
-
   #videosearch-ai-panel .vsa-status {
     flex: 1;
     min-width: 0;
-    font-size: 11.5px;
+    font-size: 10.5px;
     font-weight: 500;
     color: var(--vsa-muted);
     text-align: right;
@@ -914,50 +972,48 @@ const VSA_STYLES = `
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
   #videosearch-ai-panel .vsa-collapse-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     flex-shrink: 0;
     border: 1px solid var(--vsa-border);
-    border-radius: 10px;
+    border-radius: 9px;
     background: var(--vsa-surface);
     color: var(--vsa-muted);
     cursor: pointer;
-    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    transition: color 0.15s, background 0.15s;
   }
   #videosearch-ai-panel .vsa-collapse-btn:hover {
     color: var(--vsa-text);
-    border-color: var(--vsa-border-strong);
     background: var(--vsa-surface-2);
   }
 
-  /* —— Tabs —— */
+  /* ── Tabs (compact) ── */
   #videosearch-ai-panel .vsa-tabs {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr 40px;
-    gap: 4px;
-    padding: 0 10px 10px;
+    grid-template-columns: 1fr 1fr 1fr 34px;
+    gap: 3px;
+    padding: 0 8px 8px;
+    flex-shrink: 0;
   }
   #videosearch-ai-panel .vsa-tab {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
-    min-height: 36px;
+    gap: 4px;
+    min-height: 30px;
     border: 1px solid transparent;
-    border-radius: 11px;
+    border-radius: 9px;
     background: transparent;
     color: var(--vsa-muted);
     font-family: var(--vsa-font);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
-    letter-spacing: -0.01em;
     cursor: pointer;
-    transition: background 0.15s var(--vsa-ease), color 0.15s, border-color 0.15s, transform 0.15s;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
   #videosearch-ai-panel .vsa-tab:hover {
     color: var(--vsa-text);
@@ -967,164 +1023,152 @@ const VSA_STYLES = `
     color: var(--vsa-accent);
     background: var(--vsa-accent-dim);
     border-color: rgba(45,212,168,0.28);
-    box-shadow: 0 0 0 1px rgba(45,212,168,0.08) inset;
   }
-  #videosearch-ai-panel .vsa-tab-ico {
-    font-size: 12px;
-    opacity: 0.9;
-  }
+  #videosearch-ai-panel .vsa-tab-ico { font-size: 11px; opacity: 0.9; }
   #videosearch-ai-panel .vsa-tab-count:not(:empty) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
     border-radius: 999px;
     background: rgba(45,212,168,0.22);
     color: var(--vsa-accent);
     font-family: var(--vsa-mono);
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
   }
   #videosearch-ai-panel .vsa-tab-gear { padding: 0; }
 
-  /* —— Body / panes —— */
+  /* ── Body ── */
   #videosearch-ai-panel .vsa-panel-body {
-    padding: 0 12px 12px;
-    animation: vsa-fade-in 0.28s var(--vsa-ease);
+    padding: 0 10px 10px;
+    overflow: auto;
+    flex: 1;
+    min-height: 0;
+    animation: vsa-fade-in 0.22s var(--vsa-ease);
   }
   #videosearch-ai-panel .vsa-pane { min-height: 0; }
 
   #videosearch-ai-panel .vsa-mode-row {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 6px;
-    margin-bottom: 10px;
-    padding: 3px;
-    border-radius: 12px;
-    background: rgba(0,0,0,0.28);
+    gap: 0;
+    margin-bottom: 8px;
+    padding: 2px;
+    border-radius: 10px;
+    background: rgba(0,0,0,0.35);
     border: 1px solid var(--vsa-border);
   }
   #videosearch-ai-panel .vsa-mode {
     border: none;
-    border-radius: 9px;
+    border-radius: 8px;
     background: transparent;
     color: var(--vsa-muted);
     font-family: var(--vsa-font);
-    font-size: 11.5px;
+    font-size: 10.5px;
     font-weight: 600;
-    padding: 7px 6px;
+    padding: 6px 4px;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    transition: background 0.15s, color 0.15s;
   }
   #videosearch-ai-panel .vsa-mode.is-active {
     color: var(--vsa-text);
     background: var(--vsa-surface-2);
-    box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 4px 12px rgba(0,0,0,0.25);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
   }
 
   #videosearch-ai-panel .vsa-input-row {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: stretch;
   }
   #videosearch-ai-panel .vsa-input {
     flex: 1;
     min-width: 0;
-    padding: 11px 14px;
-    border-radius: 14px;
+    padding: 9px 12px;
+    border-radius: 12px;
     border: 1px solid var(--vsa-border-strong);
-    background: rgba(0,0,0,0.35);
+    background: rgba(0,0,0,0.4);
     color: var(--vsa-text);
     font-family: var(--vsa-font);
-    font-size: 13.5px;
+    font-size: 12.5px;
     font-weight: 500;
     outline: none;
-    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+    transition: border-color 0.15s, box-shadow 0.15s;
     pointer-events: auto !important;
     -webkit-user-select: text !important;
     user-select: text !important;
   }
-  #videosearch-ai-panel .vsa-input::placeholder { color: var(--vsa-faint); font-weight: 400; }
+  #videosearch-ai-panel .vsa-input::placeholder { color: var(--vsa-faint); }
   #videosearch-ai-panel .vsa-input:focus {
     border-color: rgba(45,212,168,0.55);
     box-shadow: 0 0 0 3px var(--vsa-accent-dim);
-    background: rgba(0,0,0,0.45);
   }
-  #videosearch-ai-panel .vsa-input.vsa-input-locked {
-    opacity: 0.6;
-    cursor: wait;
-  }
+  #videosearch-ai-panel .vsa-input.vsa-input-locked { opacity: 0.55; cursor: wait; }
   #videosearch-ai-panel .vsa-search-btn {
     flex-shrink: 0;
-    min-width: 52px;
-    padding: 0 16px;
+    min-width: 48px;
+    padding: 0 12px;
     border: none;
-    border-radius: 14px;
+    border-radius: 12px;
     cursor: pointer;
     color: #04120e;
     font-family: var(--vsa-font);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
-    letter-spacing: -0.01em;
     background: linear-gradient(135deg, #3ee6b5, #2dd4a8 50%, #22c3c0);
-    box-shadow: 0 6px 16px var(--vsa-accent-glow);
-    transition: transform 0.15s var(--vsa-ease), filter 0.15s;
+    box-shadow: 0 4px 14px var(--vsa-accent-glow);
+    transition: transform 0.15s, filter 0.15s;
   }
   #videosearch-ai-panel .vsa-search-btn:hover { filter: brightness(1.06); transform: translateY(-1px); }
-  #videosearch-ai-panel .vsa-search-btn:active { transform: translateY(0); }
 
   /* Answer */
   #videosearch-ai-panel .vsa-answer {
-    margin-top: 12px;
-    padding: 12px 14px;
-    border-radius: 14px;
+    margin-top: 8px;
+    padding: 10px 11px;
+    border-radius: 12px;
     border: 1px solid rgba(45,212,168,0.28);
-    background:
-      linear-gradient(135deg, rgba(45,212,168,0.12), rgba(34,184,207,0.06));
-    box-shadow: 0 0 0 1px rgba(45,212,168,0.05) inset;
+    background: linear-gradient(135deg, rgba(45,212,168,0.12), rgba(34,184,207,0.06));
   }
   #videosearch-ai-panel .vsa-answer-head {
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--vsa-accent);
-    margin-bottom: 8px;
+    margin-bottom: 6px;
   }
   #videosearch-ai-panel .vsa-answer-body {
-    font-size: 13.5px;
-    line-height: 1.55;
-    font-weight: 450;
+    font-size: 12.5px;
+    line-height: 1.5;
     color: var(--vsa-text);
     white-space: pre-wrap;
   }
   #videosearch-ai-panel .vsa-time-link {
     display: inline-flex;
-    align-items: center;
-    margin: 0 2px;
-    padding: 2px 8px;
+    margin: 0 1px;
+    padding: 1px 7px;
     border-radius: 999px;
     border: 1px solid rgba(45,212,168,0.45);
     background: rgba(45,212,168,0.16);
     color: var(--vsa-accent);
     font-family: var(--vsa-mono);
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 600;
     cursor: pointer;
     vertical-align: baseline;
-    transition: background 0.15s, transform 0.12s;
     pointer-events: auto !important;
   }
   #videosearch-ai-panel .vsa-time-link:hover {
-    background: rgba(45,212,168,0.28);
+    background: rgba(45,212,168,0.3);
     color: #6eecc4;
   }
 
   #videosearch-ai-panel .vsa-results-label {
-    margin: 12px 0 6px;
-    font-size: 10px;
+    margin: 8px 0 5px;
+    font-size: 9.5px;
     font-weight: 700;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -1133,8 +1177,8 @@ const VSA_STYLES = `
   #videosearch-ai-panel .vsa-results {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    max-height: min(240px, 38vh);
+    gap: 5px;
+    max-height: min(180px, 28vh);
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
@@ -1142,18 +1186,18 @@ const VSA_STYLES = `
   }
   #videosearch-ai-panel .vsa-result {
     display: grid;
-    grid-template-columns: 52px minmax(0, 1fr) 40px;
-    gap: 10px;
+    grid-template-columns: 44px minmax(0, 1fr) 32px;
+    gap: 8px;
     align-items: start;
     width: 100%;
-    padding: 10px 12px;
+    padding: 8px 9px;
     text-align: left;
     border: 1px solid var(--vsa-border);
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--vsa-surface);
     color: var(--vsa-text);
     cursor: pointer;
-    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+    transition: border-color 0.15s, background 0.15s, transform 0.12s;
   }
   #videosearch-ai-panel .vsa-result:hover,
   #videosearch-ai-panel .vsa-result-active {
@@ -1163,13 +1207,13 @@ const VSA_STYLES = `
   }
   #videosearch-ai-panel .vsa-time {
     font-family: var(--vsa-mono);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--vsa-accent);
   }
   #videosearch-ai-panel .vsa-snippet {
-    font-size: 12.5px;
-    line-height: 1.4;
+    font-size: 11.5px;
+    line-height: 1.35;
     color: var(--vsa-muted);
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -1178,7 +1222,7 @@ const VSA_STYLES = `
   }
   #videosearch-ai-panel .vsa-score {
     font-family: var(--vsa-mono);
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 600;
     color: var(--vsa-faint);
     text-align: right;
@@ -1189,14 +1233,14 @@ const VSA_STYLES = `
     font-size: 11px;
     font-weight: 600;
     color: var(--vsa-muted);
-    margin-bottom: 10px;
-    line-height: 1.4;
+    margin-bottom: 8px;
+    line-height: 1.35;
   }
   #videosearch-ai-panel .vsa-topics-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    max-height: min(420px, 55vh);
+    gap: 6px;
+    max-height: min(260px, 40vh);
     overflow-y: auto;
     overscroll-behavior: contain;
     pointer-events: auto !important;
@@ -1204,15 +1248,15 @@ const VSA_STYLES = `
   #videosearch-ai-panel .vsa-topic-chip {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     max-width: 100%;
-    padding: 8px 12px;
+    padding: 6px 10px;
     border-radius: 999px;
     border: 1px solid var(--vsa-border);
     background: var(--vsa-surface);
     color: var(--vsa-text);
     font-family: var(--vsa-font);
-    font-size: 12.5px;
+    font-size: 11.5px;
     font-weight: 550;
     cursor: pointer !important;
     pointer-events: auto !important;
@@ -1227,11 +1271,11 @@ const VSA_STYLES = `
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: min(220px, 58vw);
+    max-width: 180px;
   }
   #videosearch-ai-panel .vsa-topic-time {
     font-family: var(--vsa-mono);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     color: var(--vsa-accent);
     flex-shrink: 0;
@@ -1240,8 +1284,8 @@ const VSA_STYLES = `
   /* Transcript */
   #videosearch-ai-panel .vsa-transcript {
     border: 1px solid var(--vsa-border);
-    border-radius: 14px;
-    background: rgba(0,0,0,0.28);
+    border-radius: 12px;
+    background: rgba(0,0,0,0.3);
     overflow: hidden;
     margin: 0;
   }
@@ -1249,13 +1293,13 @@ const VSA_STYLES = `
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    padding: 9px 12px;
+    gap: 6px;
+    padding: 7px 10px;
     border-bottom: 1px solid var(--vsa-border);
     background: var(--vsa-accent-dim);
   }
   #videosearch-ai-panel .vsa-transcript-title {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1264,47 +1308,45 @@ const VSA_STYLES = `
   #videosearch-ai-panel .vsa-transcript-follow {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    font-size: 11px;
+    gap: 5px;
+    font-size: 10px;
     font-weight: 500;
     color: var(--vsa-muted);
     cursor: pointer;
     white-space: nowrap;
   }
   #videosearch-ai-panel .vsa-transcript-meta {
-    padding: 5px 12px;
+    padding: 4px 10px;
     font-family: var(--vsa-mono);
-    font-size: 10.5px;
+    font-size: 10px;
     color: var(--vsa-faint);
     border-bottom: 1px solid var(--vsa-border);
   }
   #videosearch-ai-panel .vsa-transcript-list {
-    max-height: min(280px, 42vh);
+    max-height: min(220px, 34vh);
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 4px 0;
+    padding: 2px 0;
     scrollbar-width: thin;
   }
   #videosearch-ai-panel .vsa-transcript-line {
     display: grid;
-    grid-template-columns: 48px minmax(0, 1fr);
-    gap: 10px;
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 8px;
     width: 100%;
     text-align: left;
     border: none;
     background: transparent;
     color: var(--vsa-text);
-    padding: 8px 12px;
+    padding: 6px 10px;
     cursor: pointer;
     font-family: var(--vsa-font);
-    font-size: 12.5px;
-    line-height: 1.4;
+    font-size: 11.5px;
+    line-height: 1.35;
     border-left: 3px solid transparent;
     transition: background 0.12s, border-color 0.12s;
   }
-  #videosearch-ai-panel .vsa-transcript-line:hover {
-    background: rgba(255,255,255,0.03);
-  }
+  #videosearch-ai-panel .vsa-transcript-line:hover { background: rgba(255,255,255,0.03); }
   #videosearch-ai-panel .vsa-transcript-line.is-active {
     background: var(--vsa-accent-dim);
     border-left-color: var(--vsa-accent);
@@ -1315,7 +1357,7 @@ const VSA_STYLES = `
   }
   #videosearch-ai-panel .vsa-transcript-time {
     font-family: var(--vsa-mono);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     color: var(--vsa-accent);
   }
@@ -1323,36 +1365,36 @@ const VSA_STYLES = `
 
   /* Settings */
   #videosearch-ai-panel .vsa-settings-title {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: -0.02em;
-    margin-bottom: 4px;
+    margin-bottom: 3px;
   }
   #videosearch-ai-panel .vsa-settings-help {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--vsa-muted);
-    margin: 0 0 12px;
-    line-height: 1.45;
+    margin: 0 0 10px;
+    line-height: 1.4;
   }
   #videosearch-ai-panel .vsa-field {
     display: flex;
     flex-direction: column;
-    gap: 5px;
-    margin-bottom: 10px;
-    font-size: 11px;
+    gap: 4px;
+    margin-bottom: 8px;
+    font-size: 10px;
     font-weight: 600;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--vsa-faint);
   }
   #videosearch-ai-panel .vsa-field input {
-    padding: 10px 12px;
-    border-radius: 11px;
+    padding: 8px 10px;
+    border-radius: 10px;
     border: 1px solid var(--vsa-border-strong);
-    background: rgba(0,0,0,0.3);
+    background: rgba(0,0,0,0.35);
     color: var(--vsa-text);
     font-family: var(--vsa-mono);
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 500;
     text-transform: none;
     letter-spacing: 0;
@@ -1365,44 +1407,40 @@ const VSA_STYLES = `
   #videosearch-ai-panel .vsa-settings-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
-    margin-top: 4px;
   }
   #videosearch-ai-panel .vsa-save-settings {
     border: none;
-    border-radius: 12px;
-    padding: 9px 14px;
+    border-radius: 10px;
+    padding: 8px 12px;
     cursor: pointer;
     color: #04120e;
     font-family: var(--vsa-font);
     font-weight: 700;
-    font-size: 12.5px;
+    font-size: 12px;
     background: linear-gradient(135deg, #3ee6b5, #2dd4a8);
-    box-shadow: 0 6px 16px var(--vsa-accent-glow);
+    box-shadow: 0 4px 14px var(--vsa-accent-glow);
   }
-  #videosearch-ai-panel .vsa-settings-msg {
-    font-size: 11.5px;
-    color: var(--vsa-muted);
-  }
+  #videosearch-ai-panel .vsa-settings-msg { font-size: 11px; color: var(--vsa-muted); }
 
   #videosearch-ai-panel .vsa-hint,
   #videosearch-ai-panel .vsa-empty {
-    font-size: 12.5px;
+    font-size: 11.5px;
     color: var(--vsa-muted);
-    padding: 10px 4px;
-    line-height: 1.5;
+    padding: 8px 2px;
+    line-height: 1.45;
   }
   #videosearch-ai-panel .vsa-empty strong {
     color: var(--vsa-text);
     display: block;
-    margin-bottom: 4px;
-    font-size: 13px;
+    margin-bottom: 3px;
+    font-size: 12px;
   }
   #videosearch-ai-panel .vsa-retry {
-    margin-top: 10px;
-    padding: 8px 14px;
-    border-radius: 12px;
+    margin-top: 8px;
+    padding: 7px 12px;
+    border-radius: 10px;
     border: none;
     background: linear-gradient(135deg, #3ee6b5, #2dd4a8);
     color: #04120e;
@@ -1412,115 +1450,77 @@ const VSA_STYLES = `
   }
   #videosearch-ai-panel .vsa-spinner {
     display: inline-block;
-    width: 10px;
-    height: 10px;
+    width: 9px;
+    height: 9px;
     border: 2px solid var(--vsa-faint);
     border-top-color: var(--vsa-accent);
     border-radius: 50%;
     animation: vsa-spin 0.65s linear infinite;
     vertical-align: -1px;
-    margin-right: 5px;
+    margin-right: 4px;
   }
 
   @keyframes vsa-spin { to { transform: rotate(360deg); } }
   @keyframes vsa-fade-in {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
   }
 
-  /* YouTube light theme */
+  /* Light YouTube theme */
   html:not([dark]) #videosearch-ai-panel {
-    --vsa-bg: #f6f8fa;
+    --vsa-bg: #f4f7fa;
     --vsa-bg-elevated: #ffffff;
-    --vsa-surface: #eef2f5;
-    --vsa-surface-2: #e4eaf0;
-    --vsa-border: rgba(15, 23, 32, 0.08);
-    --vsa-border-strong: rgba(15, 23, 32, 0.12);
+    --vsa-surface: #eef2f6;
+    --vsa-surface-2: #e3e9ef;
+    --vsa-border: rgba(15,23,32,0.08);
+    --vsa-border-strong: rgba(15,23,32,0.12);
     --vsa-text: #0f1720;
     --vsa-muted: #5b6b7a;
     --vsa-faint: #7d8c9a;
     --vsa-accent: #0d9f7a;
-    --vsa-accent-2: #0e8fa3;
-    --vsa-accent-dim: rgba(13, 159, 122, 0.1);
-    --vsa-accent-glow: rgba(13, 159, 122, 0.2);
-    --vsa-shadow: 0 12px 36px rgba(15, 23, 32, 0.1), 0 0 0 1px rgba(15,23,32,0.04);
+    --vsa-accent-dim: rgba(13,159,122,0.1);
+    --vsa-accent-glow: rgba(13,159,122,0.22);
+    --vsa-shadow: 0 16px 40px rgba(15,23,32,0.14), 0 0 0 1px rgba(15,23,32,0.05);
   }
   html:not([dark]) #videosearch-ai-panel .vsa-mode-row,
   html:not([dark]) #videosearch-ai-panel .vsa-input,
   html:not([dark]) #videosearch-ai-panel .vsa-field input,
   html:not([dark]) #videosearch-ai-panel .vsa-transcript {
-    background: rgba(255,255,255,0.85);
+    background: rgba(255,255,255,0.9);
   }
-  html:not([dark]) #videosearch-ai-panel .vsa-snippet,
-  html:not([dark]) #videosearch-ai-panel .vsa-transcript-text {
-    color: var(--vsa-muted);
+  html:not([dark]) #videosearch-ai-root.is-collapsed #videosearch-ai-panel {
+    box-shadow: 0 10px 32px rgba(13,159,122,0.35);
   }
 
-  /* —— Responsive —— */
-  @media (max-width: 720px) {
+  /* Mobile */
+  @media (max-width: 560px) {
     #videosearch-ai-root {
-      max-width: 100%;
-      margin: 8px 0 12px;
-    }
-    #videosearch-ai-panel .vsa-bar { padding: 8px 10px 6px; gap: 8px; }
-    #videosearch-ai-panel .vsa-status { font-size: 10.5px; max-width: 42%; }
-    #videosearch-ai-panel .vsa-title { font-size: 12px; }
-    #videosearch-ai-panel .vsa-tabs { padding: 0 8px 8px; gap: 3px; }
-    #videosearch-ai-panel .vsa-tab { min-height: 34px; font-size: 11.5px; }
-    #videosearch-ai-panel .vsa-panel-body { padding: 0 10px 10px; }
-    #videosearch-ai-panel .vsa-result {
-      grid-template-columns: 46px minmax(0, 1fr) 34px;
-      padding: 9px 10px;
-    }
-    #videosearch-ai-panel .vsa-results,
-    #videosearch-ai-panel .vsa-transcript-list {
-      max-height: min(220px, 36vh);
-    }
-  }
-
-  @media (max-width: 480px) {
-    #videosearch-ai-root[data-vsa-float="1"] {
-      top: auto;
-      bottom: max(12px, env(safe-area-inset-bottom, 0px));
-      right: 8px;
-      left: 8px;
+      right: 10px;
+      left: 10px;
       width: auto;
       max-width: none;
+      bottom: max(72px, env(safe-area-inset-bottom, 0px));
     }
-    #videosearch-ai-panel .vsa-title-sub { display: none; }
-    #videosearch-ai-panel .vsa-tab-txt { display: none; }
-    #videosearch-ai-panel .vsa-tabs {
-      grid-template-columns: 1fr 1fr 1fr 40px;
+    #videosearch-ai-root.is-collapsed {
+      left: auto;
+      right: 12px;
+      width: auto;
     }
-    #videosearch-ai-panel .vsa-tab-ico { font-size: 14px; }
-    #videosearch-ai-panel .vsa-tab-count:not(:empty) {
-      position: absolute;
-      top: 2px;
-      right: 4px;
-      min-width: 14px;
-      height: 14px;
-      font-size: 9px;
-    }
-    #videosearch-ai-panel .vsa-tab { position: relative; }
-    #videosearch-ai-panel .vsa-input {
-      font-size: 16px; /* prevent iOS zoom */
-      padding: 12px 14px;
-    }
-    #videosearch-ai-panel .vsa-search-btn { min-width: 56px; }
     #videosearch-ai-panel .vsa-status { display: none; }
-    #videosearch-ai-panel .vsa-mode { font-size: 11px; padding: 8px 4px; }
-    #videosearch-ai-panel .vsa-topic-label { max-width: 46vw; }
-  }
-
-  @media (min-width: 1100px) {
-    #videosearch-ai-root { max-width: 760px; }
-    #videosearch-ai-panel .vsa-results { max-height: min(280px, 32vh); }
-    #videosearch-ai-panel .vsa-transcript-list { max-height: min(320px, 36vh); }
+    #videosearch-ai-panel .vsa-tab-txt { display: none; }
+    #videosearch-ai-panel .vsa-tab { position: relative; min-height: 32px; }
+    #videosearch-ai-panel .vsa-tab-ico { font-size: 13px; }
+    #videosearch-ai-panel .vsa-input { font-size: 16px; } /* no iOS zoom */
+    #videosearch-ai-panel .vsa-results,
+    #videosearch-ai-panel .vsa-transcript-list {
+      max-height: min(160px, 28vh);
+    }
+    #videosearch-ai-panel .vsa-topic-label { max-width: 42vw; }
   }
 
   @media (prefers-reduced-motion: reduce) {
     #videosearch-ai-panel *,
-    #videosearch-ai-panel *::before {
+    #videosearch-ai-root.is-collapsed #videosearch-ai-panel {
       animation: none !important;
       transition: none !important;
     }
