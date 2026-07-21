@@ -8,6 +8,11 @@
 </p>
 
 <p align="center">
+  <a href="./website/index.html"><strong>Official product website</strong></a>
+  · preview with <code>npx serve website</code>
+</p>
+
+<p align="center">
   <img alt="Version" src="https://img.shields.io/badge/version-1.0.0-2dd4a8?style=flat-square" />
   <img alt="Manifest" src="https://img.shields.io/badge/Manifest-V3-4285F4?style=flat-square" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square" />

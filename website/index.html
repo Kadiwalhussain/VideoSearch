@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VideoSearch AI — Search what was said, not just what was titled</title>
+  <meta name="description" content="Chrome extension for YouTube. Local semantic search, Chat-with-Video RAG, topics, live transcript, and comment mood — jump to the exact moment in any lecture." />
+  <meta name="theme-color" content="#06080b" />
+  <meta property="og:title" content="VideoSearch AI" />
+  <meta property="og:description" content="Search what was said on YouTube — not just what was titled. Local-first Chrome extension." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="./assets/hero-product.jpg" />
+  <link rel="icon" href="./assets/icon48.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="bg-glow" aria-hidden="true"></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top">
+        <span class="brand-mark" aria-hidden="true">
+          <img src="./assets/icon48.png" alt="" width="22" height="22" />
+        </span>
+        <span>VideoSearch<em>AI</em></span>
+      </a>
+      <button class="nav-toggle" type="button" aria-label="Open menu" id="navToggle">☰</button>
+      <nav class="nav-links" id="navLinks">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#install">Install</a>
+        <a href="#privacy">Privacy</a>
+        <a href="#faq">FAQ</a>
+        <a class="btn btn-ghost" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener">GitHub</a>
+        <a class="btn btn-primary" href="#install">Get extension</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- HERO -->
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <div class="eyebrow"><span class="dot"></span> Chrome extension · Local-first</div>
+          <h1>
+            Search what was <span class="grad">said</span> — not just what was titled.
+          </h1>
+          <p class="hero-lead">
+            VideoSearch AI indexes YouTube captions on your machine, finds moments by meaning,
+            chats with the video (RAG), and jumps the player to the exact second.
+          </p>
+          <div class="hero-cta">
+            <a class="btn btn-primary btn-lg" href="#install">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+              Install for Chrome
+            </a>
+            <a class="btn btn-ghost btn-lg" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener">
+              View on GitHub
+            </a>
+          </div>
+          <div class="hero-meta">
+            <span><strong>Manifest V3</strong> · TypeScript</span>
+            <span><strong>On-device</strong> embeddings</span>
+            <span><strong>Optional</strong> Groq / LLM chat</span>
+          </div>
+        </div>
+
+        <div class="hero-visual">
+          <div class="browser" role="img" aria-label="Product preview of VideoSearch AI on YouTube">
+            <div class="browser-bar">
+              <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+              <div class="url">
+                <span class="lock">🔒</span>
+                youtube.com/watch?v=…
+              </div>
+              <div class="chrome-ext" title="VideoSearch AI extension" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#04120e" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+              </div>
+            </div>
+            <div class="browser-body">
+              <div class="ext-panel">
+                <div class="ext-bar">
+                  <div class="ext-pill">
+                    <span class="logo">⌕</span>
+                    VideoSearch AI
+                  </div>
+                  <div class="ext-status">Ready · 24 topics</div>
+                </div>
+                <div class="ext-tabs">
+                  <div class="ext-tab active">Search</div>
+                  <div class="ext-tab">Chat</div>
+                  <div class="ext-tab">Topics</div>
+                  <div class="ext-tab">Live</div>
+                  <div class="ext-tab">Mood</div>
+                </div>
+                <div class="ext-body">
+                  <div class="ext-input">
+                    <span>gradient descent…</span>
+                    <b>Go</b>
+                  </div>
+                  <div class="ext-result">
+                    <time>3:42</time>
+                    <p>…we minimize the loss by stepping opposite the gradient…</p>
+                  </div>
+                  <div class="ext-result">
+                    <time>12:05</time>
+                    <p>…learning rate schedules prevent overshooting minima…</p>
+                  </div>
+                  <div class="ext-result">
+                    <time>28:17</time>
+                    <p>…batch vs stochastic updates in practice…</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="trust wrap">
+      <div class="trust-row">
+        <div class="trust-pill">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg>
+          Semantic search
+        </div>
+        <div class="trust-pill">💬 Chat with Video (RAG)</div>
+        <div class="trust-pill">☺ Comment mood</div>
+        <div class="trust-pill">☰ Live transcript</div>
+        <div class="trust-pill">🔒 Local-first privacy</div>
+      </div>
+    </div>
+
+    <!-- FEATURES -->
+    <section id="features">
+      <div class="wrap">
+        <div class="section-head center">
+          <div class="kicker">Product</div>
+          <h2>Everything you need to master long videos</h2>
+          <p>
+            Built for lectures, podcasts, interviews, and deep tutorials —
+            where the answer is spoken, not written in the title.
+          </p>
+        </div>
+
+        <div class="features-grid">
+          <article class="feature-card">
+            <div class="feature-icon">⌕</div>
+            <h3>Semantic search</h3>
+            <p>Type natural language. MiniLM embeddings rank the moments that match meaning — not just keywords.</p>
+            <span class="tag">Works offline after index</span>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">💬</div>
+            <h3>Chat with Video (RAG)</h3>
+            <p>Ask multi-turn questions. We retrieve caption chunks, call your LLM, and cite clickable timestamps.</p>
+            <span class="tag">Groq / OpenAI-compatible</span>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">◈</div>
+            <h3>Topics & chapters</h3>
+            <p>Official YouTube chapters first, then AI or local topics — jump into the right section instantly.</p>
+            <span class="tag">Long videos · 15–30+ topics</span>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">☰</div>
+            <h3>Live transcript</h3>
+            <p>Full caption list synced to playback. Click any line to seek. Follow mode keeps you oriented.</p>
+            <span class="tag">Always on-device</span>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">☺</div>
+            <h3>Comment mood</h3>
+            <p>See what viewers praise or criticize — good / mixed / bad split, themes, and sample comments.</p>
+            <span class="tag">On-device DistilBERT</span>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">⚡</div>
+            <h3>Floating studio UI</h3>
+            <p>Compact mint pill on the video. Expand for Search, Chat, Topics, Live, Mood, and Settings.</p>
+            <span class="tag">Doesn’t break YouTube layout</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- SHOWCASE -->
+    <section class="showcase" id="product">
+      <div class="wrap">
+        <div class="section-head center">
+          <div class="kicker">In the browser</div>
+          <h2>Designed to live on YouTube — not in another tab</h2>
+          <p>A floating glass panel that feels native: search moments, chat with the lecture, read the room.</p>
+        </div>
+        <div class="showcase-frame">
+          <img src="./assets/features-grid.jpg" alt="VideoSearch AI feature panels: search, chat, mood, and transcript" width="1600" height="900" loading="lazy" />
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW -->
+    <section id="how">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="kicker">Pipeline</div>
+          <h2>How it works</h2>
+          <p>A full local-first stack from captions to answers — no VideoSearch cloud account.</p>
+        </div>
+        <div class="steps">
+          <div class="step">
+            <h3>Captions</h3>
+            <p>Fetch native timedtext tracks via YouTube Innertube (manual preferred over ASR).</p>
+          </div>
+          <div class="step">
+            <h3>Chunk & embed</h3>
+            <p>Sentence-aware windows embedded with MiniLM in WASM — stays on your device.</p>
+          </div>
+          <div class="step">
+            <h3>Search & chat</h3>
+            <p>Cosine + keyword hybrid for moments; RAG retrieves context for Chat answers.</p>
+          </div>
+          <div class="step">
+            <h3>Jump</h3>
+            <p>Reliable seek into the player. Click times in answers, sources, topics, or live lines.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- COMPARE -->
+    <section>
+      <div class="wrap">
+        <div class="section-head center">
+          <div class="kicker">Why VideoSearch</div>
+          <h2>Stop scrubbing. Start asking.</h2>
+        </div>
+        <div class="compare">
+          <div class="compare-card bad">
+            <h3>Without VideoSearch</h3>
+            <ul>
+              <li><span class="mark">×</span> Scrub the timeline hoping to find a phrase</li>
+              <li><span class="mark">×</span> Platform search only sees titles & tags</li>
+              <li><span class="mark">×</span> Re-watch whole chapters for one concept</li>
+              <li><span class="mark">×</span> No grounded Q&A with timestamps</li>
+              <li><span class="mark">×</span> No sense of viewer sentiment</li>
+            </ul>
+          </div>
+          <div class="compare-card good">
+            <h3>With VideoSearch AI</h3>
+            <ul>
+              <li><span class="mark">✓</span> Type <em>gradient descent</em> → ranked moments</li>
+              <li><span class="mark">✓</span> Search what was actually spoken</li>
+              <li><span class="mark">✓</span> Topic chips land on the right section</li>
+              <li><span class="mark">✓</span> Chat RAG answers with clickable citations</li>
+              <li><span class="mark">✓</span> Mood tab shows good vs critical comments</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- INSTALL -->
+    <section id="install">
+      <div class="wrap">
+        <div class="install">
+          <div class="install-grid">
+            <div>
+              <div class="kicker">Get started</div>
+              <h2 style="margin:0 0 10px;letter-spacing:-0.03em;font-size:clamp(1.6rem,3vw,2.2rem)">Install the Chrome extension</h2>
+              <p style="margin:0;color:var(--muted);max-width:42ch">
+                Load unpacked from the open-source build today. Chrome Web Store listing can point here once published.
+              </p>
+              <ol class="install-steps">
+                <li>
+                  <span class="n">1</span>
+                  <div>
+                    <strong>Clone & build</strong>
+                    <span>Get the repo and produce the <code>dist/</code> folder.</span>
+                    <div class="code-block">
+                      <span class="c"># terminal</span><br />
+                      git clone https://github.com/Kadiwalhussain/VideoSearch.git<br />
+                      cd VideoSearch && npm install && npm run build
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <span class="n">2</span>
+                  <div>
+                    <strong>Open Chrome extensions</strong>
+                    <span>Go to <code>chrome://extensions</code> and enable <strong>Developer mode</strong>.</span>
+                  </div>
+                </li>
+                <li>
+                  <span class="n">3</span>
+                  <div>
+                    <strong>Load unpacked</strong>
+                    <span>Select the project’s <code>dist/</code> directory — not the repo root.</span>
+                  </div>
+                </li>
+                <li>
+                  <span class="n">4</span>
+                  <div>
+                    <strong>Open any YouTube video</strong>
+                    <span>Click the mint pill → Search, Chat, Topics, Live, or Mood. Add a Groq key in ⚙ for full Chat RAG.</span>
+                  </div>
+                </li>
+              </ol>
+              <div class="hero-cta" style="margin-top:24px">
+                <a class="btn btn-chrome btn-lg" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.73.5.5 5.74.5 12.02c0 5.1 3.29 9.43 7.86 10.96.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.53-1.34-1.3-1.7-1.3-1.7-1.06-.73.08-.72.08-.72 1.17.08 1.79 1.2 1.79 1.2 1.04 1.78 2.73 1.27 3.4.97.11-.75.41-1.27.74-1.56-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11.1 11.1 0 0 1 2.9-.39c.98 0 1.97.13 2.9.39 2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.75.11 3.04.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.25 5.7.42.36.79 1.08.79 2.18 0 1.57-.01 2.84-.01 3.23 0 .31.21.68.8.56A10.52 10.52 0 0 0 23.5 12C23.5 5.74 18.27.5 12 .5z"/></svg>
+                  Open GitHub repo
+                </a>
+                <a class="btn btn-ghost btn-lg" href="https://github.com/Kadiwalhussain/VideoSearch#readme" target="_blank" rel="noopener">Read the docs</a>
+              </div>
+            </div>
+
+            <aside class="chrome-card">
+              <div class="chrome-card-top">
+                <img src="./assets/icon128.png" alt="VideoSearch AI icon" width="56" height="56" />
+                <div>
+                  <h3>VideoSearch AI</h3>
+                  <p>Chrome · Manifest V3 · Free & open source</p>
+                </div>
+              </div>
+              <div class="chrome-stats">
+                <div>
+                  <b>v1.1.0</b>
+                  <span>Release</span>
+                </div>
+                <div>
+                  <b>Local</b>
+                  <span>Embeddings</span>
+                </div>
+                <div>
+                  <b>RAG</b>
+                  <span>Chat</span>
+                </div>
+              </div>
+              <p style="margin:0 0 16px;color:var(--muted);font-size:14px;line-height:1.5">
+                Search · Chat · Topics · Live transcript · Comment mood.
+                Optional API key for AI answers — search never requires one.
+              </p>
+              <a class="btn btn-primary" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener" style="width:100%">
+                Get it on GitHub
+              </a>
+              <p style="margin:12px 0 0;font-size:12px;color:var(--faint);text-align:center">
+                Chrome Web Store badge can replace this when published
+              </p>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PRIVACY -->
+    <section id="privacy">
+      <div class="wrap">
+        <div class="section-head center">
+          <div class="kicker">Privacy</div>
+          <h2>Local-first by design</h2>
+          <p>Your transcripts and embeddings stay in the browser. You control optional LLM calls.</p>
+        </div>
+        <div class="privacy-grid">
+          <div class="privacy-card">
+            <h3>On-device index</h3>
+            <p>Captions are chunked and embedded with MiniLM in WASM. Indexes live in IndexedDB on youtube.com.</p>
+          </div>
+          <div class="privacy-card">
+            <h3>No VideoSearch account</h3>
+            <p>No product login, no sync server, no analytics backend in the extension pipeline.</p>
+          </div>
+          <div class="privacy-card">
+            <h3>Optional AI only</h3>
+            <p>Chat, Ask, and smart topics use your key (e.g. Groq) when you enable Settings. Search works without it.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq">
+      <div class="wrap">
+        <div class="section-head center">
+          <div class="kicker">FAQ</div>
+          <h2>Questions, answered</h2>
+        </div>
+        <div class="faq">
+          <details open>
+            <summary>Does it work offline?</summary>
+            <p>After a video is indexed, semantic search, topics (local), live transcript, and seeks work offline. Chat/Ask need network for the LLM API. The embedding model may download once from Hugging Face CDN.</p>
+          </details>
+          <details>
+            <summary>Do I need an API key?</summary>
+            <p>Not for search. For Chat with Video (RAG), Ask prose answers, and optional AI topic labels, paste an OpenAI-compatible key in Settings (Groq is the default endpoint).</p>
+          </details>
+          <details>
+            <summary>Which videos are supported?</summary>
+            <p>YouTube watch pages with captions (manual or auto). Native language tracks are preferred; AI answers stay in English.</p>
+          </details>
+          <details>
+            <summary>Is this on the Chrome Web Store?</summary>
+            <p>The product is open source on GitHub and loads as an unpacked Manifest V3 extension. A store listing can link from this page when you publish.</p>
+          </details>
+          <details>
+            <summary>Where is the code?</summary>
+            <p><a href="https://github.com/Kadiwalhussain/VideoSearch" style="color:var(--accent)">github.com/Kadiwalhussain/VideoSearch</a> — clone, build, contribute.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- FINAL CTA -->
+    <div class="wrap">
+      <div class="final-cta">
+        <h2>Find the moment. Skip the scrub.</h2>
+        <p>Install VideoSearch AI and turn every long YouTube video into something you can search, chat with, and navigate by meaning.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary btn-lg" href="#install">Install for Chrome</a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener">Star on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div class="brand" style="opacity:0.9">
+        <span class="brand-mark" aria-hidden="true">
+          <img src="./assets/icon48.png" alt="" width="22" height="22" />
+        </span>
+        <span>VideoSearch<em>AI</em></span>
+      </div>
+      <p>© <span id="year"></span> VideoSearch AI · Search what was said, not just what was titled.</p>
+      <div class="footer-links">
+        <a href="https://github.com/Kadiwalhussain/VideoSearch">GitHub</a>
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a href="#privacy">Privacy</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById("year").textContent = new Date().getFullYear();
+    const toggle = document.getElementById("navToggle");
+    const links = document.getElementById("navLinks");
+    toggle?.addEventListener("click", () => {
+      links.classList.toggle("open");
+    });
+    links?.querySelectorAll("a").forEach((a) => {
+      a.addEventListener("click", () => links.classList.remove("open"));
+    });
+  </script>
+</body>
+</html>
