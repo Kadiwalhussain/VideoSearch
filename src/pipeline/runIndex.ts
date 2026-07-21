@@ -11,6 +11,12 @@ import {
   sourcesAsResults,
   type QaAnswer,
 } from "../qa/answerQuestion";
+import {
+  runChatRagTurn,
+  type ChatMessage,
+  type ChatRagOptions,
+  type ChatTurnResult,
+} from "../qa/chatRag";
 import type { SearchResult, VideoIndex } from "../types/schema";
 
 export async function runEnsureIndex(
@@ -52,4 +58,21 @@ export async function runSmartQuery(
   return { mode: "search", results };
 }
 
-export type { ProgressHandler, SearchResult, VideoIndex, QaAnswer };
+/** Multi-turn Chat-with-Video RAG */
+export async function runChatTurn(
+  question: string,
+  index: VideoIndex,
+  options?: ChatRagOptions
+): Promise<ChatTurnResult> {
+  return runChatRagTurn(question, index, options);
+}
+
+export type {
+  ProgressHandler,
+  SearchResult,
+  VideoIndex,
+  QaAnswer,
+  ChatMessage,
+  ChatTurnResult,
+  ChatRagOptions,
+};

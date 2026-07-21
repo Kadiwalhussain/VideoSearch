@@ -1,7 +1,7 @@
 /**
- * Optional LLM settings for smart topic labels.
- * Endpoint is OpenAI-compatible chat/completions.
- * UI never shows a vendor brand name.
+ * Optional LLM settings for Chat RAG, smart topics, and Ask.
+ * Endpoint is OpenAI-compatible chat/completions (Groq, Mistral, xAI, OpenAI, …).
+ * UI never hardcodes a vendor brand in user-facing copy beyond Settings help.
  */
 
 export interface LlmSettings {
@@ -12,18 +12,20 @@ export interface LlmSettings {
 }
 
 /**
- * Defaults — never commit real API keys. Users paste a key in ⚙ Settings.
- * UI labels stay brand-neutral ("Smart topics" / "AI topics").
+ * Defaults — Groq OpenAI-compatible endpoint/model.
+ * Paste your API key in ⚙ Settings (never commit keys).
  */
 export const DEFAULT_LLM_SETTINGS: LlmSettings = {
   enabled: false,
   apiKey: "",
-  baseUrl: "https://api.mistral.ai/v1",
-  model: "mistral-small-latest",
+  baseUrl: "https://api.groq.com/openai/v1",
+  // Fast + strong for RAG chat; swap in Settings if needed
+  model: "llama-3.3-70b-versatile",
 };
 
 const STORAGE_KEY = "vsa_llm_settings";
-const SETTINGS_VERSION = 4; // bump when defaults change
+/** Bump when default endpoint/model change */
+const SETTINGS_VERSION = 6;
 
 export async function loadLlmSettings(): Promise<LlmSettings> {
   try {

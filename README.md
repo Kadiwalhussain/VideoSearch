@@ -39,10 +39,12 @@ Educational and long-form YouTube videos (30 minutes → 3+ hours) bury the answ
 | **Semantic search** | Natural-language query → ranked timestamps | Yes |
 | **Main topics** | Chapter-style topics across long videos (15–30+) | Local always; AI labels optional |
 | **Ask mode** | “What happened?” / “How did they behave?” → written answer | Needs API key for full prose |
+| **Chat with Video (RAG)** | Multi-turn Q&A over captions + LLM + clickable citations | Needs API key (Groq default) |
 | **Clickable times** | Green `(m:ss)` pills jump the player | Yes |
 | **Live transcript** | Captions highlight & scroll with the video | Yes |
+| **Comment mood** | Scans viewer comments for good / bad sentiment & themes | Yes |
 | **IndexedDB cache** | Re-open video → skip re-embedding | Yes |
-| **Tabbed UI** | Search · Topics · Live · Settings | Yes |
+| **Tabbed UI** | Search · Topics · Live · Mood · Settings | Yes |
 | **Responsive panel** | Desktop under player; mobile floating dock | Yes |
 
 ---
@@ -92,7 +94,8 @@ Educational and long-form YouTube videos (30 minutes → 3+ hours) bury the answ
 | **7. Topics** | `src/topics/*` | Local chapter labels and/or API topic list |
 | **8. Q&A** | `src/qa/answerQuestion.ts` | Retrieve clips → optional LLM answer |
 | **9. Player** | `src/player/seekTo.ts` + `pageBridge.ts` | Reliable YouTube `seekTo` |
-| **10. UI** | `src/ui/SearchPanel.ts`, `LiveTranscript.ts` | Tabs, search, topics, live captions |
+| **10. Comments** | `src/comments/*` | Fetch comments + local sentiment / themes |
+| **11. UI** | `src/ui/SearchPanel.ts`, `LiveTranscript.ts` | Tabs, search, topics, live, mood |
 
 ---
 
@@ -107,6 +110,7 @@ Educational and long-form YouTube videos (30 minutes → 3+ hours) bury the answ
 | Sentence embeddings | ONNX / WASM MiniLM | Model files may download once from Hugging Face CDN, then cached |
 | Similarity search | Brute-force cosine | No |
 | Live transcript sync | `video.currentTime` + rAF | No |
+| Comment sentiment | Innertube comments + local lexicon scoring | Only to YouTube for comments; scoring stays local |
 | Seek | YouTube player API (MAIN world) | No |
 | Video index cache | IndexedDB on `youtube.com` | No |
 
@@ -128,7 +132,7 @@ Search **embeddings and ranking never require** a paid API.
 ┌──────────────────────────────────────────────┐
 │  ⌕ VideoSearch AI          Ready · 24 topics │
 ├──────────────────────────────────────────────┤
-│   Search   │  Topics  │  Live  │  ⚙          │
+│   Search │ Topics │ Live │ Mood │ ⚙         │
 ├──────────────────────────────────────────────┤
 │  [ Auto | Search | Ask ]                     │
 │  ┌────────────────────────────┐  [ Go ]      │
@@ -148,6 +152,7 @@ Search **embeddings and ranking never require** a paid API.
 | **Search** | Modes Auto / Search / Ask · query box · answer card · ranked moments |
 | **Topics** | Main topics / chapters · click → seek + search |
 | **Live** | Full caption list synced to playback · click any line to jump |
+| **Mood** | Comment sentiment: % good / bad / mixed, themes, sample praises & critiques |
 | **⚙** | Optional API key, endpoint, model |
 
 **Responsive:** under the player on desktop; floating dock on narrow screens.
@@ -239,6 +244,9 @@ videosearch/
     │   └── runIndex.ts         # Lazy-loaded heavy entry
     ├── search/
     │   └── semanticSearch.ts   # Cosine + keyword hybrid
+    ├── comments/
+    │   ├── fetchYouTubeComments.ts  # Innertube next + pages
+    │   └── analyzeSentiment.ts     # Local good/bad + themes
     ├── topics/
     │   ├── topicBudget.ts      # 15–30+ topics on long videos
     │   ├── extractTopics.ts    # Local chapter-style labels
@@ -252,7 +260,7 @@ videosearch/
     ├── settings/
     │   └── llmSettings.ts      # chrome.storage API key
     └── ui/
-        ├── SearchPanel.ts      # Tabs, search, topics, styles
+        ├── SearchPanel.ts      # Tabs, search, topics, mood, styles
         └── LiveTranscript.ts   # Synced caption list
 ```
 
@@ -356,6 +364,8 @@ Quick smoke test:
 3. **Search** a concept → click a result → player jumps  
 4. **Topics** → click a chip  
 5. **Live** → play video → active line tracks audio  
+6. **Mood** → analyze comments → see good/bad split + what people talk about  
+
 6. **Ask**: *What happened in this episode?* → answer + green time links  
 
 ---

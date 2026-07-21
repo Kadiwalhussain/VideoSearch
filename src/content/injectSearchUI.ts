@@ -10,6 +10,13 @@ import {
 } from "../ui/SearchPanel";
 import type { VideoTopic } from "../topics/extractTopics";
 import type { RawCaptionSegment, VideoIndex } from "../types/schema";
+import type { SentimentReport } from "../comments/analyzeSentiment";
+// Type-only — do NOT value-import chatRag (it pulls MiniLM into the UI bundle)
+import type { ChatMessage } from "../qa/chatRag";
+
+function newMessageId(): string {
+  return `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
 
 const ROOT_ID = "videosearch-ai-root";
 const LOG = "[VideoSearch AI]";
@@ -20,7 +27,11 @@ const sessionTopics = new Map<
   string,
   { topics: VideoTopic[]; source: "chapters" | "llm" | "local" | "mixed" }
 >();
+const sessionComments = new Map<string, SentimentReport>();
+const sessionChat = new Map<string, ChatMessage[]>();
+const commentJobs = new Map<string, Promise<void>>();
 const indexingJobs = new Map<string, Promise<VideoIndex | null>>();
+let chatBusy = false;
 
 async function ensureTopics(
   videoId: string,
@@ -35,6 +46,7 @@ async function ensureTopics(
     return sessionTopics.get(videoId)!;
   }
 
+  // Soft progress only — SearchPanel keeps search unlocked once index exists
   panel.setStatus({
     kind: "indexing",
     message: "Finding main topics…",
@@ -71,6 +83,133 @@ function readyStatus(
     topics,
     topicSource,
   };
+}
+
+/**
+ * Lazy-load comments + ML sentiment for THIS video only.
+ * Cache is keyed by videoId + fingerprint so moods never leak across videos.
+ */
+async function loadComments(
+  videoId: string,
+  panel: SearchPanel,
+  force = false
+): Promise<void> {
+  // Stale cache guard
+  const cached = sessionComments.get(videoId);
+  if (!force && cached && cached.videoId === videoId) {
+    panel.setCommentsState({ kind: "ready", report: cached });
+    return;
+  }
+  if (force) sessionComments.delete(videoId);
+
+  if (!force && commentJobs.has(videoId)) {
+    return commentJobs.get(videoId)!;
+  }
+
+  const job = (async () => {
+    // Bail if user navigated away mid-job
+    const stillHere = () => activeVideoId === videoId && activePanel === panel;
+
+    panel.setCommentsState({
+      kind: "loading",
+      message: "Fetching this video’s comments…",
+    });
+
+    try {
+      const { fetchYouTubeComments } = await import(
+        "../comments/fetchYouTubeComments"
+      );
+      const { analyzeComments } = await import(
+        "../comments/analyzeSentiment"
+      );
+
+      const fetched = await fetchYouTubeComments(videoId, {
+        maxComments: 120,
+        onProgress: (n) => {
+          if (!stillHere()) return;
+          panel.setCommentsState({
+            kind: "loading",
+            message: n
+              ? `Reading comments… ${n}`
+              : "Fetching this video’s comments…",
+          });
+        },
+      });
+
+      if (!stillHere()) return;
+
+      if (fetched.videoId !== videoId) {
+        throw new Error("Comment fetch returned a different video id");
+      }
+
+      if (fetched.comments.length === 0) {
+        panel.setCommentsState({
+          kind: "empty",
+          message:
+            "No comments found for this video yet. Scroll the comments section, then tap Refresh.",
+        });
+        return;
+      }
+
+      panel.setCommentsState({
+        kind: "loading",
+        message: `AI scoring ${fetched.comments.length} comments…`,
+      });
+
+      const report = await analyzeComments(videoId, fetched.comments, {
+        totalReported: fetched.totalReported,
+        truncated: fetched.truncated,
+        onProgress: (msg, ratio) => {
+          if (!stillHere()) return;
+          panel.setCommentsState({
+            kind: "loading",
+            message:
+              typeof ratio === "number"
+                ? `${msg} (${Math.round(ratio * 100)}%)`
+                : msg,
+          });
+        },
+      });
+
+      if (!stillHere()) return;
+
+      // Hard guard against cross-video pollution
+      if (report.videoId !== videoId) {
+        throw new Error("Sentiment report video mismatch");
+      }
+
+      sessionComments.set(videoId, report);
+      console.info(
+        LOG,
+        `Mood for ${videoId}:`,
+        report.engine,
+        report.overallLabel,
+        `${report.positivePct}% / ${report.negativePct}% / ${report.neutralPct}%`,
+        "fp:",
+        report.fingerprint.slice(0, 40),
+        "themes:",
+        report.themes.map((t) => t.phrase)
+      );
+      panel.setCommentsState({ kind: "ready", report });
+    } catch (err) {
+      if (!stillHere()) return;
+      console.error(LOG, "Comment sentiment failed:", err);
+      panel.setCommentsState({
+        kind: "error",
+        message:
+          err instanceof Error
+            ? err.message
+            : "Failed to analyze comments",
+      });
+    }
+  })();
+
+  commentJobs.set(videoId, job);
+  try {
+    await job;
+  } finally {
+    commentJobs.delete(videoId);
+  }
 }
 
 console.info(LOG, "content script evaluating", location.href);
@@ -183,6 +322,18 @@ async function indexVideo(
       sessionIndex.set(videoId, index);
       sessionSegments.set(videoId, segments);
       panel.setTranscript(segments);
+
+      // Unlock Search / Live ASAP — topics can finish in the background
+      const cachedTopics = !force ? sessionTopics.get(videoId) : undefined;
+      panel.setStatus(
+        readyStatus(
+          index,
+          fromCache,
+          cachedTopics?.topics ?? [],
+          cachedTopics?.source ?? "local"
+        )
+      );
+
       if (force) sessionTopics.delete(videoId);
       const { topics, source } = await ensureTopics(
         videoId,
@@ -190,6 +341,7 @@ async function indexVideo(
         panel,
         force
       );
+      // Re-apply ready with real topics (does not re-lock search)
       panel.setStatus(readyStatus(index, fromCache, topics, source));
       return index;
     } catch (err) {
@@ -215,6 +367,96 @@ async function indexVideo(
 
 /** Ignore stale search results if user kept typing. */
 let searchSeq = 0;
+
+/**
+ * Chat-with-Video RAG turn for the active video.
+ */
+async function runChat(
+  videoId: string,
+  text: string,
+  panel: SearchPanel
+): Promise<void> {
+  const q = text.trim();
+  if (!q || chatBusy) return;
+
+  let index = sessionIndex.get(videoId) ?? null;
+  if (!index) {
+    index = await indexVideo(videoId, panel);
+    if (!index) {
+      panel.setChatError("Index the video first (wait until Ready).");
+      return;
+    }
+  }
+
+  chatBusy = true;
+  const history = sessionChat.get(videoId) ?? [];
+  const userMsg: ChatMessage = {
+    id: newMessageId(),
+    role: "user",
+    content: q,
+    at: Date.now(),
+  };
+  const nextHistory = [...history, userMsg];
+  sessionChat.set(videoId, nextHistory);
+  panel.setChatMessages(nextHistory);
+  panel.setChatBusy(true, "Retrieving captions…");
+
+  try {
+    const pipeline = await loadPipeline();
+    const topics = sessionTopics.get(videoId)?.topics ?? [];
+    const result = await pipeline.runChatTurn(q, index, {
+      history,
+      topicHints: topics.map((t) => ({
+        label: t.label,
+        startTime: t.startTime,
+      })),
+      onProgress: (msg) => {
+        if (activeVideoId !== videoId) return;
+        panel.setChatBusy(true, msg);
+      },
+    });
+
+    if (activeVideoId !== videoId) return;
+
+    const assistant: ChatMessage = {
+      id: newMessageId(),
+      role: "assistant",
+      content: result.answer,
+      sources: result.sources,
+      usedLlm: result.usedLlm,
+      at: Date.now(),
+    };
+    const finalHist = [...nextHistory, assistant];
+    sessionChat.set(videoId, finalHist);
+    panel.setChatMessages(finalHist);
+    panel.setChatBusy(false);
+    console.info(
+      LOG,
+      `Chat “${q.slice(0, 60)}” · llm=${result.usedLlm} · sources=${result.sources.length}`
+    );
+  } catch (err) {
+    if (activeVideoId !== videoId) return;
+    console.error(LOG, "Chat RAG failed:", err);
+    panel.setChatBusy(false);
+    panel.setChatError(
+      err instanceof Error ? err.message : "Chat failed"
+    );
+    // Keep user message; append error note
+    const errMsg: ChatMessage = {
+      id: newMessageId(),
+      role: "assistant",
+      content:
+        "Sorry — I couldn’t answer that. Check Settings (API key / model) or try again.",
+      usedLlm: false,
+      at: Date.now(),
+    };
+    const finalHist = [...nextHistory, errMsg];
+    sessionChat.set(videoId, finalHist);
+    panel.setChatMessages(finalHist);
+  } finally {
+    chatBusy = false;
+  }
+}
 
 async function runSearch(
   videoId: string,
@@ -383,12 +625,26 @@ function mountPanel(videoId: string): void {
         sessionIndex.delete(videoId);
         sessionSegments.delete(videoId);
         sessionTopics.delete(videoId);
+        sessionComments.delete(videoId);
         panel.clearTranscript();
+        panel.resetComments();
+        panel.resetIndexState();
         void indexVideo(videoId, panel, true);
       },
       onTopicClick: (topic) => {
         seekTo(topic.startTime);
         void runSearch(videoId, topic.query, panel, "search");
+      },
+      onLoadComments: (force) => {
+        void loadComments(videoId, panel, Boolean(force));
+      },
+      onChatSend: (text) => {
+        void runChat(videoId, text, panel);
+      },
+      onChatClear: () => {
+        sessionChat.set(videoId, []);
+        panel.setChatMessages([]);
+        panel.setChatBusy(false);
       },
       onSettingsSaved: () => {
         // Clear topic caches so LLM re-runs with new key
@@ -408,6 +664,17 @@ function mountPanel(videoId: string): void {
         }
       },
     });
+
+    // Restore cached mood only for THIS video id
+    const mood = sessionComments.get(videoId);
+    if (mood && mood.videoId === videoId) {
+      panel.setCommentsState({ kind: "ready", report: mood });
+    } else {
+      panel.resetComments();
+    }
+
+    // Restore chat history for this video
+    panel.setChatMessages(sessionChat.get(videoId) ?? []);
 
     activePanel = panel;
     activeVideoId = videoId;
@@ -431,8 +698,8 @@ function mountPanel(videoId: string): void {
   }
 }
 
-function removePanel(): void {
-  if (activePanel?.isInputFocused()) return;
+function removePanel(force = false): void {
+  if (!force && activePanel?.isInputFocused()) return;
   document.getElementById(ROOT_ID)?.remove();
   activePanel = null;
   activeVideoId = null;
@@ -441,13 +708,22 @@ function removePanel(): void {
 function injectOrUpdate(): void {
   try {
     if (!isWatchPage()) {
-      removePanel();
+      removePanel(true);
       return;
     }
     const videoId = extractVideoId();
     if (!videoId) {
-      removePanel();
+      removePanel(true);
       return;
+    }
+    // Hard switch when the watch id changes — drop old mood/index UI state
+    if (activeVideoId && activeVideoId !== videoId) {
+      console.info(LOG, "Video changed", activeVideoId, "→", videoId);
+      // Cancel in-flight comment jobs for old id by clearing map
+      commentJobs.clear();
+      document.getElementById(ROOT_ID)?.remove();
+      activePanel = null;
+      activeVideoId = null;
     }
     mountPanel(videoId);
   } catch (err) {
