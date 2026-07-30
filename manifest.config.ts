@@ -32,6 +32,10 @@ export default defineManifest({
     "https://api.x.ai/*",
     "https://api.openai.com/*",
     "https://api.groq.com/*",
+    // Cloud vault API (local Mongo backend + optional deployed host)
+    "http://localhost:8787/*",
+    "http://127.0.0.1:8787/*",
+    "https://*.supabase.co/*",
   ],
   content_scripts: [
     {

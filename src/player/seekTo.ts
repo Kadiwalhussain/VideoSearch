@@ -67,7 +67,7 @@ export function formatTimestamp(seconds: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
-function getMainVideo(): HTMLVideoElement | null {
+export function getMainVideo(): HTMLVideoElement | null {
   return (
     document.querySelector<HTMLVideoElement>(
       "#movie_player video.html5-main-video"
@@ -77,6 +77,19 @@ function getMainVideo(): HTMLVideoElement | null {
     document.querySelector<HTMLVideoElement>("ytd-player video") ??
     document.querySelector<HTMLVideoElement>("video")
   );
+}
+
+/** Current playback time in seconds (0 if unavailable). */
+export function getCurrentTime(): number {
+  const v = getMainVideo();
+  const t = v?.currentTime;
+  return typeof t === "number" && Number.isFinite(t) && t >= 0 ? t : 0;
+}
+
+export function getDuration(): number {
+  const v = getMainVideo();
+  const d = v?.duration;
+  return typeof d === "number" && Number.isFinite(d) && d > 0 ? d : 0;
 }
 
 /**

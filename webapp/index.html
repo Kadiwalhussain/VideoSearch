@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VideoSearch Vault</title>
+  <meta name="description" content="Your private vault for video notes, highlights, and screenshots." />
+  <link rel="icon" href="/app/assets/logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- AUTH -->
+  <div id="pageAuth" class="page page-auth" hidden>
+    <div class="auth-shell">
+      <aside class="auth-brand">
+        <div class="auth-brand-inner">
+          <div class="auth-logo">VS</div>
+          <h1>Your video notebook, in the cloud</h1>
+          <p>Highlights, notes, and board screenshots synced from the Chrome extension — private to your account.</p>
+          <ul class="auth-points">
+            <li>Email login with JWT sessions</li>
+            <li>Per-video marks &amp; notes</li>
+            <li>Screenshots stored on Cloudflare R2</li>
+          </ul>
+        </div>
+      </aside>
+      <main class="auth-main">
+        <div class="auth-card">
+          <div class="auth-card-top">
+            <button type="button" class="theme-btn" id="themeBtnAuth" title="Toggle theme" aria-label="Toggle dark/light mode">◐</button>
+          </div>
+          <div class="auth-modes" role="tablist">
+            <button type="button" class="auth-mode is-on" data-auth="login">Log in</button>
+            <button type="button" class="auth-mode" data-auth="register">Create account</button>
+          </div>
+          <p class="auth-hint" id="authHint">Same email as the Chrome extension</p>
+          <label class="field" id="nameField" hidden>
+            <span>Display name</span>
+            <input id="displayName" type="text" placeholder="Optional" autocomplete="nickname" />
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input id="email" type="email" placeholder="you@example.com" autocomplete="username" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input id="password" type="password" placeholder="Min. 6 characters" autocomplete="current-password" />
+          </label>
+          <label class="field field-advanced">
+            <span>API URL <em>(advanced)</em></span>
+            <input id="cloudUrl" type="url" placeholder="http://localhost:8787" autocomplete="off" />
+          </label>
+          <button type="button" class="btn-primary" id="btnAuth">Log in</button>
+          <p class="status" id="statusMsg" role="status"></p>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div id="pageApp" class="page page-app" hidden>
+    <header class="app-top">
+      <div class="app-top-left">
+        <div class="app-logo">VS</div>
+        <div>
+          <div class="app-product">VideoSearch</div>
+          <div class="app-product-sub">Vault</div>
+        </div>
+      </div>
+      <div class="app-top-right">
+        <div class="stat-pills" id="statsBar">
+          <span class="stat-pill"><b id="statVideos">0</b> videos</span>
+          <span class="stat-pill"><b id="statMarks">0</b> marks</span>
+          <span class="stat-pill"><b id="statShots">0</b> shots</span>
+        </div>
+        <button type="button" class="theme-btn" id="themeBtnApp" title="Toggle theme" aria-label="Toggle dark/light mode">◐</button>
+        <div class="app-user">
+          <div class="app-user-av" id="userAv">—</div>
+          <div class="app-user-meta">
+            <strong id="userLabel">Account</strong>
+            <span id="userMeta"></span>
+          </div>
+        </div>
+        <button type="button" class="btn-ghost" id="btnRefresh">Refresh</button>
+        <button type="button" class="btn-ghost btn-danger" id="btnLogout">Log out</button>
+      </div>
+    </header>
+
+    <div class="app-body">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <h2>Library</h2>
+          <span class="sidebar-count" id="libraryCount">0</span>
+        </div>
+        <div class="sidebar-list" id="videoItems">
+          <p class="empty-state">No videos yet. Sync from the extension (Notes → Sync).</p>
+        </div>
+      </aside>
+
+      <section class="workspace">
+        <div class="workspace-empty" id="detailEmpty">
+          <div class="empty-icon">◎</div>
+          <h3>Select a video</h3>
+          <p>Browse screenshots, highlights, and notes from your library.</p>
+        </div>
+
+        <div id="detailBody" class="workspace-detail" hidden>
+          <header class="workspace-head">
+            <div class="workspace-head-main">
+              <div class="workspace-thumb" id="detailThumb" hidden></div>
+              <div>
+                <h1 id="detailTitle">Video</h1>
+                <a id="detailLink" class="yt-link" href="#" target="_blank" rel="noopener">Open on YouTube ↗</a>
+              </div>
+            </div>
+            <span class="timestamp-pill" id="detailUpdated"></span>
+          </header>
+
+          <nav class="workspace-tabs" role="tablist">
+            <button type="button" class="ws-tab is-on" data-tab="shots">Screenshots</button>
+            <button type="button" class="ws-tab" data-tab="marks">Highlights &amp; notes</button>
+            <button type="button" class="ws-tab" data-tab="all">Overview</button>
+          </nav>
+
+          <div id="paneShots" class="ws-pane"></div>
+          <div id="paneMarks" class="ws-pane" hidden></div>
+          <div id="paneAll" class="ws-pane" hidden></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- LIGHTBOX -->
+  <div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="Screenshot preview">
+    <button type="button" class="lightbox-close" id="lightboxClose" aria-label="Close">×</button>
+    <button type="button" class="lightbox-nav lightbox-prev" id="lightboxPrev" aria-label="Previous">‹</button>
+    <button type="button" class="lightbox-nav lightbox-next" id="lightboxNext" aria-label="Next">›</button>
+    <div class="lightbox-stage">
+      <img id="lightboxImg" alt="Screenshot preview" />
+    </div>
+    <div class="lightbox-meta">
+      <time id="lightboxTime"></time>
+      <p id="lightboxNote"></p>
+    </div>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

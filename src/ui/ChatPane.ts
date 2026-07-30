@@ -4,6 +4,7 @@
 
 import type { ChatMessage, ChatSource } from "../qa/chatRag";
 import { formatTimestamp } from "../player/seekTo";
+import { iconHtml } from "./icons";
 
 /** Local copy so ChatPane does not pull the full RAG/embed graph into first paint */
 const CHAT_SUGGESTIONS = [
@@ -36,7 +37,10 @@ export class ChatPane {
     this.root.className = "vsa-chat";
     this.root.innerHTML = `
       <div class="vsa-chat-head">
-        <div class="vsa-chat-title">Chat with this video</div>
+        <div class="vsa-chat-title">
+          <span class="vsa-chat-title-ico"></span>
+          Chat with this video
+        </div>
         <button type="button" class="vsa-chat-clear" title="Clear conversation">Clear</button>
       </div>
       <div class="vsa-chat-status" hidden></div>
@@ -49,7 +53,7 @@ export class ChatPane {
           placeholder="Ask anything about this video…"
           enterkeyhint="send"
         ></textarea>
-        <button type="button" class="vsa-chat-send">Send</button>
+        <button type="button" class="vsa-chat-send" title="Send"></button>
       </div>
     `;
 
@@ -63,6 +67,12 @@ export class ChatPane {
     this.statusEl = this.root.querySelector(
       ".vsa-chat-status"
     ) as HTMLElement;
+
+    const titleIco = this.root.querySelector(
+      ".vsa-chat-title-ico"
+    ) as HTMLElement | null;
+    if (titleIco) titleIco.innerHTML = iconHtml("chat", 14);
+    this.sendBtn.innerHTML = iconHtml("send", 15);
 
     this.renderSuggestions();
     this.bind();

@@ -1,0 +1,21 @@
+{
+  "name": "videosearch-vault-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MongoDB API for VideoSearch AI vault (notes, highlights, screenshots, users)",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.758.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.9.3",
+    "morgan": "^1.10.0"
+  }
+}

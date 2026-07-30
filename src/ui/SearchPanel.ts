@@ -8,6 +8,8 @@ import type { RawCaptionSegment, SearchResult } from "../types/schema";
 import type { VideoTopic } from "../topics/extractTopics";
 import type { SentimentReport } from "../comments/analyzeSentiment";
 import type { ChatMessage } from "../qa/chatRag";
+import type { VideoHighlight } from "../storage/highlightsStore";
+import type { VideoScreenshot } from "../storage/screenshotStore";
 import {
   DEFAULT_LLM_SETTINGS,
   loadLlmSettings,
@@ -15,8 +17,20 @@ import {
   saveLlmSettings,
   type LlmSettings,
 } from "../settings/llmSettings";
+import {
+  loadCloudSettings,
+  vaultAuth,
+  clearCloudSession,
+  refreshSession,
+  accountInitials,
+  DEFAULT_CLOUD_SETTINGS,
+  type CloudSettings,
+} from "../settings/cloudSettings";
 import { LiveTranscript } from "./LiveTranscript";
 import { ChatPane } from "./ChatPane";
+import { HighlightsPane } from "./HighlightsPane";
+import { VSA_STYLES, VSA_FONT_HREF } from "./vsaStyles";
+import { iconHtml, iconSvg, type IconName } from "./icons";
 
 export type PanelStatus =
   | { kind: "idle" }
@@ -62,6 +76,16 @@ export interface SearchPanelHandlers {
   /** Chat-with-Video RAG turn */
   onChatSend?: (text: string) => void;
   onChatClear?: () => void;
+  /** Timeline highlights + notes + screenshots */
+  onAddHighlight?: () => void;
+  onCaptureFrame?: () => void;
+  onSyncCloud?: () => void;
+  onHighlightNote?: (id: string, note: string) => void;
+  onDeleteHighlight?: (id: string) => void;
+  onHighlightSeek?: (seconds: number) => void;
+  onDeleteScreenshot?: (id: string) => void;
+  onScreenshotNote?: (id: string, note: string) => void;
+  onCloudSettingsSaved?: () => void;
 }
 
 type TabId =
@@ -70,7 +94,10 @@ type TabId =
   | "topics"
   | "transcript"
   | "comments"
-  | "settings";
+  | "highlights"
+  | "account"
+  | "settings"
+  | "more";
 
 const SEARCH_DEBOUNCE_MS = 700;
 const MIN_QUERY_LEN = 2;
@@ -93,9 +120,14 @@ export class SearchPanel {
   private paneTranscript: HTMLElement;
   private paneComments: HTMLElement;
   private paneChat: HTMLElement;
+  private paneHighlights: HTMLElement;
+  private paneAccount: HTMLElement;
   private paneSettings: HTMLElement;
+  private paneMore: HTMLElement;
   private commentsEl: HTMLElement;
   private handlers: SearchPanelHandlers;
+  private authMode: "login" | "register" = "login";
+  private cloudSession: CloudSettings = { ...DEFAULT_CLOUD_SETTINGS };
   private debounceTimer: number | null = null;
   private expanded = true;
   private activeTab: TabId = "search";
@@ -103,6 +135,7 @@ export class SearchPanel {
   private inputLocked = true;
   private liveTranscript: LiveTranscript;
   private chatPane: ChatPane;
+  private highlightsPane: HighlightsPane;
   private answerEl: HTMLElement;
   private queryMode: QueryMode = "auto";
   private commentsState: CommentsPanelState = { kind: "idle" };
@@ -120,107 +153,187 @@ export class SearchPanel {
     this.root.innerHTML = `
       <div class="vsa-chrome">
         <div class="vsa-bar">
-          <button type="button" class="vsa-brand" title="Collapse / expand panel">
-            <span class="vsa-logo" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-            </span>
+          <button type="button" class="vsa-brand" title="Expand / collapse">
+            <span class="vsa-logo" data-logo-ico aria-hidden="true"></span>
             <span class="vsa-title-wrap">
               <span class="vsa-title">VideoSearch</span>
-              <span class="vsa-title-sub">AI</span>
+              <span class="vsa-badge">…</span>
             </span>
-            <span class="vsa-badge">…</span>
           </button>
           <div class="vsa-status" role="status">Starting…</div>
-          <button type="button" class="vsa-collapse-btn" title="Minimize" aria-label="Minimize">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14"/></svg>
+          <button type="button" class="vsa-account-chip" data-account-chip title="Account" aria-label="Account">
+            <span class="vsa-account-chip-av" data-account-av>?</span>
           </button>
+          <button type="button" class="vsa-collapse-btn" title="Minimize" aria-label="Minimize" data-collapse-ico></button>
         </div>
-        <div class="vsa-tabs" role="tablist" aria-label="VideoSearch sections">
+        <nav class="vsa-tabs" role="tablist" aria-label="Main">
           <button type="button" class="vsa-tab is-active" data-tab="search" role="tab" aria-selected="true">
-            <span class="vsa-tab-ico" aria-hidden="true">⌕</span>
+            <span class="vsa-tab-ico" data-tab-ico="search"></span>
             <span class="vsa-tab-txt">Search</span>
           </button>
-          <button type="button" class="vsa-tab" data-tab="chat" role="tab" aria-selected="false" title="Chat with video (RAG)">
-            <span class="vsa-tab-ico" aria-hidden="true">💬</span>
+          <button type="button" class="vsa-tab" data-tab="highlights" role="tab" aria-selected="false" title="Notes & screenshots">
+            <span class="vsa-tab-ico" data-tab-ico="notes"></span>
+            <span class="vsa-tab-txt">Notes</span>
+            <span class="vsa-tab-count" data-count="highlights"></span>
+          </button>
+          <button type="button" class="vsa-tab" data-tab="chat" role="tab" aria-selected="false" title="Chat with this video">
+            <span class="vsa-tab-ico" data-tab-ico="chat"></span>
             <span class="vsa-tab-txt">Chat</span>
           </button>
-          <button type="button" class="vsa-tab" data-tab="topics" role="tab" aria-selected="false">
-            <span class="vsa-tab-ico" aria-hidden="true">◈</span>
-            <span class="vsa-tab-txt">Topics</span>
-            <span class="vsa-tab-count" data-count="topics"></span>
+          <button type="button" class="vsa-tab vsa-tab-more" data-tab="more" role="tab" aria-selected="false" title="More tools">
+            <span class="vsa-tab-ico" data-tab-ico="more"></span>
+            <span class="vsa-tab-txt">More</span>
           </button>
-          <button type="button" class="vsa-tab" data-tab="transcript" role="tab" aria-selected="false">
-            <span class="vsa-tab-ico" aria-hidden="true">☰</span>
-            <span class="vsa-tab-txt">Live</span>
-          </button>
-          <button type="button" class="vsa-tab" data-tab="comments" role="tab" aria-selected="false" title="Comment sentiment">
-            <span class="vsa-tab-ico" aria-hidden="true">☺</span>
-            <span class="vsa-tab-txt">Mood</span>
-            <span class="vsa-tab-count" data-count="comments"></span>
-          </button>
-          <button type="button" class="vsa-tab vsa-tab-gear" data-tab="settings" role="tab" aria-selected="false" title="Settings">
-            <span class="vsa-tab-ico" aria-hidden="true">⚙</span>
-          </button>
-        </div>
+        </nav>
       </div>
       <div class="vsa-panel-body">
         <div class="vsa-pane vsa-pane-search" data-pane="search">
           <div class="vsa-mode-row" role="group" aria-label="Query mode">
-            <button type="button" class="vsa-mode is-active" data-mode="auto" title="Keywords search; questions get an AI answer">Auto</button>
-            <button type="button" class="vsa-mode" data-mode="search" title="Only find timestamps">Search</button>
-            <button type="button" class="vsa-mode" data-mode="ask" title="Always answer with AI + sources">Ask</button>
+            <button type="button" class="vsa-mode is-active" data-mode="auto">Auto</button>
+            <button type="button" class="vsa-mode" data-mode="search">Search</button>
+            <button type="button" class="vsa-mode" data-mode="ask">Ask AI</button>
           </div>
           <div class="vsa-input-row">
-            <input
-              type="text"
-              class="vsa-input"
-              placeholder="Search what was said, or ask a question…"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="off"
-              spellcheck="false"
-              enterkeyhint="search"
-            />
-            <button type="button" class="vsa-search-btn">
-              <span class="vsa-search-btn-txt">Go</span>
-            </button>
+            <span class="vsa-input-ico" data-search-ico></span>
+            <input type="text" class="vsa-input" placeholder="Search what was said…" autocomplete="off" spellcheck="false" enterkeyhint="search" />
+            <button type="button" class="vsa-search-btn"><span class="vsa-search-btn-txt">Go</span></button>
           </div>
           <div class="vsa-answer" hidden></div>
-          <div class="vsa-results" role="listbox" aria-label="Search results"></div>
+          <div class="vsa-results" role="listbox" aria-label="Results"></div>
+        </div>
+        <div class="vsa-pane vsa-pane-highlights" data-pane="highlights" hidden>
+          <div class="vsa-highlights-host"></div>
         </div>
         <div class="vsa-pane vsa-pane-chat" data-pane="chat" hidden>
           <div class="vsa-chat-host"></div>
         </div>
+        <div class="vsa-pane vsa-pane-more" data-pane="more" hidden>
+          <div class="vsa-more-grid">
+            <button type="button" class="vsa-more-card" data-goto="topics">
+              <span class="vsa-more-ico" data-more-ico="topics"></span>
+              <strong>Topics</strong>
+              <span>Chapters across the video</span>
+              <em class="vsa-tab-count" data-count="topics"></em>
+            </button>
+            <button type="button" class="vsa-more-card" data-goto="transcript">
+              <span class="vsa-more-ico" data-more-ico="live"></span>
+              <strong>Live</strong>
+              <span>Follow the transcript</span>
+            </button>
+            <button type="button" class="vsa-more-card" data-goto="comments">
+              <span class="vsa-more-ico" data-more-ico="mood"></span>
+              <strong>Mood</strong>
+              <span>Comment sentiment</span>
+              <em class="vsa-tab-count" data-count="comments"></em>
+            </button>
+            <button type="button" class="vsa-more-card" data-goto="settings">
+              <span class="vsa-more-ico" data-more-ico="settings"></span>
+              <strong>Settings</strong>
+              <span>AI key &amp; model</span>
+            </button>
+            <button type="button" class="vsa-more-card vsa-more-vault" data-open-vault>
+              <span class="vsa-more-ico" data-more-ico="vault"></span>
+              <strong>Full vault</strong>
+              <span>Open notes &amp; shots in the browser</span>
+            </button>
+          </div>
+        </div>
         <div class="vsa-pane vsa-pane-topics" data-pane="topics" hidden>
+          <button type="button" class="vsa-back" data-back="more"><span data-back-ico></span> More</button>
           <div class="vsa-topics"></div>
         </div>
         <div class="vsa-pane vsa-pane-transcript" data-pane="transcript" hidden>
+          <button type="button" class="vsa-back" data-back="more"><span data-back-ico></span> More</button>
           <div class="vsa-transcript-host"></div>
         </div>
         <div class="vsa-pane vsa-pane-comments" data-pane="comments" hidden>
+          <button type="button" class="vsa-back" data-back="more"><span data-back-ico></span> More</button>
           <div class="vsa-comments"></div>
         </div>
         <div class="vsa-pane vsa-pane-settings" data-pane="settings" hidden>
+          <button type="button" class="vsa-back" data-back="more"><span data-back-ico></span> More</button>
           <div class="vsa-settings">
-            <div class="vsa-settings-title">AI Chat &amp; topics</div>
-            <p class="vsa-settings-help">
-              OpenAI-compatible key for Chat RAG, topics, and Ask. Default: Groq. Embeddings stay on your device.
-            </p>
-            <label class="vsa-field">
-              <span>API key</span>
+            <div class="vsa-settings-title">AI model</div>
+            <p class="vsa-settings-help">Key for Chat &amp; Ask. Embeddings stay on-device.</p>
+            <label class="vsa-field"><span>API key</span>
               <input type="password" class="vsa-set-key" placeholder="••••••••" autocomplete="off" />
             </label>
-            <label class="vsa-field">
-              <span>Endpoint</span>
+            <label class="vsa-field"><span>Endpoint</span>
               <input type="text" class="vsa-set-url" autocomplete="off" />
             </label>
-            <label class="vsa-field">
-              <span>Model id</span>
+            <label class="vsa-field"><span>Model</span>
               <input type="text" class="vsa-set-model" autocomplete="off" />
             </label>
             <div class="vsa-settings-actions">
-              <button type="button" class="vsa-save-settings">Save &amp; refresh</button>
+              <button type="button" class="vsa-save-settings">Save</button>
               <span class="vsa-settings-msg"></span>
+            </div>
+          </div>
+        </div>
+        <div class="vsa-pane vsa-pane-account" data-pane="account" hidden>
+          <button type="button" class="vsa-back" data-back="search"><span data-back-ico></span> Back</button>
+          <div class="vsa-auth">
+            <div class="vsa-auth-gate" data-auth-gate>
+              <div class="vsa-auth-hero">
+                <div class="vsa-auth-mark" data-auth-mark></div>
+                <div class="vsa-auth-title" data-auth-title>Sign in</div>
+                <p class="vsa-auth-sub" data-auth-sub>Sync notes &amp; screenshots to your private vault.</p>
+              </div>
+              <div class="vsa-auth-modes">
+                <button type="button" class="vsa-auth-mode is-on" data-auth-mode="login">Log in</button>
+                <button type="button" class="vsa-auth-mode" data-auth-mode="register">Sign up</button>
+              </div>
+              <form class="vsa-auth-form" data-auth-form autocomplete="on">
+                <label class="vsa-field" data-auth-name-wrap hidden><span>Name</span>
+                  <input type="text" class="vsa-cloud-name" autocomplete="nickname" />
+                </label>
+                <label class="vsa-field"><span>Email</span>
+                  <input type="email" class="vsa-cloud-email" placeholder="you@example.com" autocomplete="username" required />
+                </label>
+                <label class="vsa-field"><span>Password</span>
+                  <div class="vsa-pass-row">
+                    <input type="password" class="vsa-cloud-pass" placeholder="Min. 6 characters" autocomplete="current-password" required minlength="6" />
+                    <button type="button" class="vsa-pass-toggle" data-pass-toggle title="Show password"></button>
+                  </div>
+                </label>
+                <label class="vsa-field" data-auth-confirm-wrap hidden><span>Confirm</span>
+                  <input type="password" class="vsa-cloud-pass2" autocomplete="new-password" />
+                </label>
+                <button type="submit" class="vsa-auth-submit" data-auth-submit>Log in</button>
+                <p class="vsa-cloud-msg" data-auth-msg role="status"></p>
+              </form>
+              <details class="vsa-auth-advanced">
+                <summary>Server URL</summary>
+                <label class="vsa-field"><span>API</span>
+                  <input type="text" class="vsa-cloud-url" placeholder="http://localhost:8787" autocomplete="off" />
+                </label>
+              </details>
+            </div>
+            <div class="vsa-auth-profile" data-auth-profile hidden>
+              <div class="vsa-profile-card">
+                <div class="vsa-profile-av" data-profile-av>—</div>
+                <div class="vsa-profile-meta">
+                  <div class="vsa-profile-name" data-profile-name>Account</div>
+                  <div class="vsa-profile-email" data-profile-email></div>
+                </div>
+              </div>
+              <div class="vsa-profile-stats">
+                <div class="vsa-profile-stat"><b data-stat-videos>0</b><span>Videos</span></div>
+                <div class="vsa-profile-stat"><b data-stat-marks>0</b><span>Marks</span></div>
+                <div class="vsa-profile-stat"><b data-stat-shots>0</b><span>Shots</span></div>
+              </div>
+              <button type="button" class="vsa-auth-submit vsa-btn-vault" data-open-vault>
+                <span data-vault-ico></span> Open full vault
+              </button>
+              <div class="vsa-cloud-actions">
+                <button type="button" class="vsa-auth-sync-now" data-auth-sync>
+                  <span data-sync-ico></span> Sync this video
+                </button>
+                <button type="button" class="vsa-cloud-logout" data-auth-logout>
+                  <span data-logout-ico></span> Log out
+                </button>
+              </div>
+              <p class="vsa-cloud-msg" data-auth-profile-msg role="status"></p>
             </div>
           </div>
         </div>
@@ -239,13 +352,13 @@ export class SearchPanel {
       '.vsa-tab[data-tab="search"]'
     ) as HTMLButtonElement;
     this.tabTopics = this.root.querySelector(
-      '.vsa-tab[data-tab="topics"]'
+      '.vsa-more-card[data-goto="topics"]'
     ) as HTMLButtonElement;
     this.tabTranscript = this.root.querySelector(
-      '.vsa-tab[data-tab="transcript"]'
+      '.vsa-more-card[data-goto="transcript"]'
     ) as HTMLButtonElement;
     this.tabComments = this.root.querySelector(
-      '.vsa-tab[data-tab="comments"]'
+      '.vsa-more-card[data-goto="comments"]'
     ) as HTMLButtonElement;
     this.paneSearch = this.root.querySelector(
       '[data-pane="search"]'
@@ -262,10 +375,21 @@ export class SearchPanel {
     this.paneComments = this.root.querySelector(
       '[data-pane="comments"]'
     ) as HTMLElement;
+    this.paneHighlights = this.root.querySelector(
+      '[data-pane="highlights"]'
+    ) as HTMLElement;
+    this.paneAccount = this.root.querySelector(
+      '[data-pane="account"]'
+    ) as HTMLElement;
     this.paneSettings = this.root.querySelector(
       '[data-pane="settings"]'
     ) as HTMLElement;
+    this.paneMore = this.root.querySelector(
+      '[data-pane="more"]'
+    ) as HTMLElement;
     this.commentsEl = this.root.querySelector(".vsa-comments") as HTMLElement;
+
+    this.mountIcons();
 
     const host = this.root.querySelector(
       ".vsa-transcript-host"
@@ -281,11 +405,30 @@ export class SearchPanel {
     });
     chatHost.appendChild(this.chatPane.root);
 
+    const hlHost = this.root.querySelector(
+      ".vsa-highlights-host"
+    ) as HTMLElement;
+    this.highlightsPane = new HighlightsPane({
+      onAddHighlight: () => this.handlers.onAddHighlight?.(),
+      onCaptureFrame: () => this.handlers.onCaptureFrame?.(),
+      onSyncCloud: () => this.handlers.onSyncCloud?.(),
+      onSeek: (t) =>
+        this.handlers.onHighlightSeek?.(t) ?? this.handlers.onSeek(t),
+      onUpdateNote: (id, note) => this.handlers.onHighlightNote?.(id, note),
+      onDelete: (id) => this.handlers.onDeleteHighlight?.(id),
+      onDeleteScreenshot: (id) => this.handlers.onDeleteScreenshot?.(id),
+      onUpdateScreenshotNote: (id, note) =>
+        this.handlers.onScreenshotNote?.(id, note),
+    });
+    hlHost.appendChild(this.highlightsPane.root);
+
     this.shieldEvents();
     this.bindInput();
     this.bindSettings();
+    this.bindAuth();
     this.bindTabs();
     this.bindModes();
+    this.bindMoreNav();
 
     this.root.querySelector(".vsa-brand")?.addEventListener("click", (e) => {
       e.preventDefault();
@@ -306,18 +449,100 @@ export class SearchPanel {
       this.fireSearchNow();
     });
 
-    // Tooltips for compact tabs
-    this.tabSearch.title = "Search & Ask";
-    this.tabTopics.title = "Topics / chapters";
-    this.tabTranscript.title = "Live transcript";
-    this.tabComments.title = "Comment mood (good / bad)";
-    const gear = this.root.querySelector(
-      '.vsa-tab[data-tab="settings"]'
-    ) as HTMLElement | null;
-    if (gear) gear.title = "Settings";
+    this.root.querySelector("[data-account-chip]")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!this.expanded) this.setExpanded(true);
+      this.switchTab("account");
+    });
 
-    // Start as a small floating pill so it doesn't dominate the video
+    this.root.querySelectorAll("[data-open-vault]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openFullVault();
+      });
+    });
+
+    void this.bootstrapAuth();
     this.setExpanded(false);
+  }
+
+  /** Fill Lucide icons into data-* placeholders */
+  private mountIcons(): void {
+    const set = (sel: string, name: IconName, size = 16) => {
+      this.root.querySelectorAll(sel).forEach((el) => {
+        el.innerHTML = iconHtml(name, size);
+      });
+    };
+    const logo = this.root.querySelector("[data-logo-ico]");
+    if (logo) logo.innerHTML = iconSvg("search", 14, 2.25);
+    const collapse = this.root.querySelector("[data-collapse-ico]");
+    if (collapse) collapse.innerHTML = iconSvg("minimize", 16, 2.25);
+
+    this.root.querySelectorAll("[data-tab-ico]").forEach((el) => {
+      const name = (el as HTMLElement).dataset.tabIco as IconName;
+      if (name) el.innerHTML = iconHtml(name, 14);
+    });
+    set("[data-search-ico]", "search", 15);
+    this.root.querySelectorAll("[data-more-ico]").forEach((el) => {
+      const name = (el as HTMLElement).dataset.moreIco as IconName;
+      if (name) el.innerHTML = iconHtml(name, 18);
+    });
+    set("[data-back-ico]", "back", 14);
+    set("[data-auth-mark]", "user", 22);
+    set("[data-vault-ico]", "external", 14);
+    set("[data-sync-ico]", "cloud", 14);
+    set("[data-logout-ico]", "logout", 14);
+
+    const passToggle = this.root.querySelector(
+      "[data-pass-toggle]"
+    ) as HTMLElement | null;
+    if (passToggle) {
+      passToggle.innerHTML = iconHtml("eye", 15);
+      passToggle.dataset.shown = "0";
+    }
+  }
+
+  private bindMoreNav(): void {
+    this.root.querySelectorAll("[data-goto]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const tab = (btn as HTMLElement).dataset.goto as TabId | undefined;
+        if (tab) this.switchTab(tab);
+      });
+    });
+    this.root.querySelectorAll("[data-back]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const tab = (btn as HTMLElement).dataset.back as TabId | undefined;
+        if (tab) this.switchTab(tab);
+      });
+    });
+  }
+
+  /** Open web vault dashboard with current session token */
+  private openFullVault(): void {
+    const c = this.cloudSession;
+    const base = (c.projectUrl || DEFAULT_CLOUD_SETTINGS.projectUrl).replace(
+      /\/$/,
+      ""
+    );
+    if (!c.enabled || !c.apiKey) {
+      this.switchTab("account");
+      const msg = this.root.querySelector(
+        "[data-auth-msg]"
+      ) as HTMLElement | null;
+      if (msg) {
+        msg.textContent = "Sign in first to open your full vault";
+        msg.classList.add("is-error");
+      }
+      return;
+    }
+    const url = `${base}/app/?token=${encodeURIComponent(c.apiKey)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   setTranscript(segments: RawCaptionSegment[]): void {
@@ -415,6 +640,55 @@ export class SearchPanel {
     if (!this.expanded) this.setExpanded(true);
     this.switchTab("chat");
     this.chatPane.focusInput();
+  }
+
+  setHighlights(items: VideoHighlight[]): void {
+    this.highlightsPane.setHighlights(items);
+    this.updateVaultBadge();
+  }
+
+  setScreenshots(items: VideoScreenshot[]): void {
+    this.highlightsPane.setScreenshots(items);
+    this.updateVaultBadge();
+  }
+
+  /** Optimistic single-shot append (smooth capture path) */
+  appendScreenshot(item: VideoScreenshot): void {
+    this.highlightsPane.appendScreenshot(item);
+    this.updateVaultBadge();
+  }
+
+  setVaultSyncMessage(msg: string, isError = false): void {
+    this.highlightsPane.setSyncMessage(msg, isError);
+  }
+
+  private updateVaultBadge(): void {
+    const badge = this.root.querySelector(
+      '[data-count="highlights"]'
+    ) as HTMLElement | null;
+    if (!badge) return;
+    // Show total marks from count element inside pane if possible
+    const n = Number(
+      this.root.querySelector(".vsa-hl-count")?.textContent || "0"
+    );
+    const s = Number(
+      this.root.querySelector(".vsa-ss-count")?.textContent || "0"
+    );
+    const total = n + s;
+    badge.textContent = total > 0 ? String(total) : "";
+  }
+
+  flashHighlight(id: string): void {
+    this.highlightsPane.flashNew(id);
+  }
+
+  flashScreenshot(id: string): void {
+    this.highlightsPane.flashShot(id);
+  }
+
+  openHighlightsTab(): void {
+    if (!this.expanded) this.setExpanded(true);
+    this.switchTab("highlights");
   }
 
   setStatus(status: PanelStatus): void {
@@ -639,10 +913,21 @@ export class SearchPanel {
     this.activeTab = tab;
     this.root.dataset.tab = tab;
 
+    // Primary nav only (Search / Notes / Chat / More) — nested tools keep More active
+    const primaryFor =
+      tab === "topics" ||
+      tab === "transcript" ||
+      tab === "comments" ||
+      tab === "settings"
+        ? "more"
+        : tab === "account"
+          ? null
+          : tab;
+
     const tabs = this.root.querySelectorAll(".vsa-tab");
     tabs.forEach((t) => {
       const el = t as HTMLButtonElement;
-      const on = el.dataset.tab === tab;
+      const on = primaryFor != null && el.dataset.tab === primaryFor;
       el.classList.toggle("is-active", on);
       el.setAttribute("aria-selected", String(on));
     });
@@ -652,14 +937,19 @@ export class SearchPanel {
     this.paneTopics.hidden = tab !== "topics";
     this.paneTranscript.hidden = tab !== "transcript";
     this.paneComments.hidden = tab !== "comments";
+    this.paneHighlights.hidden = tab !== "highlights";
+    this.paneAccount.hidden = tab !== "account";
     this.paneSettings.hidden = tab !== "settings";
+    this.paneMore.hidden = tab !== "more";
 
     if (tab === "settings") {
       void loadLlmSettings().then((s) => this.fillSettingsForm(s));
     }
+    if (tab === "account") {
+      void this.bootstrapAuth();
+    }
     if (tab === "comments") {
       this.renderComments();
-      // Lazy-load on first open
       if (
         !this.commentsLoadedOnce &&
         this.commentsState.kind !== "loading" &&
@@ -826,6 +1116,274 @@ export class SearchPanel {
             err instanceof Error ? err.message : "Failed to save";
         }
       });
+  }
+
+  private bindAuth(): void {
+    const setMsg = (text: string, isError = false) => {
+      const msg = this.root.querySelector(
+        "[data-auth-msg]"
+      ) as HTMLElement | null;
+      if (!msg) return;
+      msg.textContent = text;
+      msg.classList.toggle("is-error", isError);
+      msg.classList.toggle("is-ok", !isError && Boolean(text));
+    };
+
+    this.root.querySelectorAll("[data-auth-mode]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const mode = (btn as HTMLElement).dataset.authMode as
+          | "login"
+          | "register";
+        if (mode) this.setAuthMode(mode);
+      });
+    });
+
+    this.root
+      .querySelector("[data-pass-toggle]")
+      ?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const pass = this.root.querySelector(
+          ".vsa-cloud-pass"
+        ) as HTMLInputElement | null;
+        const btn = e.currentTarget as HTMLButtonElement;
+        if (!pass) return;
+        const show = pass.type === "password";
+        pass.type = show ? "text" : "password";
+        const pass2 = this.root.querySelector(
+          ".vsa-cloud-pass2"
+        ) as HTMLInputElement | null;
+        if (pass2) pass2.type = pass.type;
+        btn.innerHTML = iconHtml(show ? "eyeOff" : "eye", 15);
+        btn.title = show ? "Hide password" : "Show password";
+      });
+
+    this.root
+      .querySelector("[data-auth-form]")
+      ?.addEventListener("submit", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void this.submitAuth(setMsg);
+      });
+
+    this.root
+      .querySelector("[data-auth-logout]")
+      ?.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const saved = await clearCloudSession();
+        this.applyAuthSession(saved);
+        this.setAuthMode("login");
+        setMsg("Signed out");
+        const pmsg = this.root.querySelector(
+          "[data-auth-profile-msg]"
+        ) as HTMLElement | null;
+        if (pmsg) pmsg.textContent = "";
+      });
+
+    this.root
+      .querySelector("[data-auth-sync]")
+      ?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.handlers.onSyncCloud?.();
+        this.switchTab("highlights");
+      });
+
+    this.setAuthMode("login");
+  }
+
+  private setAuthMode(mode: "login" | "register"): void {
+    this.authMode = mode;
+    this.root.querySelectorAll("[data-auth-mode]").forEach((btn) => {
+      btn.classList.toggle(
+        "is-on",
+        (btn as HTMLElement).dataset.authMode === mode
+      );
+    });
+    const nameWrap = this.root.querySelector(
+      "[data-auth-name-wrap]"
+    ) as HTMLElement | null;
+    const confirmWrap = this.root.querySelector(
+      "[data-auth-confirm-wrap]"
+    ) as HTMLElement | null;
+    const title = this.root.querySelector(
+      "[data-auth-title]"
+    ) as HTMLElement | null;
+    const sub = this.root.querySelector(
+      "[data-auth-sub]"
+    ) as HTMLElement | null;
+    const submit = this.root.querySelector(
+      "[data-auth-submit]"
+    ) as HTMLButtonElement | null;
+    const pass = this.root.querySelector(
+      ".vsa-cloud-pass"
+    ) as HTMLInputElement | null;
+
+    if (nameWrap) nameWrap.hidden = mode !== "register";
+    if (confirmWrap) confirmWrap.hidden = mode !== "register";
+    if (title) {
+      title.textContent =
+        mode === "register" ? "Create your account" : "Welcome back";
+    }
+    if (sub) {
+      sub.textContent =
+        mode === "register"
+          ? "One free account · notes & board shots stay private in your vault."
+          : "Sign in to sync notes, highlights & screenshots to your private vault.";
+    }
+    if (submit) {
+      submit.textContent =
+        mode === "register" ? "Create account" : "Log in";
+    }
+    if (pass) {
+      pass.autocomplete =
+        mode === "register" ? "new-password" : "current-password";
+    }
+  }
+
+  private async submitAuth(
+    setMsg: (text: string, isError?: boolean) => void
+  ): Promise<void> {
+    const url =
+      (
+        this.root.querySelector(".vsa-cloud-url") as HTMLInputElement | null
+      )?.value.trim() || DEFAULT_CLOUD_SETTINGS.projectUrl;
+    const email = (
+      this.root.querySelector(".vsa-cloud-email") as HTMLInputElement
+    ).value.trim();
+    const password = (
+      this.root.querySelector(".vsa-cloud-pass") as HTMLInputElement
+    ).value;
+    const displayName = (
+      this.root.querySelector(".vsa-cloud-name") as HTMLInputElement
+    ).value.trim();
+    const pass2 = (
+      this.root.querySelector(".vsa-cloud-pass2") as HTMLInputElement | null
+    )?.value;
+
+    if (this.authMode === "register" && pass2 !== undefined && password !== pass2) {
+      setMsg("Passwords do not match", true);
+      return;
+    }
+
+    const submit = this.root.querySelector(
+      "[data-auth-submit]"
+    ) as HTMLButtonElement | null;
+    if (submit) submit.disabled = true;
+    setMsg(
+      this.authMode === "login" ? "Signing in…" : "Creating account…"
+    );
+
+    try {
+      const saved = await vaultAuth(this.authMode, {
+        projectUrl: url,
+        email,
+        password,
+        displayName,
+      });
+      // Clear password fields after success
+      const passEl = this.root.querySelector(
+        ".vsa-cloud-pass"
+      ) as HTMLInputElement | null;
+      const pass2El = this.root.querySelector(
+        ".vsa-cloud-pass2"
+      ) as HTMLInputElement | null;
+      if (passEl) passEl.value = "";
+      if (pass2El) pass2El.value = "";
+      this.applyAuthSession(saved);
+      setMsg(`Signed in as ${saved.email}`);
+      this.handlers.onCloudSettingsSaved?.();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Auth failed", true);
+    } finally {
+      if (submit) submit.disabled = false;
+    }
+  }
+
+  private async bootstrapAuth(): Promise<void> {
+    let c = await loadCloudSettings();
+    if (c.enabled) {
+      c = await refreshSession();
+    }
+    this.applyAuthSession(c);
+  }
+
+  private applyAuthSession(c: CloudSettings): void {
+    this.cloudSession = c;
+    const url = this.root.querySelector(
+      ".vsa-cloud-url"
+    ) as HTMLInputElement | null;
+    const email = this.root.querySelector(
+      ".vsa-cloud-email"
+    ) as HTMLInputElement | null;
+    if (url && !url.value) url.value = c.projectUrl || DEFAULT_CLOUD_SETTINGS.projectUrl;
+    if (url && c.projectUrl) url.value = c.projectUrl;
+    if (email && c.email) email.value = c.email;
+
+    const gate = this.root.querySelector(
+      "[data-auth-gate]"
+    ) as HTMLElement | null;
+    const profile = this.root.querySelector(
+      "[data-auth-profile]"
+    ) as HTMLElement | null;
+    const signedIn = Boolean(c.enabled && c.email);
+
+    if (gate) gate.hidden = signedIn;
+    if (profile) profile.hidden = !signedIn;
+
+    if (signedIn) {
+      const av = this.root.querySelector(
+        "[data-profile-av]"
+      ) as HTMLElement | null;
+      const name = this.root.querySelector(
+        "[data-profile-name]"
+      ) as HTMLElement | null;
+      const em = this.root.querySelector(
+        "[data-profile-email]"
+      ) as HTMLElement | null;
+      const id = this.root.querySelector(
+        "[data-profile-id]"
+      ) as HTMLElement | null;
+      if (av) av.textContent = accountInitials(c);
+      if (name) name.textContent = c.displayName || c.email.split("@")[0];
+      if (em) em.textContent = c.email;
+      if (id) id.textContent = c.userId ? `ID ${c.userId}` : "";
+      const sv = this.root.querySelector(
+        "[data-stat-videos]"
+      ) as HTMLElement | null;
+      const sm = this.root.querySelector(
+        "[data-stat-marks]"
+      ) as HTMLElement | null;
+      const ss = this.root.querySelector(
+        "[data-stat-shots]"
+      ) as HTMLElement | null;
+      if (sv) sv.textContent = String(c.videoCount ?? 0);
+      if (sm) sm.textContent = String(c.highlightCount ?? 0);
+      if (ss) ss.textContent = String(c.screenshotCount ?? 0);
+    }
+
+    // Header avatar chip only
+    const chip = this.root.querySelector(
+      "[data-account-chip]"
+    ) as HTMLElement | null;
+    const chipAv = this.root.querySelector(
+      "[data-account-av]"
+    ) as HTMLElement | null;
+    if (chip) {
+      chip.dataset.state = signedIn ? "in" : "out";
+      chip.title = signedIn
+        ? `${c.displayName || c.email} · Account`
+        : "Sign in";
+    }
+    if (chipAv) chipAv.textContent = signedIn ? accountInitials(c) : "?";
+
+    this.highlightsPane.setSyncMessage(
+      signedIn ? `Cloud: ${c.email}` : "Sign in (avatar) to sync · or open Full vault",
+      !signedIn
+    );
   }
 
   private fillSettingsForm(s: LlmSettings): void {
@@ -1143,16 +1701,13 @@ export class SearchPanel {
 }
 
 export function injectSearchPanelStyles(): void {
-  // Allow hot-reload of styles during iteration
   document.getElementById("videosearch-ai-styles")?.remove();
   document.getElementById("videosearch-ai-fonts")?.remove();
 
-  // Distinctive type — loaded once for any page
   const fonts = document.createElement("link");
   fonts.id = "videosearch-ai-fonts";
   fonts.rel = "stylesheet";
-  fonts.href =
-    "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Sora:wght@400;500;600;700&display=swap";
+  fonts.href = VSA_FONT_HREF;
   document.documentElement.appendChild(fonts);
 
   const style = document.createElement("style");
@@ -1160,1196 +1715,6 @@ export function injectSearchPanelStyles(): void {
   style.textContent = VSA_STYLES;
   document.documentElement.appendChild(style);
 }
-
-/** Broadcast-studio UI: ink glass + signal mint. Fully scoped under #videosearch-ai-*. */
-const VSA_STYLES = `
-  /* ═══════════════════════════════════════════════════════════
-     Compact floating widget — lives on the video, not the page
-     ═══════════════════════════════════════════════════════════ */
-  #videosearch-ai-root {
-    --vsa-font: "Sora", system-ui, -apple-system, "Segoe UI", sans-serif;
-    --vsa-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
-    --vsa-bg: #0a0d10;
-    --vsa-bg-elevated: #10151b;
-    --vsa-surface: #161c24;
-    --vsa-surface-2: #1c2430;
-    --vsa-border: rgba(255,255,255,0.09);
-    --vsa-border-strong: rgba(255,255,255,0.14);
-    --vsa-text: #f2f5f7;
-    --vsa-muted: #8b98a5;
-    --vsa-faint: #5c6b78;
-    --vsa-accent: #2dd4a8;
-    --vsa-accent-2: #22b8cf;
-    --vsa-accent-dim: rgba(45, 212, 168, 0.14);
-    --vsa-accent-glow: rgba(45, 212, 168, 0.4);
-    --vsa-radius: 18px;
-    --vsa-ease: cubic-bezier(0.22, 1, 0.36, 1);
-    --vsa-shadow:
-      0 0 0 1px rgba(255,255,255,0.06) inset,
-      0 18px 50px rgba(0,0,0,0.55),
-      0 0 40px rgba(45,212,168,0.08);
-
-    position: fixed !important;
-    z-index: 2147483646;
-    box-sizing: border-box;
-    font-family: var(--vsa-font);
-    -webkit-font-smoothing: antialiased;
-    /* Dock over the player — bottom-right of viewport */
-    right: max(16px, env(safe-area-inset-right, 0px));
-    bottom: max(88px, env(safe-area-inset-bottom, 0px));
-    left: auto;
-    top: auto;
-    width: min(380px, calc(100vw - 24px));
-    max-height: min(78vh, 620px);
-    margin: 0;
-    pointer-events: auto !important;
-  }
-
-  #videosearch-ai-root *,
-  #videosearch-ai-root *::before,
-  #videosearch-ai-root *::after { box-sizing: border-box; }
-
-  /* Collapsed = tiny glowing pill only */
-  #videosearch-ai-root.is-collapsed,
-  #videosearch-ai-panel.is-collapsed {
-    width: auto;
-    max-width: none;
-  }
-  #videosearch-ai-root.is-collapsed {
-    bottom: max(96px, env(safe-area-inset-bottom, 0px));
-  }
-
-  #videosearch-ai-panel {
-    position: relative;
-    border-radius: var(--vsa-radius);
-    background:
-      radial-gradient(120% 90% at 0% 0%, rgba(45,212,168,0.18), transparent 50%),
-      radial-gradient(100% 80% at 100% 0%, rgba(34,184,207,0.12), transparent 45%),
-      linear-gradient(165deg, var(--vsa-bg-elevated) 0%, var(--vsa-bg) 100%);
-    color: var(--vsa-text);
-    border: 1px solid var(--vsa-border);
-    box-shadow: var(--vsa-shadow);
-    overflow: hidden;
-    isolation: isolate;
-    backdrop-filter: blur(20px) saturate(1.2);
-    -webkit-backdrop-filter: blur(20px) saturate(1.2);
-    max-height: inherit;
-    display: flex;
-    flex-direction: column;
-    transition: box-shadow 0.25s var(--vsa-ease), transform 0.25s var(--vsa-ease);
-  }
-
-  #videosearch-ai-panel::before {
-    content: "";
-    pointer-events: none;
-    position: absolute;
-    inset: 0;
-    opacity: 0.28;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
-    mix-blend-mode: soft-light;
-    z-index: 0;
-  }
-  #videosearch-ai-panel > * { position: relative; z-index: 1; }
-
-  /* ── Collapsed pill mode ── */
-  #videosearch-ai-root.is-collapsed #videosearch-ai-panel {
-    border-radius: 999px;
-    background: linear-gradient(135deg, #3ee6b5 0%, #2dd4a8 40%, #1eb8c9 100%);
-    border: none;
-    box-shadow:
-      0 0 0 1px rgba(255,255,255,0.2) inset,
-      0 10px 32px rgba(45,212,168,0.45),
-      0 0 48px rgba(45,212,168,0.2);
-    animation: vsa-pulse-glow 2.8s ease-in-out infinite;
-  }
-  #videosearch-ai-root.is-collapsed #videosearch-ai-panel::before { display: none; }
-  #videosearch-ai-root.is-collapsed .vsa-tabs,
-  #videosearch-ai-root.is-collapsed .vsa-panel-body,
-  #videosearch-ai-root.is-collapsed .vsa-status,
-  #videosearch-ai-root.is-collapsed .vsa-collapse-btn { display: none !important; }
-
-  #videosearch-ai-root.is-collapsed .vsa-bar {
-    padding: 0;
-    gap: 0;
-  }
-  #videosearch-ai-root.is-collapsed .vsa-brand {
-    background: transparent;
-    box-shadow: none;
-    color: #04120e;
-    padding: 10px 16px 10px 10px;
-    gap: 8px;
-  }
-  #videosearch-ai-root.is-collapsed .vsa-logo {
-    width: 28px;
-    height: 28px;
-    background: rgba(0,0,0,0.15);
-  }
-  #videosearch-ai-root.is-collapsed .vsa-title { font-size: 13px; color: #04120e; }
-  #videosearch-ai-root.is-collapsed .vsa-title-sub { color: #04120e; opacity: 0.7; }
-  #videosearch-ai-root.is-collapsed .vsa-badge {
-    background: rgba(0,0,0,0.18);
-    color: #04120e;
-  }
-
-  @keyframes vsa-pulse-glow {
-    0%, 100% { box-shadow: 0 0 0 1px rgba(255,255,255,0.2) inset, 0 10px 32px rgba(45,212,168,0.4), 0 0 40px rgba(45,212,168,0.15); }
-    50% { box-shadow: 0 0 0 1px rgba(255,255,255,0.25) inset, 0 12px 40px rgba(45,212,168,0.55), 0 0 56px rgba(45,212,168,0.28); }
-  }
-
-  /* ── Header (expanded) ── */
-  #videosearch-ai-panel .vsa-bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 8px 6px;
-    flex-shrink: 0;
-  }
-  #videosearch-ai-panel .vsa-brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    border: none;
-    cursor: pointer;
-    padding: 4px 10px 4px 4px;
-    border-radius: 999px;
-    color: #04120e;
-    background: linear-gradient(135deg, #3ee6b5 0%, #2dd4a8 45%, #1fb8c9 100%);
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset, 0 4px 14px var(--vsa-accent-glow);
-    transition: transform 0.18s var(--vsa-ease), filter 0.18s;
-  }
-  #videosearch-ai-panel .vsa-brand:hover { filter: brightness(1.06); transform: translateY(-1px); }
-  #videosearch-ai-panel .vsa-brand[data-state="loading"] {
-    background: linear-gradient(135deg, #60a5fa, #a78bfa);
-    color: #0b1020;
-  }
-  #videosearch-ai-panel .vsa-brand[data-state="error"] {
-    background: linear-gradient(135deg, #f87171, #ef4444);
-    color: #1a0505;
-  }
-  #videosearch-ai-panel .vsa-brand[data-state="warn"] {
-    background: linear-gradient(135deg, #fbbf24, #f59e0b);
-    color: #1a1000;
-  }
-  #videosearch-ai-panel .vsa-logo {
-    display: inline-flex;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0,0,0,0.16);
-    flex-shrink: 0;
-  }
-  #videosearch-ai-panel .vsa-title-wrap {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 3px;
-    line-height: 1;
-  }
-  #videosearch-ai-panel .vsa-title {
-    font-size: 11.5px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-  }
-  #videosearch-ai-panel .vsa-title-sub {
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    opacity: 0.72;
-  }
-  #videosearch-ai-panel .vsa-badge {
-    min-width: 18px;
-    padding: 1px 5px;
-    border-radius: 999px;
-    background: rgba(0,0,0,0.18);
-    font-family: var(--vsa-mono);
-    font-size: 9.5px;
-    font-weight: 600;
-    text-align: center;
-  }
-  #videosearch-ai-panel .vsa-status {
-    flex: 1;
-    min-width: 0;
-    font-size: 10.5px;
-    font-weight: 500;
-    color: var(--vsa-muted);
-    text-align: right;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  #videosearch-ai-panel .vsa-collapse-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    flex-shrink: 0;
-    border: 1px solid var(--vsa-border);
-    border-radius: 9px;
-    background: var(--vsa-surface);
-    color: var(--vsa-muted);
-    cursor: pointer;
-    transition: color 0.15s, background 0.15s;
-  }
-  #videosearch-ai-panel .vsa-collapse-btn:hover {
-    color: var(--vsa-text);
-    background: var(--vsa-surface-2);
-  }
-
-  /* ── Tabs: Search · Chat · Topics · Live · Mood · ⚙ ── */
-  #videosearch-ai-panel .vsa-tabs {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr)) 30px;
-    gap: 2px;
-    padding: 0 6px 8px;
-    flex-shrink: 0;
-  }
-  #videosearch-ai-panel .vsa-tab {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 1px;
-    min-height: 36px;
-    min-width: 0;
-    padding: 4px 2px;
-    border: 1px solid transparent;
-    border-radius: 9px;
-    background: transparent;
-    color: var(--vsa-muted);
-    font-family: var(--vsa-font);
-    font-size: 9.5px;
-    font-weight: 600;
-    cursor: pointer;
-    pointer-events: auto !important;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-    line-height: 1.1;
-  }
-  #videosearch-ai-panel .vsa-tab:hover {
-    color: var(--vsa-text);
-    background: rgba(255,255,255,0.04);
-  }
-  #videosearch-ai-panel .vsa-tab.is-active {
-    color: var(--vsa-accent);
-    background: var(--vsa-accent-dim);
-    border-color: rgba(45,212,168,0.28);
-  }
-  #videosearch-ai-panel .vsa-tab-ico { font-size: 12px; opacity: 0.95; line-height: 1; }
-  #videosearch-ai-panel .vsa-tab-txt {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  #videosearch-ai-panel .vsa-tab-count:not(:empty) {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 14px;
-    height: 14px;
-    padding: 0 3px;
-    border-radius: 999px;
-    background: rgba(45,212,168,0.22);
-    color: var(--vsa-accent);
-    font-family: var(--vsa-mono);
-    font-size: 8.5px;
-    font-weight: 600;
-    position: absolute;
-    top: 2px;
-    right: 2px;
-  }
-  #videosearch-ai-panel .vsa-tab { position: relative; }
-  #videosearch-ai-panel .vsa-tab-gear {
-    padding: 0;
-    flex-direction: row;
-    min-height: 36px;
-  }
-
-  /* ── Body ── */
-  #videosearch-ai-panel .vsa-panel-body {
-    padding: 0 10px 10px;
-    overflow: auto;
-    flex: 1;
-    min-height: 0;
-    animation: vsa-fade-in 0.22s var(--vsa-ease);
-  }
-  #videosearch-ai-panel .vsa-pane { min-height: 0; }
-
-  #videosearch-ai-panel .vsa-mode-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0;
-    margin-bottom: 8px;
-    padding: 2px;
-    border-radius: 10px;
-    background: rgba(0,0,0,0.35);
-    border: 1px solid var(--vsa-border);
-  }
-  #videosearch-ai-panel .vsa-mode {
-    border: none;
-    border-radius: 8px;
-    background: transparent;
-    color: var(--vsa-muted);
-    font-family: var(--vsa-font);
-    font-size: 10.5px;
-    font-weight: 600;
-    padding: 6px 4px;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-  }
-  #videosearch-ai-panel .vsa-mode.is-active {
-    color: var(--vsa-text);
-    background: var(--vsa-surface-2);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-  }
-
-  #videosearch-ai-panel .vsa-input-row {
-    display: flex;
-    gap: 6px;
-    align-items: stretch;
-  }
-  #videosearch-ai-panel .vsa-input {
-    flex: 1;
-    min-width: 0;
-    padding: 9px 12px;
-    border-radius: 12px;
-    border: 1px solid var(--vsa-border-strong);
-    background: rgba(0,0,0,0.4);
-    color: var(--vsa-text);
-    font-family: var(--vsa-font);
-    font-size: 12.5px;
-    font-weight: 500;
-    outline: none;
-    transition: border-color 0.15s, box-shadow 0.15s;
-    pointer-events: auto !important;
-    -webkit-user-select: text !important;
-    user-select: text !important;
-  }
-  #videosearch-ai-panel .vsa-input::placeholder { color: var(--vsa-faint); }
-  #videosearch-ai-panel .vsa-input:focus {
-    border-color: rgba(45,212,168,0.55);
-    box-shadow: 0 0 0 3px var(--vsa-accent-dim);
-  }
-  #videosearch-ai-panel .vsa-input.vsa-input-locked { opacity: 0.55; cursor: wait; }
-  #videosearch-ai-panel .vsa-search-btn {
-    flex-shrink: 0;
-    min-width: 48px;
-    padding: 0 12px;
-    border: none;
-    border-radius: 12px;
-    cursor: pointer;
-    color: #04120e;
-    font-family: var(--vsa-font);
-    font-size: 12px;
-    font-weight: 700;
-    background: linear-gradient(135deg, #3ee6b5, #2dd4a8 50%, #22c3c0);
-    box-shadow: 0 4px 14px var(--vsa-accent-glow);
-    transition: transform 0.15s, filter 0.15s;
-  }
-  #videosearch-ai-panel .vsa-search-btn:hover { filter: brightness(1.06); transform: translateY(-1px); }
-
-  /* Answer */
-  #videosearch-ai-panel .vsa-answer {
-    margin-top: 8px;
-    padding: 10px 11px;
-    border-radius: 12px;
-    border: 1px solid rgba(45,212,168,0.28);
-    background: linear-gradient(135deg, rgba(45,212,168,0.12), rgba(34,184,207,0.06));
-  }
-  #videosearch-ai-panel .vsa-answer-head {
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--vsa-accent);
-    margin-bottom: 6px;
-  }
-  #videosearch-ai-panel .vsa-answer-body {
-    font-size: 12.5px;
-    line-height: 1.5;
-    color: var(--vsa-text);
-    white-space: pre-wrap;
-  }
-  #videosearch-ai-panel .vsa-time-link {
-    display: inline-flex;
-    margin: 0 1px;
-    padding: 1px 7px;
-    border-radius: 999px;
-    border: 1px solid rgba(45,212,168,0.45);
-    background: rgba(45,212,168,0.16);
-    color: var(--vsa-accent);
-    font-family: var(--vsa-mono);
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    vertical-align: baseline;
-    pointer-events: auto !important;
-  }
-  #videosearch-ai-panel .vsa-time-link:hover {
-    background: rgba(45,212,168,0.3);
-    color: #6eecc4;
-  }
-
-  #videosearch-ai-panel .vsa-results-label {
-    margin: 8px 0 5px;
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-    color: var(--vsa-faint);
-  }
-  #videosearch-ai-panel .vsa-results {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    max-height: min(180px, 28vh);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--vsa-faint) transparent;
-  }
-  #videosearch-ai-panel .vsa-result {
-    display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) 32px;
-    gap: 8px;
-    align-items: start;
-    width: 100%;
-    padding: 8px 9px;
-    text-align: left;
-    border: 1px solid var(--vsa-border);
-    border-radius: 10px;
-    background: var(--vsa-surface);
-    color: var(--vsa-text);
-    cursor: pointer;
-    transition: border-color 0.15s, background 0.15s, transform 0.12s;
-  }
-  #videosearch-ai-panel .vsa-result:hover,
-  #videosearch-ai-panel .vsa-result-active {
-    border-color: rgba(45,212,168,0.4);
-    background: var(--vsa-surface-2);
-    transform: translateY(-1px);
-  }
-  #videosearch-ai-panel .vsa-time {
-    font-family: var(--vsa-mono);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--vsa-accent);
-  }
-  #videosearch-ai-panel .vsa-snippet {
-    font-size: 11.5px;
-    line-height: 1.35;
-    color: var(--vsa-muted);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  #videosearch-ai-panel .vsa-score {
-    font-family: var(--vsa-mono);
-    font-size: 9.5px;
-    font-weight: 600;
-    color: var(--vsa-faint);
-    text-align: right;
-  }
-
-  /* Topics */
-  #videosearch-ai-panel .vsa-topics-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--vsa-muted);
-    margin-bottom: 8px;
-    line-height: 1.35;
-  }
-  #videosearch-ai-panel .vsa-topics-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    max-height: min(260px, 40vh);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    pointer-events: auto !important;
-  }
-  #videosearch-ai-panel .vsa-topic-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    max-width: 100%;
-    padding: 6px 10px;
-    border-radius: 999px;
-    border: 1px solid var(--vsa-border);
-    background: var(--vsa-surface);
-    color: var(--vsa-text);
-    font-family: var(--vsa-font);
-    font-size: 11.5px;
-    font-weight: 550;
-    cursor: pointer !important;
-    pointer-events: auto !important;
-    transition: border-color 0.15s, background 0.15s, transform 0.12s;
-  }
-  #videosearch-ai-panel .vsa-topic-chip:hover {
-    border-color: rgba(45,212,168,0.45);
-    background: var(--vsa-accent-dim);
-    transform: translateY(-1px);
-  }
-  #videosearch-ai-panel .vsa-topic-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 180px;
-  }
-  #videosearch-ai-panel .vsa-topic-time {
-    font-family: var(--vsa-mono);
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--vsa-accent);
-    flex-shrink: 0;
-  }
-
-  /* Transcript */
-  #videosearch-ai-panel .vsa-transcript {
-    border: 1px solid var(--vsa-border);
-    border-radius: 12px;
-    background: rgba(0,0,0,0.3);
-    overflow: hidden;
-    margin: 0;
-  }
-  #videosearch-ai-panel .vsa-transcript-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    padding: 7px 10px;
-    border-bottom: 1px solid var(--vsa-border);
-    background: var(--vsa-accent-dim);
-  }
-  #videosearch-ai-panel .vsa-transcript-title {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--vsa-accent);
-  }
-  #videosearch-ai-panel .vsa-transcript-follow {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 10px;
-    font-weight: 500;
-    color: var(--vsa-muted);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  #videosearch-ai-panel .vsa-transcript-meta {
-    padding: 4px 10px;
-    font-family: var(--vsa-mono);
-    font-size: 10px;
-    color: var(--vsa-faint);
-    border-bottom: 1px solid var(--vsa-border);
-  }
-  #videosearch-ai-panel .vsa-transcript-list {
-    max-height: min(220px, 34vh);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 2px 0;
-    scrollbar-width: thin;
-  }
-  #videosearch-ai-panel .vsa-transcript-line {
-    display: grid;
-    grid-template-columns: 42px minmax(0, 1fr);
-    gap: 8px;
-    width: 100%;
-    text-align: left;
-    border: none;
-    background: transparent;
-    color: var(--vsa-text);
-    padding: 6px 10px;
-    cursor: pointer;
-    font-family: var(--vsa-font);
-    font-size: 11.5px;
-    line-height: 1.35;
-    border-left: 3px solid transparent;
-    transition: background 0.12s, border-color 0.12s;
-  }
-  #videosearch-ai-panel .vsa-transcript-line:hover { background: rgba(255,255,255,0.03); }
-  #videosearch-ai-panel .vsa-transcript-line.is-active {
-    background: var(--vsa-accent-dim);
-    border-left-color: var(--vsa-accent);
-  }
-  #videosearch-ai-panel .vsa-transcript-line.is-active .vsa-transcript-text {
-    font-weight: 600;
-    color: var(--vsa-text);
-  }
-  #videosearch-ai-panel .vsa-transcript-time {
-    font-family: var(--vsa-mono);
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--vsa-accent);
-  }
-  #videosearch-ai-panel .vsa-transcript-text { color: var(--vsa-muted); }
-
-  /* Comments / Mood */
-  #videosearch-ai-panel .vsa-comments {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    max-height: min(360px, 48vh);
-    overflow-y: auto;
-    padding-right: 2px;
-    scrollbar-width: thin;
-  }
-  #videosearch-ai-panel .vsa-comments-load {
-    margin-top: 8px;
-    border: none;
-    border-radius: 10px;
-    padding: 8px 12px;
-    cursor: pointer;
-    color: #04120e;
-    font-family: var(--vsa-font);
-    font-weight: 700;
-    font-size: 12px;
-    background: linear-gradient(135deg, #3ee6b5, #2dd4a8);
-    box-shadow: 0 4px 14px var(--vsa-accent-glow);
-  }
-  #videosearch-ai-panel .vsa-comments-refresh {
-    background: var(--vsa-surface-2);
-    color: var(--vsa-text);
-    box-shadow: none;
-    border: 1px solid var(--vsa-border-strong);
-    font-weight: 600;
-  }
-  #videosearch-ai-panel .vsa-mood-head {
-    padding: 10px;
-    border-radius: 12px;
-    background: rgba(0,0,0,0.28);
-    border: 1px solid var(--vsa-border);
-  }
-  #videosearch-ai-panel .vsa-mood-head.is-pos {
-    background: linear-gradient(160deg, rgba(45,212,168,0.16), rgba(0,0,0,0.2));
-  }
-  #videosearch-ai-panel .vsa-mood-head.is-neg {
-    background: linear-gradient(160deg, rgba(248,113,113,0.14), rgba(0,0,0,0.2));
-  }
-  #videosearch-ai-panel .vsa-mood-title {
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-    margin-bottom: 10px;
-  }
-  #videosearch-ai-panel .vsa-mood-emoji { font-size: 22px; line-height: 1; }
-  #videosearch-ai-panel .vsa-mood-label {
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-  }
-  #videosearch-ai-panel .vsa-mood-meta {
-    font-size: 10.5px;
-    color: var(--vsa-muted);
-    margin-top: 2px;
-  }
-  #videosearch-ai-panel .vsa-mood-bar {
-    display: flex;
-    height: 8px;
-    border-radius: 999px;
-    overflow: hidden;
-    gap: 2px;
-    background: rgba(0,0,0,0.25);
-  }
-  #videosearch-ai-panel .vsa-mood-seg { min-width: 2px; }
-  #videosearch-ai-panel .vsa-mood-pos { background: #2dd4a8; }
-  #videosearch-ai-panel .vsa-mood-neu { background: #64748b; }
-  #videosearch-ai-panel .vsa-mood-neg { background: #f87171; }
-  #videosearch-ai-panel .vsa-mood-legend {
-    display: flex;
-    justify-content: space-between;
-    gap: 6px;
-    margin-top: 6px;
-    font-size: 10px;
-    font-weight: 600;
-  }
-  #videosearch-ai-panel .vsa-leg-pos { color: #2dd4a8; }
-  #videosearch-ai-panel .vsa-leg-neu { color: var(--vsa-muted); }
-  #videosearch-ai-panel .vsa-leg-neg { color: #f87171; }
-  #videosearch-ai-panel .vsa-mood-summary {
-    margin: 10px 0 0;
-    font-size: 11.5px;
-    line-height: 1.45;
-    color: var(--vsa-text);
-  }
-  #videosearch-ai-panel .vsa-mood-engine {
-    margin-top: 6px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--vsa-faint);
-  }
-  #videosearch-ai-panel .vsa-mood-section-title {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--vsa-faint);
-    margin-bottom: 6px;
-  }
-  #videosearch-ai-panel .vsa-theme-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  #videosearch-ai-panel .vsa-theme-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-    background: var(--vsa-surface);
-    border: 1px solid var(--vsa-border);
-    color: var(--vsa-text);
-  }
-  #videosearch-ai-panel .vsa-theme-chip em {
-    font-style: normal;
-    font-family: var(--vsa-mono);
-    font-size: 10px;
-    color: var(--vsa-muted);
-  }
-  #videosearch-ai-panel .vsa-theme-chip.lean-positive {
-    border-color: rgba(45,212,168,0.35);
-    background: rgba(45,212,168,0.1);
-  }
-  #videosearch-ai-panel .vsa-theme-chip.lean-negative {
-    border-color: rgba(248,113,113,0.35);
-    background: rgba(248,113,113,0.1);
-  }
-  #videosearch-ai-panel .vsa-comment-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  #videosearch-ai-panel .vsa-comment-card {
-    padding: 8px 9px;
-    border-radius: 10px;
-    background: rgba(0,0,0,0.22);
-    border: 1px solid var(--vsa-border);
-  }
-  #videosearch-ai-panel .vsa-comment-card.tone-pos {
-    border-left: 2px solid #2dd4a8;
-  }
-  #videosearch-ai-panel .vsa-comment-card.tone-neg {
-    border-left: 2px solid #f87171;
-  }
-  #videosearch-ai-panel .vsa-comment-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    align-items: center;
-    margin-bottom: 4px;
-    font-size: 10px;
-    color: var(--vsa-faint);
-  }
-  #videosearch-ai-panel .vsa-comment-author {
-    font-weight: 700;
-    color: var(--vsa-muted);
-  }
-  #videosearch-ai-panel .vsa-comment-likes { color: #f472b6; }
-  #videosearch-ai-panel .vsa-comment-text {
-    font-size: 11.5px;
-    line-height: 1.4;
-    color: var(--vsa-text);
-    word-break: break-word;
-  }
-  #videosearch-ai-panel .vsa-mood-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    padding-top: 2px;
-  }
-  #videosearch-ai-panel .vsa-mood-note { font-size: 10px; }
-  #videosearch-ai-panel .vsa-tab-count[data-mood="positive"] { color: #2dd4a8; }
-  #videosearch-ai-panel .vsa-tab-count[data-mood="negative"] { color: #f87171; }
-
-  /* Chat RAG */
-  #videosearch-ai-panel .vsa-chat {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-height: 220px;
-    max-height: min(420px, 52vh);
-  }
-  #videosearch-ai-panel .vsa-chat-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  #videosearch-ai-panel .vsa-chat-title {
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-  }
-  #videosearch-ai-panel .vsa-chat-clear {
-    border: 1px solid var(--vsa-border);
-    background: transparent;
-    color: var(--vsa-muted);
-    font-size: 10px;
-    font-weight: 600;
-    border-radius: 8px;
-    padding: 4px 8px;
-    cursor: pointer;
-    font-family: var(--vsa-font);
-  }
-  #videosearch-ai-panel .vsa-chat-clear:hover { color: var(--vsa-text); }
-  #videosearch-ai-panel .vsa-chat-status {
-    font-size: 11px;
-    color: var(--vsa-muted);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  #videosearch-ai-panel .vsa-chat-status.is-error { color: #f87171; }
-  #videosearch-ai-panel .vsa-chat-list {
-    flex: 1;
-    min-height: 120px;
-    max-height: min(260px, 36vh);
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding-right: 2px;
-    scrollbar-width: thin;
-  }
-  #videosearch-ai-panel .vsa-chat-empty {
-    font-size: 11.5px;
-    color: var(--vsa-muted);
-    line-height: 1.45;
-    padding: 6px 2px;
-  }
-  #videosearch-ai-panel .vsa-chat-empty strong {
-    display: block;
-    color: var(--vsa-text);
-    margin-bottom: 4px;
-  }
-  #videosearch-ai-panel .vsa-chat-msg.role-user {
-    display: flex;
-    justify-content: flex-end;
-  }
-  #videosearch-ai-panel .vsa-chat-bubble {
-    max-width: 96%;
-    border-radius: 12px;
-    padding: 8px 10px;
-    font-size: 12px;
-    line-height: 1.45;
-  }
-  #videosearch-ai-panel .vsa-chat-bubble.user {
-    background: linear-gradient(135deg, rgba(45,212,168,0.28), rgba(34,184,207,0.18));
-    border: 1px solid rgba(45,212,168,0.3);
-    color: var(--vsa-text);
-  }
-  #videosearch-ai-panel .vsa-chat-bubble.assistant {
-    background: rgba(0,0,0,0.28);
-    border: 1px solid var(--vsa-border);
-  }
-  #videosearch-ai-panel .vsa-chat-meta {
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--vsa-faint);
-    margin-bottom: 4px;
-  }
-  #videosearch-ai-panel .vsa-chat-bubble-text { white-space: pre-wrap; word-break: break-word; }
-  #videosearch-ai-panel .vsa-time-pill {
-    display: inline-flex;
-    align-items: center;
-    margin: 0 2px;
-    padding: 1px 6px;
-    border-radius: 999px;
-    border: none;
-    cursor: pointer;
-    font-family: var(--vsa-mono);
-    font-size: 10.5px;
-    font-weight: 600;
-    color: #04120e;
-    background: linear-gradient(135deg, #3ee6b5, #2dd4a8);
-    vertical-align: baseline;
-  }
-  #videosearch-ai-panel .vsa-chat-sources {
-    margin-top: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  #videosearch-ai-panel .vsa-chat-sources-label {
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--vsa-faint);
-  }
-  #videosearch-ai-panel .vsa-chat-source {
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-    text-align: left;
-    width: 100%;
-    border: 1px solid var(--vsa-border);
-    background: rgba(0,0,0,0.2);
-    border-radius: 8px;
-    padding: 5px 7px;
-    cursor: pointer;
-    color: var(--vsa-text);
-    font-family: var(--vsa-font);
-  }
-  #videosearch-ai-panel .vsa-chat-source:hover {
-    border-color: rgba(45,212,168,0.35);
-  }
-  #videosearch-ai-panel .vsa-chat-source .vsa-time {
-    font-family: var(--vsa-mono);
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--vsa-accent);
-    flex-shrink: 0;
-  }
-  #videosearch-ai-panel .vsa-chat-source .vsa-snippet {
-    font-size: 10.5px;
-    color: var(--vsa-muted);
-    line-height: 1.3;
-  }
-  #videosearch-ai-panel .vsa-chat-suggest {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-  }
-  #videosearch-ai-panel .vsa-chat-suggest[hidden] { display: none !important; }
-  #videosearch-ai-panel .vsa-chat-chip {
-    border: 1px solid var(--vsa-border);
-    background: var(--vsa-surface);
-    color: var(--vsa-muted);
-    font-size: 10px;
-    font-weight: 600;
-    border-radius: 999px;
-    padding: 4px 8px;
-    cursor: pointer;
-    font-family: var(--vsa-font);
-    line-height: 1.25;
-    text-align: left;
-  }
-  #videosearch-ai-panel .vsa-chat-chip:hover {
-    color: var(--vsa-accent);
-    border-color: rgba(45,212,168,0.35);
-  }
-  #videosearch-ai-panel .vsa-chat-composer {
-    display: flex;
-    gap: 6px;
-    align-items: flex-end;
-  }
-  #videosearch-ai-panel .vsa-chat-input {
-    flex: 1;
-    min-width: 0;
-    resize: none;
-    padding: 8px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--vsa-border-strong);
-    background: rgba(0,0,0,0.4);
-    color: var(--vsa-text);
-    font-family: var(--vsa-font);
-    font-size: 12.5px;
-    line-height: 1.35;
-    outline: none;
-  }
-  #videosearch-ai-panel .vsa-chat-input:focus {
-    border-color: rgba(45,212,168,0.55);
-    box-shadow: 0 0 0 3px var(--vsa-accent-dim);
-  }
-  #videosearch-ai-panel .vsa-chat-send {
-    flex-shrink: 0;
-    min-width: 52px;
-    height: 40px;
-    border: none;
-    border-radius: 12px;
-    cursor: pointer;
-    color: #04120e;
-    font-family: var(--vsa-font);
-    font-size: 12px;
-    font-weight: 700;
-    background: linear-gradient(135deg, #3ee6b5, #2dd4a8);
-    box-shadow: 0 4px 14px var(--vsa-accent-glow);
-  }
-  #videosearch-ai-panel .vsa-chat-send:disabled {
-    opacity: 0.5;
-    cursor: wait;
-  }
-
-  /* Settings */
-  #videosearch-ai-panel .vsa-settings-title {
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    margin-bottom: 3px;
-  }
-  #videosearch-ai-panel .vsa-settings-help {
-    font-size: 11px;
-    color: var(--vsa-muted);
-    margin: 0 0 10px;
-    line-height: 1.4;
-  }
-  #videosearch-ai-panel .vsa-field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-bottom: 8px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--vsa-faint);
-  }
-  #videosearch-ai-panel .vsa-field input {
-    padding: 8px 10px;
-    border-radius: 10px;
-    border: 1px solid var(--vsa-border-strong);
-    background: rgba(0,0,0,0.35);
-    color: var(--vsa-text);
-    font-family: var(--vsa-mono);
-    font-size: 12px;
-    font-weight: 500;
-    text-transform: none;
-    letter-spacing: 0;
-  }
-  #videosearch-ai-panel .vsa-field input:focus {
-    outline: none;
-    border-color: rgba(45,212,168,0.5);
-    box-shadow: 0 0 0 3px var(--vsa-accent-dim);
-  }
-  #videosearch-ai-panel .vsa-settings-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  #videosearch-ai-panel .vsa-save-settings {
-    border: none;
-    border-radius: 10px;
-    padding: 8px 12px;
-    cursor: pointer;
-    color: #04120e;
-    font-family: var(--vsa-font);
-    font-weight: 700;
-    font-size: 12px;
-    background: linear-gradient(135deg, #3ee6b5, #2dd4a8);
-    box-shadow: 0 4px 14px var(--vsa-accent-glow);
-  }
-  #videosearch-ai-panel .vsa-settings-msg { font-size: 11px; color: var(--vsa-muted); }
-
-  #videosearch-ai-panel .vsa-hint,
-  #videosearch-ai-panel .vsa-empty {
-    font-size: 11.5px;
-    color: var(--vsa-muted);
-    padding: 8px 2px;
-    line-height: 1.45;
-  }
-  #videosearch-ai-panel .vsa-empty strong {
-    color: var(--vsa-text);
-    display: block;
-    margin-bottom: 3px;
-    font-size: 12px;
-  }
-  #videosearch-ai-panel .vsa-retry {
-    margin-top: 8px;
-    padding: 7px 12px;
-    border-radius: 10px;
-    border: none;
-    background: linear-gradient(135deg, #3ee6b5, #2dd4a8);
-    color: #04120e;
-    font-family: var(--vsa-font);
-    font-weight: 700;
-    cursor: pointer;
-  }
-  #videosearch-ai-panel .vsa-spinner {
-    display: inline-block;
-    width: 9px;
-    height: 9px;
-    border: 2px solid var(--vsa-faint);
-    border-top-color: var(--vsa-accent);
-    border-radius: 50%;
-    animation: vsa-spin 0.65s linear infinite;
-    vertical-align: -1px;
-    margin-right: 4px;
-  }
-
-  @keyframes vsa-spin { to { transform: rotate(360deg); } }
-  @keyframes vsa-fade-in {
-    from { opacity: 0; transform: translateY(6px) scale(0.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
-
-  /* Light YouTube theme */
-  html:not([dark]) #videosearch-ai-panel {
-    --vsa-bg: #f4f7fa;
-    --vsa-bg-elevated: #ffffff;
-    --vsa-surface: #eef2f6;
-    --vsa-surface-2: #e3e9ef;
-    --vsa-border: rgba(15,23,32,0.08);
-    --vsa-border-strong: rgba(15,23,32,0.12);
-    --vsa-text: #0f1720;
-    --vsa-muted: #5b6b7a;
-    --vsa-faint: #7d8c9a;
-    --vsa-accent: #0d9f7a;
-    --vsa-accent-dim: rgba(13,159,122,0.1);
-    --vsa-accent-glow: rgba(13,159,122,0.22);
-    --vsa-shadow: 0 16px 40px rgba(15,23,32,0.14), 0 0 0 1px rgba(15,23,32,0.05);
-  }
-  html:not([dark]) #videosearch-ai-panel .vsa-mode-row,
-  html:not([dark]) #videosearch-ai-panel .vsa-input,
-  html:not([dark]) #videosearch-ai-panel .vsa-field input,
-  html:not([dark]) #videosearch-ai-panel .vsa-transcript {
-    background: rgba(255,255,255,0.9);
-  }
-  html:not([dark]) #videosearch-ai-root.is-collapsed #videosearch-ai-panel {
-    box-shadow: 0 10px 32px rgba(13,159,122,0.35);
-  }
-
-  /* Mobile */
-  @media (max-width: 560px) {
-    #videosearch-ai-root {
-      right: 10px;
-      left: 10px;
-      width: auto;
-      max-width: none;
-      bottom: max(72px, env(safe-area-inset-bottom, 0px));
-    }
-    #videosearch-ai-root.is-collapsed {
-      left: auto;
-      right: 12px;
-      width: auto;
-    }
-    #videosearch-ai-panel .vsa-status { display: none; }
-    #videosearch-ai-panel .vsa-tab-txt { font-size: 8.5px; }
-    #videosearch-ai-panel .vsa-tab { min-height: 34px; }
-    #videosearch-ai-panel .vsa-tab-ico { font-size: 13px; }
-    #videosearch-ai-panel .vsa-tabs {
-      grid-template-columns: repeat(5, minmax(0, 1fr)) 28px;
-    }
-    #videosearch-ai-panel .vsa-tab-txt { font-size: 8px; }
-    #videosearch-ai-panel .vsa-input { font-size: 16px; } /* no iOS zoom */
-    #videosearch-ai-panel .vsa-results,
-    #videosearch-ai-panel .vsa-transcript-list {
-      max-height: min(160px, 28vh);
-    }
-    #videosearch-ai-panel .vsa-topic-label { max-width: 42vw; }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    #videosearch-ai-panel *,
-    #videosearch-ai-root.is-collapsed #videosearch-ai-panel {
-      animation: none !important;
-      transition: none !important;
-    }
-  }
-`;
 
 function formatTimestamp(seconds: number): string {
   let s = Number(seconds);

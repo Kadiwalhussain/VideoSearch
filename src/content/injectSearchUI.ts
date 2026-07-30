@@ -13,6 +13,8 @@ import type { RawCaptionSegment, VideoIndex } from "../types/schema";
 import type { SentimentReport } from "../comments/analyzeSentiment";
 // Type-only — do NOT value-import chatRag (it pulls MiniLM into the UI bundle)
 import type { ChatMessage } from "../qa/chatRag";
+import type { VideoHighlight } from "../storage/highlightsStore";
+import type { VideoScreenshot } from "../storage/screenshotStore";
 
 function newMessageId(): string {
   return `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -29,9 +31,12 @@ const sessionTopics = new Map<
 >();
 const sessionComments = new Map<string, SentimentReport>();
 const sessionChat = new Map<string, ChatMessage[]>();
+const sessionHighlights = new Map<string, VideoHighlight[]>();
+const sessionScreenshots = new Map<string, VideoScreenshot[]>();
 const commentJobs = new Map<string, Promise<void>>();
 const indexingJobs = new Map<string, Promise<VideoIndex | null>>();
 let chatBusy = false;
+let timelineReady = false;
 
 async function ensureTopics(
   videoId: string,
@@ -251,6 +256,211 @@ function seekTo(seconds: number): void {
   void import("../player/seekTo").then(({ seekTo: doSeek }) => {
     doSeek(seconds);
   });
+}
+
+async function paintHighlights(
+  videoId: string,
+  panel: SearchPanel,
+  list?: VideoHighlight[]
+): Promise<void> {
+  const items = list ?? sessionHighlights.get(videoId) ?? [];
+  sessionHighlights.set(videoId, items);
+  panel.setHighlights(items);
+
+  const { setTimelineHighlights } = await import(
+    "../player/timelineHighlights"
+  );
+  setTimelineHighlights(items, {
+    // Click red mark / 📝 on the progress bar → seek + open Notes
+    onClick: (hl) => {
+      seekTo(hl.startTime);
+      panel.openHighlightsTab();
+      panel.flashHighlight(hl.id);
+    },
+    // Highlight control next to time remaining → mark now + open Notes
+    onAdd: () => {
+      void addHighlightAtNow(videoId, panel);
+    },
+    // Camera next to highlight → freeze frame
+    onCapture: () => {
+      void captureFrameNow(videoId, panel);
+    },
+  });
+  timelineReady = true;
+}
+
+async function loadHighlightsForVideo(
+  videoId: string,
+  panel: SearchPanel
+): Promise<void> {
+  try {
+    const { loadHighlights } = await import("../storage/highlightsStore");
+    const { loadScreenshots } = await import("../storage/screenshotStore");
+    const items = await loadHighlights(videoId);
+    const shots = await loadScreenshots(videoId);
+    sessionScreenshots.set(videoId, shots);
+    panel.setScreenshots(shots);
+    await paintHighlights(videoId, panel, items);
+  } catch (err) {
+    console.warn(LOG, "load highlights failed", err);
+    panel.setHighlights([]);
+    panel.setScreenshots([]);
+  }
+}
+
+async function addHighlightAtNow(
+  videoId: string,
+  panel: SearchPanel
+): Promise<void> {
+  try {
+    const { getCurrentTime, getDuration } = await import("../player/seekTo");
+    const { addHighlight } = await import("../storage/highlightsStore");
+    const t = getCurrentTime();
+    const dur = getDuration();
+    const end = dur > 0 ? Math.min(dur, t + 2.5) : t + 2.5;
+    const list = await addHighlight(videoId, {
+      startTime: t,
+      endTime: end,
+      note: "",
+    });
+    const newest = list.find(
+      (h) => Math.abs(h.startTime - t) < 0.05
+    ) ?? list[list.length - 1];
+    await paintHighlights(videoId, panel, list);
+    panel.openHighlightsTab();
+    if (newest) panel.flashHighlight(newest.id);
+    console.info(LOG, "Highlight added at", t.toFixed(1), "s for", videoId);
+  } catch (err) {
+    console.error(LOG, "add highlight failed", err);
+  }
+}
+
+async function captureFrameNow(
+  videoId: string,
+  panel: SearchPanel
+): Promise<void> {
+  try {
+    const { captureVideoFrame } = await import("../capture/frameCapture");
+    const { playShutterFlash, showCapturePopup } = await import(
+      "../ui/captureFx"
+    );
+    const { newScreenshotId, saveScreenshot } = await import(
+      "../storage/screenshotStore"
+    );
+    const { addHighlight } = await import("../storage/highlightsStore");
+
+    // 1) Flash first (feels instant), capture lighter JPEG for smooth UI
+    playShutterFlash();
+    const frame = await captureVideoFrame(0.72, 960);
+    if (!frame) {
+      panel.setVaultSyncMessage("Capture failed (video not ready)", true);
+      return;
+    }
+
+    // 2) Photo review popup — user adds note (no storage yet)
+    const popup = await showCapturePopup({
+      dataUrl: frame.dataUrl,
+      videoTime: frame.videoTime,
+    });
+
+    const shotId = newScreenshotId();
+    const note = popup.note || "";
+    const shot = {
+      id: shotId,
+      videoId,
+      videoTime: frame.videoTime,
+      dataUrl: frame.dataUrl,
+      width: frame.width,
+      height: frame.height,
+      note,
+      createdAt: frame.capturedAt,
+    };
+
+    // 3) Optimistic UI — open Notes + append card immediately (no full reload)
+    panel.openHighlightsTab();
+    const prev = sessionScreenshots.get(videoId) ?? [];
+    const nextShots = [...prev.filter((s) => s.id !== shotId), shot].sort(
+      (a, b) => a.videoTime - b.videoTime
+    );
+    sessionScreenshots.set(videoId, nextShots);
+    panel.appendScreenshot(shot);
+    window.setTimeout(() => panel.flashScreenshot(shotId), 40);
+    panel.setVaultSyncMessage(
+      note ? "Screenshot + note saved" : "Screenshot saved to Notes"
+    );
+
+    // 4) Persist off the critical path (IndexedDB + timeline)
+    const persist = async () => {
+      await saveScreenshot(shot);
+      const list = await addHighlight(videoId, {
+        startTime: frame.videoTime,
+        endTime: frame.videoTime + 2.5,
+        note: note || "Frame capture",
+        screenshotId: shotId,
+        color: "#38bdf8",
+      });
+      sessionHighlights.set(videoId, list);
+      // Defer timeline paint so popup animation never janks
+      await paintHighlights(videoId, panel, list);
+    };
+
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(() => {
+        void persist().catch((err) =>
+          console.error(LOG, "persist screenshot failed", err)
+        );
+      }, { timeout: 800 });
+    } else {
+      window.setTimeout(() => {
+        void persist().catch((err) =>
+          console.error(LOG, "persist screenshot failed", err)
+        );
+      }, 0);
+    }
+
+    console.info(LOG, "Screenshot at", frame.videoTime.toFixed(1), "s");
+  } catch (err) {
+    console.error(LOG, "screenshot failed", err);
+    panel.setVaultSyncMessage(
+      err instanceof Error ? err.message : "Screenshot failed",
+      true
+    );
+  }
+}
+
+async function syncVaultCloud(
+  videoId: string,
+  panel: SearchPanel
+): Promise<void> {
+  panel.setVaultSyncMessage("Syncing to cloud…");
+  try {
+    const { syncVideoToCloud } = await import("../cloud/cloudSync");
+    const { loadHighlights } = await import("../storage/highlightsStore");
+    const { loadScreenshots } = await import("../storage/screenshotStore");
+    const highlights = await loadHighlights(videoId);
+    const screenshots = await loadScreenshots(videoId);
+    const title =
+      document.querySelector("h1.ytd-watch-metadata yt-formatted-string")
+        ?.textContent?.trim() ||
+      document.title ||
+      videoId;
+    const result = await syncVideoToCloud({
+      videoId,
+      videoTitle: title,
+      highlights,
+      screenshots,
+    });
+    panel.setVaultSyncMessage(result.message, !result.ok);
+    // Refresh shot badges after sync
+    const shots = await loadScreenshots(videoId);
+    sessionScreenshots.set(videoId, shots);
+    panel.setScreenshots(shots);
+  } catch (err) {
+    panel.setVaultSyncMessage(
+      err instanceof Error ? err.message : "Sync failed",
+      true
+    );
+  }
 }
 
 /**
@@ -646,6 +856,56 @@ function mountPanel(videoId: string): void {
         panel.setChatMessages([]);
         panel.setChatBusy(false);
       },
+      onAddHighlight: () => {
+        void addHighlightAtNow(videoId, panel);
+      },
+      onCaptureFrame: () => {
+        void captureFrameNow(videoId, panel);
+      },
+      onSyncCloud: () => {
+        void syncVaultCloud(videoId, panel);
+      },
+      onHighlightSeek: (t) => seekTo(t),
+      onHighlightNote: (id, note) => {
+        void (async () => {
+          const { updateHighlight } = await import(
+            "../storage/highlightsStore"
+          );
+          const list = await updateHighlight(videoId, id, { note });
+          await paintHighlights(videoId, panel, list);
+        })();
+      },
+      onDeleteHighlight: (id) => {
+        void (async () => {
+          const { deleteHighlight } = await import(
+            "../storage/highlightsStore"
+          );
+          const list = await deleteHighlight(videoId, id);
+          await paintHighlights(videoId, panel, list);
+        })();
+      },
+      onDeleteScreenshot: (id) => {
+        void (async () => {
+          const { deleteScreenshot, loadScreenshots } = await import(
+            "../storage/screenshotStore"
+          );
+          await deleteScreenshot(id);
+          const shots = await loadScreenshots(videoId);
+          sessionScreenshots.set(videoId, shots);
+          panel.setScreenshots(shots);
+        })();
+      },
+      onScreenshotNote: (id, note) => {
+        void (async () => {
+          const { updateScreenshot, loadScreenshots } = await import(
+            "../storage/screenshotStore"
+          );
+          await updateScreenshot(id, { note });
+          const shots = await loadScreenshots(videoId);
+          sessionScreenshots.set(videoId, shots);
+          panel.setScreenshots(shots);
+        })();
+      },
       onSettingsSaved: () => {
         // Clear topic caches so LLM re-runs with new key
         sessionTopics.delete(videoId);
@@ -675,6 +935,26 @@ function mountPanel(videoId: string): void {
 
     // Restore chat history for this video
     panel.setChatMessages(sessionChat.get(videoId) ?? []);
+
+    // Load local highlights → red marks + inject screenshot/mark on player
+    void loadHighlightsForVideo(videoId, panel);
+    // Also inject player chrome ASAP (don't wait on IndexedDB)
+    void import("../player/timelineHighlights").then((m) => {
+      m.setTimelineHighlights(sessionHighlights.get(videoId) ?? [], {
+        onClick: (hl) => {
+          seekTo(hl.startTime);
+          panel.openHighlightsTab();
+          panel.flashHighlight(hl.id);
+        },
+        onAdd: () => {
+          void addHighlightAtNow(videoId, panel);
+        },
+        onCapture: () => {
+          void captureFrameNow(videoId, panel);
+        },
+      });
+      timelineReady = true;
+    });
 
     activePanel = panel;
     activeVideoId = videoId;
@@ -721,6 +1001,12 @@ function injectOrUpdate(): void {
       console.info(LOG, "Video changed", activeVideoId, "→", videoId);
       // Cancel in-flight comment jobs for old id by clearing map
       commentJobs.clear();
+      if (timelineReady) {
+        void import("../player/timelineHighlights").then((m) => {
+          m.clearTimelineHighlights();
+        });
+        timelineReady = false;
+      }
       document.getElementById(ROOT_ID)?.remove();
       activePanel = null;
       activeVideoId = null;

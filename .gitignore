@@ -6,7 +6,10 @@ dist/
 *.log
 .env
 .env.*
+!.env.example
+server/node_modules/
 *.pem
 .idea/
 .vscode/
 coverage/
+server/.env
