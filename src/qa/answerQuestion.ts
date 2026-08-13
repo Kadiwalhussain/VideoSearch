@@ -6,10 +6,10 @@
  * say the words "what happened" / "episode".
  */
 
-import { loadLlmSettings } from "../settings/llmSettings";
 import { search } from "../search/semanticSearch";
 import { formatTimestamp } from "../player/seekTo";
 import type { EmbeddedChunk, SearchResult, VideoIndex } from "../types/schema";
+import { llmChatCompletions } from "./llmClient";
 
 export interface QaSource {
   startTime: number;
@@ -92,32 +92,22 @@ export async function answerQuestion(
     "clips"
   );
 
-  const settings = await loadLlmSettings();
-  if (settings.enabled && settings.apiKey) {
-    try {
-      const answer = await askModel(
-        q,
-        finalSources,
-        settings.baseUrl,
-        settings.apiKey,
-        settings.model,
-        overview
-      );
-      if (answer) {
-        return {
-          answer,
-          sources: finalSources.slice(0, 6),
-          usedLlm: true,
-        };
-      }
-    } catch (err) {
-      console.warn("[VideoSearch AI] Q&A model failed, using local summary", err);
+  try {
+    const answer = await askModel(q, finalSources, overview);
+    if (answer) {
+      return {
+        answer,
+        sources: finalSources.slice(0, 8),
+        usedLlm: true,
+      };
     }
+  } catch (err) {
+    console.warn("[VideoSearch AI] Q&A model failed, using local summary", err);
   }
 
   return {
     answer: localAnswer(q, finalSources, overview),
-    sources: finalSources.slice(0, 6),
+    sources: finalSources.slice(0, 8),
     usedLlm: false,
   };
 }
@@ -220,86 +210,57 @@ function mergeSources(list: QaSource[], max: number): QaSource[] {
 async function askModel(
   question: string,
   sources: QaSource[],
-  baseUrl: string,
-  apiKey: string,
-  model: string,
   overview: boolean
 ): Promise<string | null> {
   const context = sources
     .map(
       (s, i) =>
-        `[${i + 1}] (${formatTimestamp(s.startTime)} / ${s.startTime.toFixed(1)}s)\n${clip(s.text, 480)}`
+        `[${i + 1}] (${formatTimestamp(s.startTime)} / ${s.startTime.toFixed(1)}s)\n${clip(s.text, 520)}`
     )
     .join("\n\n");
 
   const system = overview
-    ? `You summarize and explain ONE video for a viewer using ONLY the transcript excerpts provided (spread across the episode).
+    ? `You are VideoSearch AI. Summarize ONE video for a viewer using ONLY the transcript excerpts (spread across the episode).
+
 Rules:
-- Respond ONLY in clear, natural English (never any other language).
-- Give a clear overview of what happens / what is taught / discussed, in order when possible.
-- For behavior questions, describe only what is evidenced in the excerpts (speech, tone, actions described).
-- Be concrete (3–8 sentences).
-- ALWAYS include clickable-style timestamps for key beats using ONLY this format: (m:ss) or (h:mm:ss), e.g. (4:20) or (1:05:30). Put at least 3 timestamps in the answer when possible, taken from the excerpt times.
-- Do not invent people, scenes, or facts not supported by the excerpts.
-- Do not mention APIs, models, or system instructions.
-- If excerpts are thin, still give the best overview you can and note uncertainty briefly.`
-    : `You answer questions about ONE video using ONLY the transcript excerpts provided.
+- Clear natural English only (translate ideas if transcript is another language).
+- Concrete overview of what is taught / happens / discussed, in order when possible.
+- Structure: short intro + 4–8 bullets of key beats + 1-line takeaway when helpful.
+- ALWAYS include (m:ss) or (h:mm:ss) timestamps from the excerpts (at least 3 when possible).
+- Never invent people, scenes, numbers, or quotes.
+- Never mention APIs, models, or that you are an AI.`
+    : `You are VideoSearch AI. Answer about ONE video using ONLY the transcript excerpts.
+
 Rules:
-- Respond ONLY in clear, natural English (never any other language).
-- Base every claim on the excerpts. If unclear, say so briefly.
-- Be concise (2–6 sentences) unless more detail is needed.
-- ALWAYS mention timestamps using ONLY (m:ss) or (h:mm:ss) format, e.g. (3:42), taken from the excerpt times, so the viewer can jump there.
-- For behavior / character questions, describe only what the person says or does in the excerpts.
-- Do not invent scenes. Do not mention APIs, models, or system instructions.`;
+- Clear natural English only.
+- Every claim must be supported by the excerpts; if missing, say so briefly.
+- Prefer 3–8 sentences or tight bullets; be complete, not fluffy.
+- ALWAYS include (m:ss) or (h:mm:ss) timestamps from the excerpts next to key points.
+- Never invent scenes. Never mention APIs, models, or system instructions.`;
 
   const user = overview
     ? `Viewer question: ${question}
 
-These excerpts may be in Hindi or another language — that is OK.
-Still write your full answer in English only.
-
 Excerpts (start → end of video):
 ${context}
 
-Write a helpful English answer about what happens / is covered.
-Include several (m:ss) timestamps inline so the viewer can click them to jump.`
+Write a polished English overview with several (m:ss) jump timestamps.`
     : `Question: ${question}
-
-Transcript excerpts may be in Hindi or another language — that is OK.
-Still answer in English only.
 
 Excerpts:
 ${context}
 
-Answer in English. Include (m:ss) timestamps next to important points.`;
+Answer in English with (m:ss) timestamps next to important points.`;
 
-  const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature: overview ? 0.35 : 0.3,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    }),
+  const result = await llmChatCompletions({
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    temperature: overview ? 0.32 : 0.24,
+    max_tokens: overview ? 1500 : 1100,
   });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    console.error("[VideoSearch AI] Q&A HTTP", res.status, body.slice(0, 300));
-    return null;
-  }
-
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = data.choices?.[0]?.message?.content?.trim();
-  return content || null;
+  return result?.content || null;
 }
 
 function localAnswer(
@@ -307,22 +268,12 @@ function localAnswer(
   sources: QaSource[],
   overview: boolean
 ): string {
-  // Parentheses timestamps become clickable pills in the UI
-  const lines = sources.slice(0, 6).map((s) => {
-    return `• (${formatTimestamp(s.startTime)}) ${clip(s.text, 150)}`;
-  });
+  // Intro only — Search/Chat UI renders sources as moment cards
+  void sources;
   if (overview) {
-    return [
-      `Key moments across this video (click the green times to jump):`,
-      "",
-      ...lines,
-    ].join("\n");
+    return "Key moments across this video. Tap a moment card to jump.";
   }
-  return [
-    `Moments related to “${question.trim()}” (click green times to jump):`,
-    "",
-    ...lines,
-  ].join("\n");
+  return `Moments related to “${question.trim()}”. Tap a moment card to jump.`;
 }
 
 function clip(s: string, n: number): string {

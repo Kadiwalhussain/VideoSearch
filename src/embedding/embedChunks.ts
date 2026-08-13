@@ -13,12 +13,19 @@ import type { EmbeddedChunk, TranscriptChunk } from "../types/schema";
 export const EMBEDDING_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 export const EMBEDDING_DIM = 384;
 
+// Must match onnxruntime-web version pinned by @xenova/transformers
+const ONNX_WASM_CDN =
+  "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/";
+
 // Configure once for Chrome extension content-script environment
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 // Workers/proxy are flaky inside content scripts
 env.backends.onnx.wasm.proxy = false;
 env.backends.onnx.wasm.numThreads = 1;
+// Bundled pipelines.js lives under chrome-extension://…/assets/ which has no
+// .wasm files — load ONNX Runtime WASM from CDN (host_permission: jsdelivr).
+env.backends.onnx.wasm.wasmPaths = ONNX_WASM_CDN;
 
 type ProgressCallback = (message: string, ratio?: number) => void;
 

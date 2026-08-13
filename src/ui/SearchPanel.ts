@@ -79,6 +79,7 @@ export interface SearchPanelHandlers {
   /** Timeline highlights + notes + screenshots */
   onAddHighlight?: () => void;
   onCaptureFrame?: () => void;
+  /** Optional force cloud sync (account panel) */
   onSyncCloud?: () => void;
   onHighlightNote?: (id: string, note: string) => void;
   onDeleteHighlight?: (id: string) => void;
@@ -86,6 +87,12 @@ export interface SearchPanelHandlers {
   onDeleteScreenshot?: (id: string) => void;
   onScreenshotNote?: (id: string, note: string) => void;
   onCloudSettingsSaved?: () => void;
+  onToggleWatchLater?: () => void;
+  onToggleSave?: () => void;
+  onAddToPlaylist?: (name: string) => void;
+  onRemoveFromPlaylist?: (name: string) => void;
+  onTogglePlaylist?: (name: string) => void;
+  onRequestPlaylists?: () => void;
 }
 
 type TabId =
@@ -310,28 +317,59 @@ export class SearchPanel {
               </details>
             </div>
             <div class="vsa-auth-profile" data-auth-profile hidden>
-              <div class="vsa-profile-card">
-                <div class="vsa-profile-av" data-profile-av>—</div>
-                <div class="vsa-profile-meta">
-                  <div class="vsa-profile-name" data-profile-name>Account</div>
-                  <div class="vsa-profile-email" data-profile-email></div>
+              <div class="vsa-profile-hero">
+                <div class="vsa-profile-glow" aria-hidden="true"></div>
+                <div class="vsa-profile-top">
+                  <div class="vsa-profile-av-wrap">
+                    <div class="vsa-profile-av" data-profile-av>—</div>
+                    <span class="vsa-profile-online" title="Signed in"></span>
+                  </div>
+                  <div class="vsa-profile-meta">
+                    <div class="vsa-profile-kicker">Cloud vault</div>
+                    <div class="vsa-profile-name" data-profile-name>Account</div>
+                    <div class="vsa-profile-email" data-profile-email></div>
+                  </div>
+                </div>
+                <div class="vsa-profile-badges">
+                  <span class="vsa-profile-badge is-live"><span class="vsa-pulse"></span> Synced</span>
+                  <span class="vsa-profile-badge">Private</span>
                 </div>
               </div>
+
               <div class="vsa-profile-stats">
-                <div class="vsa-profile-stat"><b data-stat-videos>0</b><span>Videos</span></div>
-                <div class="vsa-profile-stat"><b data-stat-marks>0</b><span>Marks</span></div>
-                <div class="vsa-profile-stat"><b data-stat-shots>0</b><span>Shots</span></div>
+                <div class="vsa-profile-stat">
+                  <span class="vsa-profile-stat-ico" data-stat-ico-v></span>
+                  <b data-stat-videos>0</b>
+                  <span>Videos</span>
+                </div>
+                <div class="vsa-profile-stat">
+                  <span class="vsa-profile-stat-ico" data-stat-ico-m></span>
+                  <b data-stat-marks>0</b>
+                  <span>Marks</span>
+                </div>
+                <div class="vsa-profile-stat">
+                  <span class="vsa-profile-stat-ico" data-stat-ico-s></span>
+                  <b data-stat-shots>0</b>
+                  <span>Shots</span>
+                </div>
               </div>
-              <button type="button" class="vsa-auth-submit vsa-btn-vault" data-open-vault>
-                <span data-vault-ico></span> Open full vault
-              </button>
-              <div class="vsa-cloud-actions">
-                <button type="button" class="vsa-auth-sync-now" data-auth-sync>
-                  <span data-sync-ico></span> Sync this video
+
+              <div class="vsa-profile-actions">
+                <button type="button" class="vsa-btn-primary vsa-btn-vault" data-open-vault>
+                  <span data-vault-ico></span>
+                  <span class="vsa-btn-label">
+                    <strong>Open full vault</strong>
+                    <em>Notes, shots &amp; analytics</em>
+                  </span>
                 </button>
-                <button type="button" class="vsa-cloud-logout" data-auth-logout>
-                  <span data-logout-ico></span> Log out
-                </button>
+                <div class="vsa-profile-row">
+                  <button type="button" class="vsa-btn-secondary vsa-auth-sync-now" data-auth-sync>
+                    <span data-sync-ico></span> Sync this video
+                  </button>
+                  <button type="button" class="vsa-btn-ghost vsa-cloud-logout" data-auth-logout>
+                    <span data-logout-ico></span> Log out
+                  </button>
+                </div>
               </div>
               <p class="vsa-cloud-msg" data-auth-profile-msg role="status"></p>
             </div>
@@ -411,7 +449,6 @@ export class SearchPanel {
     this.highlightsPane = new HighlightsPane({
       onAddHighlight: () => this.handlers.onAddHighlight?.(),
       onCaptureFrame: () => this.handlers.onCaptureFrame?.(),
-      onSyncCloud: () => this.handlers.onSyncCloud?.(),
       onSeek: (t) =>
         this.handlers.onHighlightSeek?.(t) ?? this.handlers.onSeek(t),
       onUpdateNote: (id, note) => this.handlers.onHighlightNote?.(id, note),
@@ -419,6 +456,12 @@ export class SearchPanel {
       onDeleteScreenshot: (id) => this.handlers.onDeleteScreenshot?.(id),
       onUpdateScreenshotNote: (id, note) =>
         this.handlers.onScreenshotNote?.(id, note),
+      onToggleWatchLater: () => this.handlers.onToggleWatchLater?.(),
+      onToggleSave: () => this.handlers.onToggleSave?.(),
+      onAddToPlaylist: (name) => this.handlers.onAddToPlaylist?.(name),
+      onRemoveFromPlaylist: (name) => this.handlers.onRemoveFromPlaylist?.(name),
+      onTogglePlaylist: (name) => this.handlers.onTogglePlaylist?.(name),
+      onRequestPlaylists: () => this.handlers.onRequestPlaylists?.(),
     });
     hlHost.appendChild(this.highlightsPane.root);
 
@@ -491,9 +534,12 @@ export class SearchPanel {
     });
     set("[data-back-ico]", "back", 14);
     set("[data-auth-mark]", "user", 22);
-    set("[data-vault-ico]", "external", 14);
-    set("[data-sync-ico]", "cloud", 14);
+    set("[data-vault-ico]", "external", 15);
+    set("[data-sync-ico]", "refresh", 14);
     set("[data-logout-ico]", "logout", 14);
+    set("[data-stat-ico-v]", "topics", 12);
+    set("[data-stat-ico-m]", "highlight", 12);
+    set("[data-stat-ico-s]", "camera", 12);
 
     const passToggle = this.root.querySelector(
       "[data-pass-toggle]"
@@ -662,6 +708,20 @@ export class SearchPanel {
     this.highlightsPane.setSyncMessage(msg, isError);
   }
 
+  setLibraryState(state: {
+    saved: boolean;
+    watchLater: boolean;
+    playlists: string[];
+  }): void {
+    this.highlightsPane.setLibraryState(state);
+  }
+
+  setKnownPlaylists(
+    list: Array<{ name: string; count?: number }>
+  ): void {
+    this.highlightsPane.setKnownPlaylists(list);
+  }
+
   private updateVaultBadge(): void {
     const badge = this.root.querySelector(
       '[data-count="highlights"]'
@@ -712,6 +772,7 @@ export class SearchPanel {
         status.kind === "results" ||
         status.kind === "no-results") &&
       this.lastTopics.length &&
+      !this.topicsEl.querySelector(".vsa-topic-item") &&
       !this.topicsEl.querySelector(".vsa-topic-chip")
     ) {
       this.renderTopics(this.lastTopics);
@@ -1189,7 +1250,6 @@ export class SearchPanel {
         e.preventDefault();
         e.stopPropagation();
         this.handlers.onSyncCloud?.();
-        this.switchTab("highlights");
       });
 
     this.setAuthMode("login");
@@ -1247,10 +1307,10 @@ export class SearchPanel {
   private async submitAuth(
     setMsg: (text: string, isError?: boolean) => void
   ): Promise<void> {
-    const url =
-      (
-        this.root.querySelector(".vsa-cloud-url") as HTMLInputElement | null
-      )?.value.trim() || DEFAULT_CLOUD_SETTINGS.projectUrl;
+    const urlRaw = (
+      this.root.querySelector(".vsa-cloud-url") as HTMLInputElement | null
+    )?.value.trim();
+    const url = urlRaw || DEFAULT_CLOUD_SETTINGS.projectUrl;
     const email = (
       this.root.querySelector(".vsa-cloud-email") as HTMLInputElement
     ).value.trim();
@@ -1381,7 +1441,7 @@ export class SearchPanel {
     if (chipAv) chipAv.textContent = signedIn ? accountInitials(c) : "?";
 
     this.highlightsPane.setSyncMessage(
-      signedIn ? `Cloud: ${c.email}` : "Sign in (avatar) to sync · or open Full vault",
+      signedIn ? "Cloud ready" : "Sign in (avatar) to auto-sync",
       !signedIn
     );
   }
@@ -1418,37 +1478,50 @@ export class SearchPanel {
       return;
     }
 
-    const heading = document.createElement("div");
-    heading.className = "vsa-topics-label";
+    const head = document.createElement("div");
+    head.className = "vsa-topics-head";
+    const title = document.createElement("div");
+    title.className = "vsa-topics-title";
     if (source === "chapters") {
-      heading.textContent = `Video chapters (${topics.length}) — click to jump`;
+      title.textContent = "Video chapters";
     } else if (source === "mixed") {
-      heading.textContent = `Chapters + topics (${topics.length}) — click to jump`;
+      title.textContent = "Chapters & topics";
     } else if (source === "llm") {
-      heading.textContent = `Main topics (${topics.length}) — click to jump & search`;
+      title.textContent = "Main topics";
     } else {
-      heading.textContent = `Topics (${topics.length}) — click to jump & search`;
+      title.textContent = "Topics";
     }
-    this.topicsEl.appendChild(heading);
+    const meta = document.createElement("div");
+    meta.className = "vsa-topics-meta";
+    meta.textContent = `${topics.length} · click to jump`;
+    head.append(title, meta);
+    this.topicsEl.appendChild(head);
 
-    const row = document.createElement("div");
-    row.className = "vsa-topics-row";
+    const list = document.createElement("div");
+    list.className = "vsa-topics-list";
 
-    for (const topic of topics) {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "vsa-topic-chip";
-      chip.style.pointerEvents = "auto";
-      chip.style.cursor = "pointer";
-      chip.title = `Search “${topic.query}” · ~${formatTimestamp(topic.startTime)}`;
+    topics.forEach((topic, i) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "vsa-topic-item";
+      item.title = `Jump · search “${topic.query}”`;
 
+      const idx = document.createElement("span");
+      idx.className = "vsa-topic-idx";
+      idx.textContent = String(i + 1).padStart(2, "0");
+
+      const body = document.createElement("span");
+      body.className = "vsa-topic-body";
       const label = document.createElement("span");
       label.className = "vsa-topic-label";
       label.textContent = topic.label;
+      body.appendChild(label);
+
       const time = document.createElement("span");
       time.className = "vsa-topic-time";
       time.textContent = formatTimestamp(topic.startTime);
-      chip.append(label, time);
+
+      item.append(idx, body, time);
 
       let lastActivate = 0;
       const activate = (e: Event) => {
@@ -1462,11 +1535,12 @@ export class SearchPanel {
         if (this.handlers.onTopicClick) this.handlers.onTopicClick(topic);
         else this.handlers.onSearch(topic.query, "search");
       };
-      chip.addEventListener("pointerup", activate);
-      chip.addEventListener("click", activate);
-      row.appendChild(chip);
-    }
-    this.topicsEl.appendChild(row);
+      item.addEventListener("pointerup", activate);
+      item.addEventListener("click", activate);
+      list.appendChild(item);
+    });
+
+    this.topicsEl.appendChild(list);
   }
 
   private renderAnswer(answer: string, usedLlm: boolean): void {
@@ -1642,20 +1716,31 @@ export class SearchPanel {
         this.renderCommentList("Criticized", r.topNegative, "neg")
       );
     }
-    if (
+
+    // More comments: samples not already listed in praised/criticized
+    const shown = new Set([
+      ...r.topPositive.map((c) => c.id),
+      ...r.topNegative.map((c) => c.id),
+    ]);
+    const more = (r.samples || []).filter((c) => !shown.has(c.id));
+    if (more.length > 0) {
+      this.commentsEl.appendChild(
+        this.renderCommentList("More comments", more, "neu")
+      );
+    } else if (
       r.samples.length > 0 &&
       r.topPositive.length === 0 &&
       r.topNegative.length === 0
     ) {
       this.commentsEl.appendChild(
-        this.renderCommentList("Sample comments", r.samples, "neu")
+        this.renderCommentList("Comments", r.samples, "neu")
       );
     }
 
     const actions = document.createElement("div");
     actions.className = "vsa-mood-actions";
     actions.innerHTML = `<button type="button" class="vsa-comments-load vsa-comments-refresh">Refresh</button>
-      <span class="vsa-muted vsa-mood-note">Local analysis · no extra API key</span>`;
+      <span class="vsa-muted vsa-mood-note">Local analysis · ${r.totalAnalyzed} scored</span>`;
     this.commentsEl.appendChild(actions);
     this.bindCommentsLoad(true);
   }
@@ -1667,20 +1752,54 @@ export class SearchPanel {
   ): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "vsa-mood-section";
-    wrap.innerHTML = `<div class="vsa-mood-section-title">${escapeHtml(title)}</div>`;
+    const head = document.createElement("div");
+    head.className = "vsa-mood-section-title";
+    head.innerHTML = `<span>${escapeHtml(title)}</span><em>${items.length}</em>`;
+    wrap.appendChild(head);
+
     const list = document.createElement("div");
     list.className = "vsa-comment-list";
     for (const c of items) {
-      const row = document.createElement("div");
+      const row = document.createElement("article");
       row.className = `vsa-comment-card tone-${tone}`;
-      row.innerHTML = `
-        <div class="vsa-comment-meta">
-          <span class="vsa-comment-author">${escapeHtml(c.author)}</span>
-          ${c.likes > 0 ? `<span class="vsa-comment-likes">♥ ${formatCount(c.likes)}</span>` : ""}
-          ${c.publishedText ? `<span class="vsa-comment-when">${escapeHtml(c.publishedText)}</span>` : ""}
-        </div>
-        <div class="vsa-comment-text">${escapeHtml(truncate(c.text, 220))}</div>
-      `;
+
+      const av = document.createElement("div");
+      av.className = "vsa-comment-av";
+      av.textContent = commentInitials(c.author);
+
+      const main = document.createElement("div");
+      main.className = "vsa-comment-main";
+
+      const meta = document.createElement("div");
+      meta.className = "vsa-comment-meta";
+      const author = document.createElement("span");
+      author.className = "vsa-comment-author";
+      author.textContent = c.author || "Viewer";
+      meta.appendChild(author);
+      if (c.likes > 0) {
+        const likes = document.createElement("span");
+        likes.className = "vsa-comment-likes";
+        likes.textContent = `♥ ${formatCount(c.likes)}`;
+        meta.appendChild(likes);
+      }
+      if (c.publishedText) {
+        const when = document.createElement("span");
+        when.className = "vsa-comment-when";
+        when.textContent = c.publishedText;
+        meta.appendChild(when);
+      }
+      const badge = document.createElement("span");
+      badge.className = `vsa-comment-tone tone-${tone}`;
+      badge.textContent =
+        tone === "pos" ? "Positive" : tone === "neg" ? "Critical" : "Mixed";
+      meta.appendChild(badge);
+
+      const text = document.createElement("p");
+      text.className = "vsa-comment-text";
+      text.textContent = c.text || "";
+
+      main.append(meta, text);
+      row.append(av, main);
       list.appendChild(row);
     }
     wrap.appendChild(list);
@@ -1808,6 +1927,14 @@ function fillAnswerWithTimeLinks(
   if (!container.childNodes.length) {
     container.textContent = answer;
   }
+}
+
+function commentInitials(author: string): string {
+  const parts = (author || "?").trim().split(/[\s@._-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return (parts[0] || "?").slice(0, 2).toUpperCase();
 }
 
 function formatCount(n: number): string {

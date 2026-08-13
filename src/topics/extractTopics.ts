@@ -183,6 +183,10 @@ function labelFromDistinctiveWords(
   globalDf: Map<string, number>,
   totalChunks: number
 ): string | null {
+  // Prefer a cleaned clause from the densest caption (more human than bag-of-words)
+  const clause = labelFromBestSentence(members);
+  if (clause && isGoodUserLabel(clause)) return clause;
+
   const localTf = new Map<string, number>();
   const firstPos = new Map<string, number>();
   let pos = 0;
@@ -198,6 +202,7 @@ function labelFromDistinctiveWords(
   const scored: Array<{ w: string; score: number; pos: number }> = [];
   for (const [w, tf] of localTf) {
     if (!isContentWord(w)) continue;
+    if (isNumericJunkToken(w)) continue;
     // Brands only allowed if not the only signal
     const df = globalDf.get(w) ?? 1;
     const idf = Math.log(1 + totalChunks / df);
@@ -205,8 +210,9 @@ function labelFromDistinctiveWords(
     const concentration = tf / Math.max(1, members.length);
     let score = tf * idf * (1 + concentration);
 
-    if (BRAND_NOISE.has(w)) score *= 0.25; // downrank pure brand spam
-    if (w.length >= 8) score *= 1.15;
+    if (BRAND_NOISE.has(w)) score *= 0.2;
+    if (w.length >= 7) score *= 1.25;
+    if (w.length >= 5 && /^[a-z]+$/.test(w)) score *= 1.1;
 
     scored.push({ w, score, pos: firstPos.get(w) ?? 0 });
   }
@@ -215,10 +221,10 @@ function labelFromDistinctiveWords(
   if (scored.length === 0) return null;
 
   // Take top candidates, then order by first appearance for natural reading
-  const top = scored.slice(0, 8);
+  const top = scored.slice(0, 10);
   top.sort((a, b) => a.pos - b.pos);
 
-  // Build phrase: prefer 2–3 non-brand words; allow one brand if mixed
+  // Build phrase: prefer 2–4 non-brand words; allow one brand if mixed
   const picked: string[] = [];
   let brandCount = 0;
   for (const { w } of top) {
@@ -228,11 +234,10 @@ function labelFromDistinctiveWords(
       brandCount += 1;
     }
     picked.push(w);
-    if (picked.length >= 3) break;
+    if (picked.length >= 4) break;
   }
 
   if (picked.length < 2) {
-    // Try force two content words
     for (const { w } of scored) {
       if (picked.includes(w)) continue;
       if (BRAND_NOISE.has(w) && picked.some((p) => BRAND_NOISE.has(p))) continue;
@@ -242,37 +247,69 @@ function labelFromDistinctiveWords(
   }
 
   if (picked.length < 2) return null;
-
-  // Reject all-brand or all-same
   if (picked.every((w) => BRAND_NOISE.has(w))) return null;
   if (new Set(picked).size < 2) return null;
 
-  return titleCase(picked.slice(0, 3).join(" "));
+  const label = titleCase(picked.slice(0, 4).join(" "));
+  return isGoodUserLabel(label) ? label : null;
 }
 
-/** Fallback: clean first meaningful span from the densest chunk in the section. */
+/**
+ * Build a short title from the densest caption span — strips numbers/prices
+ * and keeps readable content words (3–5 words).
+ */
 function labelFromBestSentence(
   members: Array<TranscriptChunk | EmbeddedChunk>
 ): string | null {
-  const densest = [...members].sort((a, b) => b.text.length - a.text.length)[0];
-  if (!densest) return null;
-
-  const words = tokenize(densest.text).filter(
-    (w) => isContentWord(w) && !BRAND_NOISE.has(w)
+  const ranked = [...members].sort(
+    (a, b) =>
+      contentDensity(b.text) - contentDensity(a.text) ||
+      b.text.length - a.text.length
   );
-  if (words.length >= 2) {
-    return titleCase(words.slice(0, 3).join(" "));
-  }
 
-  // Last resort: any two content words including brands
-  const any = tokenize(densest.text).filter(isContentWord);
-  if (any.length >= 2 && new Set(any.slice(0, 3)).size >= 2) {
-    const slice = any.slice(0, 3);
-    if (slice.every((w) => BRAND_NOISE.has(w))) return null;
-    if (isRepeatedTokenPhrase(slice.join(" "))) return null;
-    return titleCase(slice.join(" "));
+  for (const densest of ranked.slice(0, 4)) {
+    const cleaned = densest.text
+      .replace(/https?:\/\/\S+/gi, " ")
+      .replace(/(?:rs\.?|inr|usd|\$|₹|€|£)\s*\d+(?:[.,]\d+)?/gi, " ")
+      .replace(/\b\d+[.,]\d+\b/g, " ")
+      .replace(/\b\d{2,}\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const words = tokenize(cleaned).filter(
+      (w) => isContentWord(w) && !BRAND_NOISE.has(w)
+    );
+    if (words.length >= 2) {
+      // Prefer longer conceptual words first for title quality
+      const preferred = [...words].sort((a, b) => b.length - a.length);
+      const core = preferred.slice(0, 3);
+      // Restore roughly chronological order among picked
+      const ordered = words.filter((w) => core.includes(w)).slice(0, 4);
+      const label = titleCase(
+        (ordered.length >= 2 ? ordered : words.slice(0, 3)).join(" ")
+      );
+      if (isGoodUserLabel(label)) return label;
+    }
+
+    const any = tokenize(cleaned).filter(isContentWord);
+    if (any.length >= 2) {
+      const slice = any.filter((w) => !isNumericJunkToken(w)).slice(0, 4);
+      if (slice.length >= 2 && !slice.every((w) => BRAND_NOISE.has(w))) {
+        const label = titleCase(slice.join(" "));
+        if (isGoodUserLabel(label)) return label;
+      }
+    }
   }
   return null;
+}
+
+function contentDensity(text: string): number {
+  const tokens = tokenize(text);
+  if (!tokens.length) return 0;
+  const good = tokens.filter(
+    (w) => isContentWord(w) && !BRAND_NOISE.has(w) && w.length >= 4
+  );
+  return good.length / Math.max(1, tokens.length) + good.length * 0.05;
 }
 
 // ---------------------------------------------------------------------------
@@ -344,31 +381,67 @@ function distinctiveGlobalPhrases(
 // ---------------------------------------------------------------------------
 
 export function isGoodUserLabel(label: string): boolean {
-  const words = label
+  const raw = String(label || "").trim();
+  if (raw.length < 6 || raw.length > 72) return false;
+
+  const words = raw
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
     .filter(Boolean);
 
   if (words.length < 2) return false;
-  if (words.length > 6) return false;
+  if (words.length > 8) return false;
   if (isRepeatedTokenPhrase(words.join(" "))) return false;
 
+  // Price / SKU / version soup: "Youtube 9.99 10.25", "14.5 13.5 E20"
+  const digitish = words.filter((w) => isNumericJunkToken(w)).length;
+  if (digitish >= 1 && digitish / words.length >= 0.35) return false;
+  if (digitish >= 2) return false;
+  if (words.filter((w) => /\d/.test(w)).length >= 2) return false;
+
+  // Must contain at least one real alphabetic content word (len >= 4)
+  const alphaContent = words.filter(
+    (w) =>
+      !isNumericJunkToken(w) &&
+      !STOP.has(w) &&
+      /^[a-z][a-z'-]*$/.test(w) &&
+      w.length >= 4
+  );
+  if (alphaContent.length < 1) return false;
+
   // All brands → useless for navigation
-  if (words.every((w) => BRAND_NOISE.has(w))) return false;
+  if (words.every((w) => BRAND_NOISE.has(w) || isNumericJunkToken(w)))
+    return false;
 
   // Majority brands (e.g. Netflix Gmail Google)
   const brandN = words.filter((w) => BRAND_NOISE.has(w)).length;
   if (brandN >= 2 && brandN >= words.length - 0) return false;
   if (brandN === words.length) return false;
+  // Brand + only numbers (Youtube 9.99 10.25)
+  if (brandN >= 1 && digitish >= 1 && alphaContent.length <= 1) return false;
 
   // Stopword-heavy
   if (words.filter((w) => STOP.has(w)).length >= words.length - 1) return false;
 
   // Email / URL garbage
-  if (/@|\.com|\.org|http|www\./i.test(label)) return false;
+  if (/@|\.com|\.org|http|www\./i.test(raw)) return false;
+
+  // Pure model codes
+  if (/^[A-Z0-9][\w.-]{0,12}$/i.test(raw) && /\d/.test(raw)) return false;
 
   return true;
+}
+
+/** Prices, model numbers, OCR junk: 9.99, e20, x95, 14.5, 779.9 */
+export function isNumericJunkToken(w: string): boolean {
+  const t = w.toLowerCase().replace(/[$,₹€£]/g, "");
+  if (!t) return true;
+  if (/^\d+([.,]\d+)?%?$/.test(t)) return true;
+  if (/^\d+[kmb]$/i.test(t)) return true;
+  if (/^[a-z]{0,3}\d+[a-z0-9]*$/i.test(t) && /\d/.test(t)) return true;
+  if (/\d/.test(t) && t.length <= 5) return true;
+  return false;
 }
 
 function isRepeatedTokenPhrase(phrase: string): boolean {
@@ -388,7 +461,9 @@ function isRepeatedTokenPhrase(phrase: string): boolean {
 function isContentWord(w: string): boolean {
   if (!w || w.length < 3) return false;
   if (STOP.has(w)) return false;
-  if (/^\d+$/.test(w)) return false;
+  if (isNumericJunkToken(w)) return false;
+  // Prefer real words over short codes
+  if (!/^[a-z][a-z'-]*$/i.test(w) && w.length < 5) return false;
   return true;
 }
 
@@ -396,10 +471,14 @@ function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/https?:\/\/\S+/g, " ")
+    // Strip currency and bare prices early
+    .replace(/(?:rs\.?|inr|usd|\$|₹|€|£)\s*\d+(?:[.,]\d+)?/gi, " ")
+    .replace(/\b\d+[.,]\d+\b/g, " ")
+    .replace(/\b\d{2,}\b/g, " ")
     .replace(/[^a-z0-9'+\-.\s]/g, " ")
     .split(/\s+/)
     .map((t) => t.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
-    .filter((t) => t.length > 2);
+    .filter((t) => t.length > 2 && !isNumericJunkToken(t));
 }
 
 function normalizeKey(s: string): string {

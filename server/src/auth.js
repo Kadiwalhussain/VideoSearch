@@ -64,18 +64,58 @@ export async function loginUser({ email, password }) {
   const clean = String(email || "")
     .trim()
     .toLowerCase();
+  if (!clean || !clean.includes("@")) {
+    const e = new Error("Enter a valid email address");
+    e.status = 400;
+    throw e;
+  }
+  if (!password) {
+    const e = new Error("Password is required");
+    e.status = 400;
+    throw e;
+  }
   const user = await User.findOne({ email: clean });
   if (!user) {
-    const e = new Error("Invalid email or password");
+    const e = new Error("No account for this email — use Create account");
     e.status = 401;
     throw e;
   }
   const ok = await bcrypt.compare(String(password || ""), user.passwordHash);
   if (!ok) {
-    const e = new Error("Invalid email or password");
+    const e = new Error("Wrong password — use Forgot password to reset");
     e.status = 401;
     throw e;
   }
+  user.lastSeenAt = new Date();
+  await user.save();
+  return { user: publicUser(user), token: signToken(user) };
+}
+
+/**
+ * Reset password for an existing account (local / MVP — no email verification).
+ * Use from the web app “Forgot password” flow.
+ */
+export async function resetPassword({ email, password }) {
+  const clean = String(email || "")
+    .trim()
+    .toLowerCase();
+  if (!clean || !clean.includes("@")) {
+    const e = new Error("Enter a valid email address");
+    e.status = 400;
+    throw e;
+  }
+  if (!password || String(password).length < 6) {
+    const e = new Error("New password must be at least 6 characters");
+    e.status = 400;
+    throw e;
+  }
+  const user = await User.findOne({ email: clean });
+  if (!user) {
+    const e = new Error("No account found for this email — create one first");
+    e.status = 404;
+    throw e;
+  }
+  user.passwordHash = await bcrypt.hash(String(password), 10);
   user.lastSeenAt = new Date();
   await user.save();
   return { user: publicUser(user), token: signToken(user) };

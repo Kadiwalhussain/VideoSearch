@@ -24,6 +24,8 @@ env.allowLocalModels = false;
 env.useBrowserCache = true;
 env.backends.onnx.wasm.proxy = false;
 env.backends.onnx.wasm.numThreads = 1;
+env.backends.onnx.wasm.wasmPaths =
+  "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/";
 
 let classifierPromise: Promise<TextClassificationPipeline> | null = null;
 let modelFailed = false;

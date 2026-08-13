@@ -12,15 +12,14 @@ export interface LlmSettings {
 }
 
 /**
- * Defaults — Groq OpenAI-compatible endpoint/model.
- * Paste your API key in ⚙ Settings (never commit keys).
+ * Defaults — SpaceXAI / xAI OpenAI-compatible endpoint (or paste any provider in Settings).
+ * Prefer server XAI_API_KEY (vault proxy). Extension Settings key is optional fallback.
  */
 export const DEFAULT_LLM_SETTINGS: LlmSettings = {
   enabled: false,
   apiKey: "",
-  baseUrl: "https://api.groq.com/openai/v1",
-  // Fast + strong for RAG chat; swap in Settings if needed
-  model: "llama-3.3-70b-versatile",
+  baseUrl: "https://api.x.ai/v1",
+  model: "grok-4.5",
 };
 
 const STORAGE_KEY = "vsa_llm_settings";

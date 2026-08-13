@@ -1,41 +1,68 @@
 /**
- * Live transcript — scrolls and highlights in sync with the YouTube player.
+ * Live transcript — cinematic, karaoke-style captions synced to the player.
  */
 
 import type { RawCaptionSegment } from "../types/schema";
 import { formatTimestamp } from "../player/seekTo";
+import { iconHtml } from "./icons";
 
 export class LiveTranscript {
   readonly root: HTMLElement;
   private listEl: HTMLElement;
   private metaEl: HTMLElement;
+  private progressEl: HTMLElement;
+  private searchEl: HTMLInputElement;
   private segments: RawCaptionSegment[] = [];
   private activeIndex = -1;
   private follow = true;
+  private filter = "";
   private onSeek: (t: number) => void;
   private raf = 0;
   private bound = false;
   private videoEl: HTMLVideoElement | null = null;
+  private userScrolling = false;
+  private scrollTimer = 0;
 
   constructor(onSeek: (t: number) => void) {
     this.onSeek = onSeek;
     this.root = document.createElement("div");
     this.root.className = "vsa-transcript";
     this.root.innerHTML = `
-      <div class="vsa-transcript-head">
-        <span class="vsa-transcript-title">Live transcript</span>
-        <label class="vsa-transcript-follow">
-          <input type="checkbox" class="vsa-follow-check" checked />
-          Follow video
-        </label>
+      <div class="vsa-tx-card">
+        <div class="vsa-tx-head">
+          <div class="vsa-tx-title">
+            <span class="vsa-tx-ico">${iconHtml("live", 15)}</span>
+            <div>
+              <strong>Live transcript</strong>
+              <span class="vsa-tx-sub">Tap a line to jump · auto-scroll with video</span>
+            </div>
+          </div>
+          <label class="vsa-tx-follow">
+            <input type="checkbox" class="vsa-follow-check" checked />
+            <span>Follow</span>
+          </label>
+        </div>
+        <div class="vsa-tx-progress" aria-hidden="true">
+          <i class="vsa-tx-progress-fill"></i>
+        </div>
+        <div class="vsa-tx-toolbar">
+          <div class="vsa-tx-meta">Waiting for captions…</div>
+          <label class="vsa-tx-search">
+            <span class="vsa-tx-search-ico">${iconHtml("search", 13)}</span>
+            <input type="search" class="vsa-tx-filter" placeholder="Filter lines…" autocomplete="off" />
+          </label>
+        </div>
+        <div class="vsa-transcript-list" role="list"></div>
       </div>
-      <div class="vsa-transcript-meta">Waiting for captions…</div>
-      <div class="vsa-transcript-list" role="list"></div>
     `;
     this.listEl = this.root.querySelector(".vsa-transcript-list") as HTMLElement;
-    this.metaEl = this.root.querySelector(
-      ".vsa-transcript-meta"
+    this.metaEl = this.root.querySelector(".vsa-tx-meta") as HTMLElement;
+    this.progressEl = this.root.querySelector(
+      ".vsa-tx-progress-fill"
     ) as HTMLElement;
+    this.searchEl = this.root.querySelector(
+      ".vsa-tx-filter"
+    ) as HTMLInputElement;
 
     const check = this.root.querySelector(
       ".vsa-follow-check"
@@ -47,13 +74,27 @@ export class LiveTranscript {
       }
     });
 
-    // If user scrolls the list manually, pause follow briefly
+    this.searchEl.addEventListener("input", () => {
+      this.filter = this.searchEl.value.trim().toLowerCase();
+      this.applyFilter();
+    });
+
+    // Manual scroll → pause auto-follow until they re-enable or click a line
     this.listEl.addEventListener(
       "wheel",
       () => {
-        if (!this.follow) return;
-        // keep follow on — only uncheck if they want; optional UX:
-        // leave follow on, wheel just temporarily offsets until next line
+        this.userScrolling = true;
+        if (this.scrollTimer) window.clearTimeout(this.scrollTimer);
+        this.scrollTimer = window.setTimeout(() => {
+          this.userScrolling = false;
+        }, 1800);
+      },
+      { passive: true }
+    );
+    this.listEl.addEventListener(
+      "touchmove",
+      () => {
+        this.userScrolling = true;
       },
       { passive: true }
     );
@@ -63,13 +104,16 @@ export class LiveTranscript {
     this.segments = segments;
     this.activeIndex = -1;
     this.listEl.innerHTML = "";
+    this.filter = "";
+    if (this.searchEl) this.searchEl.value = "";
 
     if (!segments.length) {
-      this.metaEl.textContent = "No caption lines available.";
+      this.metaEl.textContent = "No caption lines available";
+      this.progressEl.style.width = "0%";
       return;
     }
 
-    this.metaEl.textContent = `${segments.length} lines · click any line to jump`;
+    this.metaEl.innerHTML = `<b>${segments.length}</b> lines · click to jump`;
 
     const frag = document.createDocumentFragment();
     for (let i = 0; i < segments.length; i++) {
@@ -79,16 +123,19 @@ export class LiveTranscript {
       row.className = "vsa-transcript-line";
       row.setAttribute("role", "listitem");
       row.dataset.index = String(i);
+      row.dataset.text = seg.text.toLowerCase();
       row.innerHTML = `
         <span class="vsa-transcript-time">${formatTimestamp(seg.startTime)}</span>
         <span class="vsa-transcript-text"></span>
+        <span class="vsa-transcript-jump" aria-hidden="true">${iconHtml("zap", 11)}</span>
       `;
       (row.querySelector(".vsa-transcript-text") as HTMLElement).textContent =
-        seg.text;
+        cleanCaptionText(seg.text);
       row.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
         this.follow = true;
+        this.userScrolling = false;
         const check = this.root.querySelector(
           ".vsa-follow-check"
         ) as HTMLInputElement;
@@ -106,11 +153,30 @@ export class LiveTranscript {
     this.segments = [];
     this.listEl.innerHTML = "";
     this.metaEl.textContent = "Waiting for captions…";
+    this.progressEl.style.width = "0%";
     this.detachVideoSync();
   }
 
   destroy(): void {
     this.detachVideoSync();
+  }
+
+  private applyFilter(): void {
+    const q = this.filter;
+    const rows = this.listEl.querySelectorAll(".vsa-transcript-line");
+    let visible = 0;
+    rows.forEach((el) => {
+      const row = el as HTMLElement;
+      const text = row.dataset.text || "";
+      const show = !q || text.includes(q);
+      row.hidden = !show;
+      if (show) visible += 1;
+    });
+    if (q) {
+      this.metaEl.innerHTML = `<b>${visible}</b> match${visible === 1 ? "" : "es"} · “${escapeLite(q)}”`;
+    } else if (this.segments.length) {
+      this.metaEl.innerHTML = `<b>${this.segments.length}</b> lines · click to jump`;
+    }
   }
 
   private attachVideoSync(): void {
@@ -122,7 +188,6 @@ export class LiveTranscript {
       this.syncToVideo();
       this.raf = window.requestAnimationFrame(tick);
     };
-    // rAF is smooth; also listen to timeupdate as backup
     this.raf = window.requestAnimationFrame(tick);
 
     const bindVideo = () => {
@@ -140,7 +205,6 @@ export class LiveTranscript {
       }
     };
     bindVideo();
-    // YouTube may replace the <video> node (store id so we can clear it)
     const intervalId = window.setInterval(bindVideo, 2000);
     (this as unknown as { _videoPoll?: number })._videoPoll = intervalId;
   }
@@ -175,43 +239,67 @@ export class LiveTranscript {
     if (!v || !Number.isFinite(v.currentTime)) return;
 
     const t = v.currentTime;
-    const idx = findActiveIndex(this.segments, t);
-    if (idx !== this.activeIndex) {
-      this.setActive(idx, this.follow);
+    const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
+    if (dur > 0) {
+      const pct = Math.min(100, Math.max(0, (t / dur) * 100));
+      this.progressEl.style.width = `${pct}%`;
     }
 
-    // Update meta clock
-    if (idx >= 0) {
-      this.metaEl.textContent = `Now · ${formatTimestamp(t)} · line ${idx + 1}/${this.segments.length}`;
+    const idx = findActiveIndex(this.segments, t);
+    if (idx !== this.activeIndex) {
+      this.setActive(idx, this.follow && !this.userScrolling);
+    }
+
+    if (idx >= 0 && !this.filter) {
+      this.metaEl.innerHTML = `<span class="vsa-tx-now">Now ${formatTimestamp(t)}</span> · line <b>${idx + 1}</b>/${this.segments.length}`;
     }
   }
 
   private setActive(index: number, scroll: boolean): void {
     if (index < 0 || index >= this.segments.length) return;
 
-    const prev = this.listEl.querySelector(
-      ".vsa-transcript-line.is-active"
-    );
-    prev?.classList.remove("is-active");
+    this.listEl
+      .querySelectorAll(
+        ".vsa-transcript-line.is-active, .vsa-transcript-line.is-past"
+      )
+      .forEach((el) => {
+        el.classList.remove("is-active", "is-past");
+      });
+
+    // Mark past lines (only nearby for perf — full paint is fine for <2k)
+    const rows = this.listEl.children;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] as HTMLElement;
+      if (i < index) row.classList.add("is-past");
+      else if (i === index) row.classList.add("is-active");
+    }
 
     const row = this.listEl.querySelector(
       `.vsa-transcript-line[data-index="${index}"]`
     ) as HTMLElement | null;
-    if (row) {
-      row.classList.add("is-active");
-      if (scroll && this.follow) {
-        row.scrollIntoView({ block: "center", behavior: "smooth" });
-      }
+    if (row && scroll && this.follow) {
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
     }
     this.activeIndex = index;
   }
 }
 
+function cleanCaptionText(text: string): string {
+  return text
+    .replace(/^>>\s*/g, "")
+    .replace(/\s*>>\s*/g, " ")
+    .replace(/\[music\]/gi, "")
+    .replace(/\[applause\]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeLite(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /** Binary search: last segment with startTime <= t */
-function findActiveIndex(
-  segments: RawCaptionSegment[],
-  t: number
-): number {
+function findActiveIndex(segments: RawCaptionSegment[], t: number): number {
   let lo = 0;
   let hi = segments.length - 1;
   let ans = 0;
@@ -223,17 +311,6 @@ function findActiveIndex(
     } else {
       hi = mid - 1;
     }
-  }
-  // Prefer segment that still covers t when endTime is known
-  const cur = segments[ans];
-  if (
-    cur &&
-    cur.endTime > cur.startTime &&
-    t > cur.endTime + 0.35 &&
-    ans + 1 < segments.length
-  ) {
-    // gap between captions — keep last spoken line until next starts
-    return ans;
   }
   return ans;
 }

@@ -198,28 +198,62 @@ export class ChatPane {
       return row;
     }
 
-    // assistant
+    // assistant — structured so key moments don't become a wall of text
     const bubble = document.createElement("div");
     bubble.className = "vsa-chat-bubble assistant";
     const meta = document.createElement("div");
     meta.className = "vsa-chat-meta";
-    meta.textContent = m.usedLlm ? "AI · grounded in captions" : "Local sources";
-    const body = document.createElement("div");
-    body.className = "vsa-chat-bubble-text";
-    fillWithTimeLinks(body, m.content, (t) => this.handlers.onSeek(t));
-    bubble.append(meta, body);
+    meta.textContent = m.usedLlm
+      ? "AI · grounded in captions"
+      : "Local sources · click a time to jump";
+    bubble.appendChild(meta);
 
-    if (m.sources?.length) {
+    const sources = m.sources?.length ? m.sources.slice(0, 8) : [];
+    const isMomentsList =
+      sources.length > 0 &&
+      /key moments|relevant moments|local retrieve|local sources/i.test(
+        m.content || ""
+      );
+
+    // Short intro only when we already have structured source cards
+    const intro = isMomentsList
+      ? (m.content || "").split("\n").find((line) => {
+          const t = line.trim();
+          return t && !t.startsWith("•") && !t.startsWith("-");
+        }) ||
+        "Key moments — tap a card to jump in the video."
+      : m.content || "";
+
+    if (intro && !isMomentsList) {
+      const body = document.createElement("div");
+      body.className = "vsa-chat-bubble-text";
+      fillWithTimeLinks(body, intro, (t) => this.handlers.onSeek(t));
+      bubble.appendChild(body);
+    } else if (intro && isMomentsList) {
+      const body = document.createElement("div");
+      body.className = "vsa-chat-bubble-text vsa-chat-intro";
+      body.textContent = intro.replace(/\s+/g, " ").trim();
+      bubble.appendChild(body);
+    }
+
+    if (sources.length) {
       const src = document.createElement("div");
       src.className = "vsa-chat-sources";
       const label = document.createElement("div");
       label.className = "vsa-chat-sources-label";
-      label.textContent = "Sources — click to jump";
+      label.textContent = isMomentsList
+        ? "Key moments"
+        : "Sources — click to jump";
       src.appendChild(label);
-      for (const s of m.sources.slice(0, 6)) {
+      for (const s of sources) {
         src.appendChild(this.renderSource(s));
       }
       bubble.appendChild(src);
+    } else if (!intro) {
+      const body = document.createElement("div");
+      body.className = "vsa-chat-bubble-text";
+      fillWithTimeLinks(body, m.content || "", (t) => this.handlers.onSeek(t));
+      bubble.appendChild(body);
     }
 
     row.appendChild(bubble);
@@ -231,8 +265,11 @@ export class ChatPane {
     btn.type = "button";
     btn.className = "vsa-chat-source";
     btn.innerHTML = `
-      <span class="vsa-time">${formatTimestamp(s.startTime)}</span>
-      <span class="vsa-snippet">${escapeHtml(truncate(s.text, 90))}</span>
+      <span class="vsa-chat-source-time">${formatTimestamp(s.startTime)}</span>
+      <span class="vsa-chat-source-body">
+        <span class="vsa-chat-source-snippet">${escapeHtml(truncate(s.text, 120))}</span>
+        <span class="vsa-chat-source-hint">Jump to video</span>
+      </span>
     `;
     btn.addEventListener("click", (e) => {
       e.preventDefault();

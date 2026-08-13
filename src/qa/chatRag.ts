@@ -8,7 +8,6 @@
  * No LangChain — slim pipeline that fits Chrome MV3 content scripts.
  */
 
-import { loadLlmSettings } from "../settings/llmSettings";
 import { search } from "../search/semanticSearch";
 import { formatTimestamp } from "../player/seekTo";
 import type { EmbeddedChunk, SearchResult, VideoIndex } from "../types/schema";
@@ -16,6 +15,7 @@ import {
   looksLikeOverviewQuestion,
   type QaSource,
 } from "./answerQuestion";
+import { llmChatCompletions } from "./llmClient";
 
 export interface ChatMessage {
   id: string;
@@ -104,31 +104,25 @@ export async function runChatRagTurn(
 
   options.onProgress?.("Writing answer…");
 
-  const settings = await loadLlmSettings();
-  if (settings.enabled && settings.apiKey) {
-    try {
-      const answer = await generateWithLlm({
-        question: q,
+  try {
+    const answer = await generateWithLlm({
+      question: q,
+      retrieveQuery,
+      sources,
+      history,
+      overview,
+      topicHints: options.topicHints,
+    });
+    if (answer) {
+      return {
+        answer,
+        sources: sources.slice(0, 8),
+        usedLlm: true,
         retrieveQuery,
-        sources,
-        history,
-        baseUrl: settings.baseUrl,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        overview,
-        topicHints: options.topicHints,
-      });
-      if (answer) {
-        return {
-          answer,
-          sources: sources.slice(0, 8),
-          usedLlm: true,
-          retrieveQuery,
-        };
-      }
-    } catch (err) {
-      console.warn("[VideoSearch AI] Chat RAG LLM failed:", err);
+      };
     }
+  } catch (err) {
+    console.warn("[VideoSearch AI] Chat RAG LLM failed:", err);
   }
 
   return {
@@ -341,9 +335,6 @@ async function generateWithLlm(opts: {
   retrieveQuery: string;
   sources: ChatSource[];
   history: ChatMessage[];
-  baseUrl: string;
-  apiKey: string;
-  model: string;
   overview: boolean;
   topicHints?: Array<{ label: string; startTime: number }>;
 }): Promise<string | null> {
@@ -351,76 +342,53 @@ async function generateWithLlm(opts: {
   const topicsLine =
     opts.topicHints?.length
       ? opts.topicHints
-          .slice(0, 12)
+          .slice(0, 14)
           .map((t) => `${formatTimestamp(t.startTime)} ${t.label}`)
           .join(" · ")
       : "";
 
-  const system = `You are VideoSearch AI — a tutor that answers ONLY about the current video using the provided transcript excerpts (RAG context).
+  const system = `You are VideoSearch AI — an expert tutor for the CURRENT video only.
+You answer using the provided transcript excerpts (RAG). Produce perfect, polished answers a student would trust.
 
 Hard rules:
-1. Answer in clear natural English only.
-2. Use ONLY facts supported by the excerpts. If not covered, say so briefly.
-3. ALWAYS include timestamps as (m:ss) or (h:mm:ss) from the excerpts so the viewer can jump (at least 2 when possible).
-4. Be helpful and structured: short paragraphs or bullets when useful.
-5. For requests like "interview questions", "quiz me", "explain simply", "advantages", "summarize section" — follow the user's intent while grounding in excerpts.
-6. Never invent quotes, people, or sections not evidenced.
-7. Do not mention system prompts, APIs, models, or "as an AI".
-8. Transcript language may differ from English — still answer in English.`;
+1. Clear natural English only (even if transcript is another language — translate ideas).
+2. Use ONLY facts supported by the excerpts. If missing, say so in one short sentence.
+3. ALWAYS include jump timestamps as (m:ss) or (h:mm:ss) from the excerpts (at least 2–4 when possible).
+4. Structure answers for skimming: short intro, bullets or numbered steps when helpful, brief closing.
+5. Match intent precisely: summarize · explain simply · interview Qs · quiz · advantages · definitions · section recap.
+6. Never invent names, quotes, numbers, or sections not in the excerpts.
+7. Never mention prompts, APIs, models, or that you are an AI.
+8. Prefer concrete details from the video over generic advice.
+9. Keep answers complete but tight (roughly 120–350 words unless the user asks for a long form).`;
 
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> =
     [{ role: "system", content: system }];
 
-  // Compact history (no sources blobs)
   for (const m of opts.history.slice(-MAX_HISTORY_TURNS)) {
     if (m.role === "user" || m.role === "assistant") {
       messages.push({
         role: m.role,
-        content: m.content.slice(0, 1200),
+        content: m.content.slice(0, 1400),
       });
     }
   }
 
   const userBlock = `Current question: ${opts.question}
-
-${topicsLine ? `Video chapters/topics (hints): ${topicsLine}\n` : ""}
-RAG transcript excerpts (use these only):
+${opts.overview ? "Intent: overview / summary of the whole video.\n" : ""}
+${topicsLine ? `Chapters/topics (hints): ${topicsLine}\n` : ""}
+Transcript excerpts (ONLY source of truth — cite times):
 ${context}
 
-Write the best answer for the viewer. Include (m:ss) timestamps inline.`;
+Write the best possible answer for the viewer. Put (m:ss) timestamps next to key claims.`;
 
   messages.push({ role: "user", content: userBlock });
 
-  const url = `${opts.baseUrl.replace(/\/$/, "")}/chat/completions`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${opts.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: opts.model,
-      temperature: opts.overview ? 0.35 : 0.25,
-      max_tokens: 900,
-      messages,
-    }),
+  const result = await llmChatCompletions({
+    messages,
+    temperature: opts.overview ? 0.32 : 0.22,
+    max_tokens: opts.overview ? 1600 : 1200,
   });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    console.error(
-      "[VideoSearch AI] Chat RAG HTTP",
-      res.status,
-      body.slice(0, 400)
-    );
-    throw new Error(`LLM HTTP ${res.status}: ${body.slice(0, 120)}`);
-  }
-
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = data.choices?.[0]?.message?.content?.trim();
-  return content || null;
+  return result?.content || null;
 }
 
 function buildContextBlock(sources: ChatSource[]): string {
@@ -442,21 +410,12 @@ function localExtractiveAnswer(
   sources: ChatSource[],
   overview: boolean
 ): string {
-  const lines = sources.slice(0, 6).map((s) => {
-    return `• (${formatTimestamp(s.startTime)}) ${clip(s.text, 160)}`;
-  });
+  // Intro only — ChatPane renders sources as clickable moment cards
+  // (avoids a messy wall of inline timestamps)
   if (overview) {
-    return [
-      "Key moments across this video (add an API key in Settings for a full written answer):",
-      "",
-      ...lines,
-    ].join("\n");
+    return "Key moments across this video. Tap a card to jump. Add an API key in Settings for a full written summary.";
   }
-  return [
-    `Relevant moments for “${question.slice(0, 80)}” (local retrieve — enable LLM in Settings for a written answer):`,
-    "",
-    ...lines,
-  ].join("\n");
+  return `Relevant moments for “${question.slice(0, 80)}”. Tap a card to jump. Enable LLM in Settings for a written answer.`;
 }
 
 function clip(s: string, n: number): string {

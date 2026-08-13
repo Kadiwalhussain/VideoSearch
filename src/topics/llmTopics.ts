@@ -3,13 +3,13 @@
  * Long videos request 15–30+ topics spanning the full timeline.
  */
 
-import { loadLlmSettings } from "../settings/llmSettings";
+import { llmChatCompletions } from "../qa/llmClient";
 import type { TranscriptChunk } from "../types/schema";
 import { isGoodUserLabel, type VideoTopic } from "./extractTopics";
 import { estimateDurationSec, topicBudget } from "./topicBudget";
 
-/** v7: chapters-first topics; English AI titles when filling */
-const TOPIC_CACHE_PREFIX = "vsa_topics_v7_";
+/** v8: strict quality filters — invalidates number/SKU spam caches (v7) */
+const TOPIC_CACHE_PREFIX = "vsa_topics_v8_";
 
 export async function loadCachedTopics(
   videoId: string,
@@ -55,17 +55,14 @@ export async function extractTopicsWithLlm(
   chunks: TranscriptChunk[],
   captionTrackHash: string
 ): Promise<VideoTopic[] | null> {
-  const settings = await loadLlmSettings();
-  if (!settings.enabled || !settings.apiKey) return null;
-
   const durationSec = estimateDurationSec(chunks);
   const budget = topicBudget(chunks.length, durationSec);
 
   const cached = await loadCachedTopics(videoId, captionTrackHash);
-  // Accept cache only if enough quality topics (skip old brand-spam caches)
-  if (cached && cached.length >= Math.min(budget, 12)) {
+  // Accept cache only if enough quality topics (skip brand/price spam)
+  if (cached && cached.length >= Math.min(budget, 8)) {
     const cleaned = cached.filter((t) => isGoodUserLabel(t.label));
-    if (cleaned.length >= Math.min(12, budget * 0.6)) {
+    if (cleaned.length >= Math.min(8, Math.ceil(budget * 0.5))) {
       console.info(
         "[VideoSearch AI] Smart topics cache hit",
         videoId,
@@ -75,99 +72,87 @@ export async function extractTopicsWithLlm(
     }
   }
 
-  // More excerpts for longer videos so the model can cover the full arc
-  const excerptCount = Math.min(
-    64,
-    Math.max(32, Math.round(chunks.length * 0.45))
+  // Windowed excerpts: denser context for product/review videos (prices, SKUs)
+  const windowCount = Math.min(
+    28,
+    Math.max(12, Math.round(durationSec / 90))
   );
-  const excerpts = sampleExcerpts(chunks, excerptCount);
+  const excerpts = sampleWindowExcerpts(chunks, windowCount);
   if (excerpts.length === 0) return null;
 
-  const minTopics = Math.max(15, Math.min(budget, budget - 2));
+  const minTopics = Math.max(8, Math.min(budget, Math.max(8, budget - 4)));
   const maxTopics = budget;
 
-  const system = `You create a CHAPTER GUIDE for a long video so a human can navigate it easily.
+  const system = `You write a clean YouTube CHAPTER TABLE OF CONTENTS for navigation.
 
-Return ONLY valid JSON (no markdown) — an array of ${minTopics} to ${maxTopics} topics.
+Return ONLY valid JSON (no markdown fences) — an array of ${minTopics} to ${maxTopics} objects.
 
-Each topic title must be something a student would understand at a glance, like:
-- "Introduction and agenda"
-- "Setting up the project"
-- "How authentication works"
-- "Common errors and fixes"
-NOT brand spam or repeated words.
+Good titles (human chapter style):
+- "Intro and why this phone matters"
+- "Display and brightness tests"
+- "Camera low-light samples"
+- "Battery life and charging"
+- "Final verdict and who should buy"
 
-FORBIDDEN titles (never output these styles):
-- "Youtube Youtube Youtube"
-- "Netflix Gmail Google"
-- "Gmail Gmail Gmail"
-- "Python Python"
-- Random ASR junk, emails, "Skip Skip Scy"
+NEVER output titles that look like:
+- Prices or numbers: "9.99 10.25", "14.5 13.5 E20"
+- SKU soup: "E20 Xp95 Youtube", "5.6 1.4"
+- Brand spam: "Youtube Youtube", "Gmail Google Netflix"
+- Raw ASR fragments without meaning
 
 Schema:
 [
   {
-    "title": "Clear 3-6 word chapter title",
-    "query": "search phrase for this chapter",
+    "title": "Clear 3-7 word chapter title in English",
+    "query": "2-5 word search phrase",
     "startTime": 123.4
   }
 ]
 
 Rules:
-- ALL titles and queries MUST be in English only (never other languages).
-- Write like YouTube chapters / table of contents — human, specific, useful.
-- Spread across the FULL timeline (start, middle, end).
-- startTime = seconds (number), e.g. 5:30 → 330. Use times near the excerpts.
-- Titles must be unique and non-overlapping in meaning.
-- Prefer teaching concepts / story beats over product names alone.
-- If brands appear, pair them with an action/concept (e.g. "Integrating Gmail API"), never brands only.`;
+- English only for title + query (translate ideas from any language captions).
+- Each title must describe a TOPIC or SEGMENT of the talk — not quote prices.
+- Ignore model numbers, prices, resolution figures unless part of a real phrase like "4K video quality".
+- Spread startTime across the FULL video (early / mid / late).
+- Unique titles; no near-duplicates.
+- If the video is a product review, use sections like design, display, performance, camera, battery, software, verdict.`;
 
   const user = `Video id: ${videoId}
-Approx duration: ${Math.round(durationSec / 60)} minutes
-Required: ${minTopics}–${maxTopics} clear chapter titles in English
+Duration ≈ ${Math.round(durationSec / 60)} minutes (${Math.round(durationSec)}s)
+Need ${minTopics}–${maxTopics} chapter titles.
 
-The transcript excerpts below may be in Hindi or another language.
-Still write every "title" and "query" in English only (translate the ideas).
+Caption windows (startSec | mm:ss | text). Text may include prices — DO NOT copy them into titles:
+${excerpts.map((e) => `${e.t.toFixed(0)} | ${formatTs(e.t)} | ${e.text}`).join("\n")}
 
-Excerpts (seconds | mm:ss | text):
-${excerpts.map((e) => `${e.t.toFixed(1)} | ${formatTs(e.t)} | ${e.text}`).join("\n")}
-
-Return JSON array of English chapter topics now.`;
-
-  const url = `${settings.baseUrl}/chat/completions`;
+JSON array only:`;
 
   try {
-    // Long videos may need a second pass if the model returns too few
-    let topics = await requestTopics(
-      url,
-      settings.apiKey,
-      settings.model,
-      system,
-      user
-    );
+    let topics = await requestTopics(system, user);
+    topics = topics.filter((t) => isGoodUserLabel(t.label));
 
-    if (topics.length < minTopics && topics.length > 0) {
-      // Second pass: fill gaps across timeline
+    if (topics.length < Math.min(minTopics, 8) && topics.length > 0) {
       const more = await requestTopics(
-        url,
-        settings.apiKey,
-        settings.model,
         system,
         `${user}
 
-IMPORTANT: You previously returned only ${topics.length} topics. Expand to at least ${minTopics}.
-Already covered (do not repeat): ${topics.map((t) => t.label).join("; ")}
-Add NEW topics from middle and late sections of the video as well.`
+You returned only ${topics.length} good titles. Add more chapters (total ≥ ${minTopics}).
+Already used (do not repeat): ${topics.map((t) => t.label).join("; ")}
+Focus on middle and late sections. No prices or model codes as titles.`
       );
-      topics = dedupeTopics([...topics, ...more]).slice(0, maxTopics);
+      topics = dedupeTopics([
+        ...topics,
+        ...more.filter((t) => isGoodUserLabel(t.label)),
+      ]).slice(0, maxTopics);
     }
 
-    if (!topics.length) {
-      console.warn("[VideoSearch AI] Smart topics: empty/unparseable response");
-      return null;
+    if (topics.length < 4) {
+      console.warn(
+        "[VideoSearch AI] Smart topics: too few quality titles",
+        topics.length
+      );
+      return topics.length ? topics : null;
     }
 
-    // Prefer chronological display
     topics.sort((a, b) => a.startTime - b.startTime);
     topics = topics.slice(0, maxTopics);
 
@@ -185,45 +170,25 @@ Add NEW topics from middle and late sections of the video as well.`
 }
 
 async function requestTopics(
-  url: string,
-  apiKey: string,
-  model: string,
   system: string,
   user: string
 ): Promise<VideoTopic[]> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.25,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    }),
+  const result = await llmChatCompletions({
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    temperature: 0.15,
+    max_tokens: 2400,
   });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    console.error(
-      "[VideoSearch AI] Smart topics HTTP",
-      res.status,
-      body.slice(0, 200)
-    );
+  if (!result?.content) {
+    console.warn("[VideoSearch AI] Smart topics: no LLM content");
     return [];
   }
-
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = data.choices?.[0]?.message?.content ?? "";
-  return parseTopicsJson(content);
+  return parseTopicsJson(result.content);
 }
 
+/** Evenly spaced single chunks (legacy). */
 function sampleExcerpts(
   chunks: TranscriptChunk[],
   max: number
@@ -242,6 +207,44 @@ function sampleExcerpts(
     out.push({ t: c.startTime, text: clip(c.text, 160) });
   }
   return out;
+}
+
+/**
+ * Merge neighboring captions into windows so the model sees phrases, not
+ * isolated ASR tokens (fixes "9.99 10.25" style junk topics).
+ */
+function sampleWindowExcerpts(
+  chunks: TranscriptChunk[],
+  windows: number
+): Array<{ t: number; text: string }> {
+  if (chunks.length === 0) return [];
+  const n = Math.min(windows, chunks.length);
+  const out: Array<{ t: number; text: string }> = [];
+  for (let i = 0; i < n; i++) {
+    const start = Math.floor((i * chunks.length) / n);
+    const end = Math.max(start + 1, Math.floor(((i + 1) * chunks.length) / n));
+    const slice = chunks.slice(start, end);
+    if (!slice.length) continue;
+    const text = slice
+      .map((c) => c.text)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    out.push({
+      t: slice[0].startTime,
+      text: clip(sanitizeExcerpt(text), 280),
+    });
+  }
+  return out.length ? out : sampleExcerpts(chunks, windows);
+}
+
+/** Lightly strip pure prices so the model focuses on meaning. */
+function sanitizeExcerpt(text: string): string {
+  return text
+    .replace(/(?:rs\.?|inr|usd|\$|₹|€|£)\s*\d+(?:[.,]\d+)?/gi, " ")
+    .replace(/\b\d+[.,]\d+\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function clip(s: string, n: number): string {
@@ -319,9 +322,14 @@ function looksLikeRealTopic(title: string): boolean {
   if (/@|www\.|\.com|\.org|http/i.test(title)) return false;
   if (/\b(anybody|someone|something|because|cannot less)\b/i.test(lower))
     return false;
+  // Price / SKU chapter titles
+  if (/\b\d+[.,]\d+\b/.test(title) && (title.match(/\d/g) || []).length >= 3)
+    return false;
   const words = title.split(/\s+/).filter(Boolean);
-  if (words.length < 1) return false;
+  if (words.length < 2) return false;
   if (words.length === 1 && words[0].length < 6) return false;
+  const digitWords = words.filter((w) => /\d/.test(w)).length;
+  if (digitWords >= 2) return false;
   return true;
 }
 

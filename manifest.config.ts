@@ -35,8 +35,16 @@ export default defineManifest({
     // Cloud vault API (local Mongo backend + optional deployed host)
     "http://localhost:8787/*",
     "http://127.0.0.1:8787/*",
+    "http://[::1]:8787/*",
+    // Home LAN vault (any host on :8787 — Chrome match patterns need full host;
+    // private IPs are also allow-listed in the background proxy)
+    "http://192.168.0.105:8787/*",
     "https://*.supabase.co/*",
   ],
+  background: {
+    service_worker: "src/background/serviceWorker.ts",
+    type: "module",
+  },
   content_scripts: [
     {
       matches: ["https://www.youtube.com/*", "https://youtube.com/*"],

@@ -84,6 +84,32 @@ export async function loadHighlights(
     .sort((a, b) => a.startTime - b.startTime);
 }
 
+/** All video IDs that have local marks/notes in chrome.storage. */
+export async function listLocalHighlightVideoIds(): Promise<string[]> {
+  try {
+    if (typeof chrome !== "undefined" && chrome.storage?.local?.get) {
+      const all = await chrome.storage.local.get(null);
+      return Object.keys(all)
+        .filter((k) => k.startsWith(KEY_PREFIX))
+        .map((k) => k.slice(KEY_PREFIX.length))
+        .filter(Boolean);
+    }
+  } catch {
+    /* fall through */
+  }
+  // localStorage fallback
+  try {
+    const ids: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith(KEY_PREFIX)) ids.push(k.slice(KEY_PREFIX.length));
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+
 export async function saveHighlights(
   videoId: string,
   highlights: VideoHighlight[]
@@ -101,6 +127,21 @@ export async function addHighlight(
     screenshotId?: string;
   }
 ): Promise<VideoHighlight[]> {
+  const { list } = await addHighlightWithMeta(videoId, partial);
+  return list;
+}
+
+/** Same as addHighlight, but also returns the created row (stable id for follow-up note save). */
+export async function addHighlightWithMeta(
+  videoId: string,
+  partial: {
+    startTime: number;
+    endTime?: number;
+    note?: string;
+    color?: string;
+    screenshotId?: string;
+  }
+): Promise<{ list: VideoHighlight[]; highlight: VideoHighlight }> {
   const list = await loadHighlights(videoId);
   const now = Date.now();
   const start = Math.max(0, partial.startTime);
@@ -121,7 +162,7 @@ export async function addHighlight(
   list.push(hl);
   list.sort((a, b) => a.startTime - b.startTime);
   await saveHighlights(videoId, list);
-  return list;
+  return { list, highlight: hl };
 }
 
 export async function updateHighlight(

@@ -171,16 +171,16 @@ export async function analyzeComments(
   const negativePct = Math.round((negative / n) * 100);
   const neutralPct = Math.max(0, 100 - positivePct - negativePct);
 
-  const themes = extractThemes(scored, 8);
+  const themes = extractThemes(scored, 10);
   const topPositive = [...scored]
     .filter((c) => c.label === "positive")
     .sort((a, b) => b.score - a.score || b.likes - a.likes)
-    .slice(0, 5);
+    .slice(0, 12);
   const topNegative = [...scored]
     .filter((c) => c.label === "negative")
     .sort((a, b) => a.score - b.score || b.likes - a.likes)
-    .slice(0, 5);
-  const samples = pickSamples(scored, 6);
+    .slice(0, 12);
+  const samples = pickSamples(scored, 16);
 
   let summary = buildSummary({
     overallLabel,

@@ -597,6 +597,57 @@ function readCommentsBootstrap(): {
   };
 }
 
+/**
+ * YouTube binds hotkeys (k/j/l/m/f/space…) on document/window in the MAIN world.
+ * Content-script stopPropagation cannot reach those listeners (isolated worlds).
+ * While focus is inside VideoSearch inputs/popups, block keys here so typing works.
+ */
+const VSA_UI_ROOT =
+  "#videosearch-ai-root, #videosearch-ai-panel, #vsa-mark-popup, #vsa-capture-popup, [data-vsa]";
+
+function isEditableVsaTarget(node: EventTarget | null): boolean {
+  if (!(node instanceof Element)) return false;
+  const el = node as HTMLElement;
+  if (!el.closest(VSA_UI_ROOT)) return false;
+  const tag = el.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (tag === "INPUT") {
+    const type = (el as HTMLInputElement).type || "text";
+    return ![
+      "button",
+      "submit",
+      "checkbox",
+      "radio",
+      "file",
+      "range",
+      "color",
+      "hidden",
+      "image",
+      "reset",
+    ].includes(type);
+  }
+  if (el.isContentEditable) return true;
+  // Focused buttons inside mark/capture popups still shouldn't fire YT hotkeys
+  if (el.closest("#vsa-mark-popup, #vsa-capture-popup")) return true;
+  return false;
+}
+
+function shieldYoutubeHotkeys(e: KeyboardEvent): void {
+  const active = document.activeElement;
+  if (!isEditableVsaTarget(e.target) && !isEditableVsaTarget(active)) {
+    return;
+  }
+  // Stop YouTube; do NOT preventDefault — the character must still type into the field
+  e.stopImmediatePropagation();
+  e.stopPropagation();
+}
+
+for (const type of ["keydown", "keyup", "keypress"] as const) {
+  // Capture on window at document_start so we run before most YT handlers
+  window.addEventListener(type, shieldYoutubeHotkeys, true);
+  document.addEventListener(type, shieldYoutubeHotkeys, true);
+}
+
 window.addEventListener("message", (event: MessageEvent) => {
   if (event.source !== window) return;
   const data = event.data;

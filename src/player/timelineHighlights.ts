@@ -6,6 +6,7 @@
  */
 
 import type { VideoHighlight } from "../storage/highlightsStore";
+import type { VideoScreenshot } from "../storage/screenshotStore";
 import { iconHtml } from "../ui/icons";
 
 const LAYER_ID = "vsa-timeline-highlights";
@@ -18,7 +19,9 @@ const LOG = "[VideoSearch AI]";
 
 let observer: MutationObserver | null = null;
 let current: VideoHighlight[] = [];
+let currentShots: VideoScreenshot[] = [];
 let onMarkerClick: ((hl: VideoHighlight) => void) | null = null;
+let onShotClick: ((shot: VideoScreenshot) => void) | null = null;
 let onAddClick: (() => void) | null = null;
 let onCaptureClick: (() => void) | null = null;
 let paintTimer: number | null = null;
@@ -26,8 +29,12 @@ let rebindTimer: number | null = null;
 
 export interface TimelineHighlightHandlers {
   onClick?: (hl: VideoHighlight) => void;
+  /** Click camera pin on progress bar */
+  onShotClick?: (shot: VideoScreenshot) => void;
   onAdd?: () => void;
   onCapture?: () => void;
+  /** Screenshots to show as camera markers on the scrubber */
+  shots?: VideoScreenshot[];
 }
 
 function getMoviePlayer(): HTMLElement | null {
@@ -166,30 +173,37 @@ function ensureStyles(): void {
       pointer-events: none;
     }
 
-    /* Floating controls — product-quality */
+    /* Floating controls — mid-right stack (clear of VideoSearch pill + YT chrome) */
     #${FLOAT_ID} {
       position: absolute !important;
-      right: 14px !important;
-      bottom: 76px !important;
+      right: 16px !important;
+      top: 50% !important;
+      bottom: auto !important;
+      transform: translateY(-50%) !important;
       z-index: 60 !important;
       display: flex !important;
       flex-direction: column !important;
-      gap: 8px !important;
+      gap: 10px !important;
       pointer-events: none !important;
-      opacity: 0.95 !important;
-      transition: opacity 0.2s ease, bottom 0.2s ease !important;
+      opacity: 0.96 !important;
+      transition: opacity 0.2s ease !important;
+      padding: 6px !important;
+      border-radius: 16px !important;
+      background: rgba(6, 8, 14, 0.28) !important;
+      border: 1px solid rgba(255,255,255,0.06) !important;
+      backdrop-filter: blur(8px) !important;
+      -webkit-backdrop-filter: blur(8px) !important;
     }
     #movie_player.ytp-autohide #${FLOAT_ID} {
-      bottom: 20px !important;
-      opacity: 0.88 !important;
+      opacity: 0.9 !important;
     }
     #${FLOAT_ID} button {
       pointer-events: auto !important;
       position: relative !important;
-      width: 42px !important;
-      height: 42px !important;
+      width: 44px !important;
+      height: 44px !important;
       border: 1px solid rgba(255,255,255,0.12) !important;
-      border-radius: 12px !important;
+      border-radius: 13px !important;
       cursor: pointer !important;
       display: inline-flex !important;
       align-items: center !important;
@@ -198,9 +212,10 @@ function ensureStyles(): void {
       backdrop-filter: blur(12px) saturate(1.2) !important;
       -webkit-backdrop-filter: blur(12px) saturate(1.2) !important;
       transition: transform 0.15s ease, border-color 0.15s ease !important;
+      flex-shrink: 0 !important;
     }
     #${FLOAT_ID} button:hover {
-      transform: translateY(-1px) scale(1.04) !important;
+      transform: scale(1.06) !important;
     }
     #${FLOAT_ID} .vsa-float-ss {
       background: rgba(10, 16, 28, 0.92) !important;
@@ -216,13 +231,15 @@ function ensureStyles(): void {
     }
     #${FLOAT_ID} .vsa-float-label {
       position: absolute;
-      right: 50px;
+      right: calc(100% + 10px);
+      top: 50%;
+      transform: translateY(-50%);
       white-space: nowrap;
       font: 650 11px/1 "Plus Jakarta Sans", system-ui, sans-serif;
       letter-spacing: -0.01em;
       color: #f4f5f7;
-      background: rgba(10,11,15,0.92);
-      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(10,11,15,0.94);
+      border: 1px solid rgba(255,255,255,0.1);
       padding: 7px 10px;
       border-radius: 8px;
       opacity: 0;
@@ -232,6 +249,18 @@ function ensureStyles(): void {
     }
     #${FLOAT_ID} button:hover .vsa-float-label {
       opacity: 1;
+    }
+    /* Small screens: keep stack clear of edges */
+    @media (max-width: 640px) {
+      #${FLOAT_ID} {
+        right: 10px !important;
+        gap: 8px !important;
+        padding: 4px !important;
+      }
+      #${FLOAT_ID} button {
+        width: 40px !important;
+        height: 40px !important;
+      }
     }
   `;
   document.documentElement.appendChild(style);
@@ -263,21 +292,46 @@ function ensureLayer(bar: HTMLElement): HTMLElement {
   return layer;
 }
 
-function formatTip(hl: VideoHighlight): string {
-  const m = Math.floor(hl.startTime / 60);
-  const s = Math.floor(hl.startTime % 60)
+function formatTimeShort(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60)
     .toString()
     .padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+function formatTip(hl: VideoHighlight): string {
+  const ts = formatTimeShort(hl.startTime);
   const note = hl.note?.trim();
-  if (note) return `Note ${m}:${s} — ${note}`;
-  return `Highlight ${m}:${s} (no note yet)`;
+  if (hl.screenshotId) {
+    return note ? `Screenshot ${ts} — ${note}` : `Screenshot ${ts}`;
+  }
+  if (note) return `Mark ${ts} — ${note}`;
+  return `Mark ${ts}`;
+}
+
+function formatShotTip(shot: VideoScreenshot): string {
+  const ts = formatTimeShort(shot.videoTime);
+  const note = shot.note?.trim();
+  return note ? `Screenshot ${ts} — ${note}` : `Screenshot ${ts}`;
 }
 
 function renderLayer(layer: HTMLElement, duration: number): void {
   layer.innerHTML = "";
-  if (!duration || current.length === 0) return;
+  if (!duration) return;
 
+  // Marks that are pure highlights (no linked shot) — red pin
+  // Marks that are screenshot-linked — still painted as marks if no shot list;
+  // prefer camera icon when screenshotId is set.
   for (const hl of current) {
+    const isShot = Boolean(hl.screenshotId);
+    // Skip highlight paint if this is only a shot-linked mark and we paint shots separately
+    // (avoid double icons). Still paint if shot not in currentShots.
+    if (isShot) {
+      const hasShot = currentShots.some((s) => s.id === hl.screenshotId);
+      if (hasShot) continue;
+    }
+
     const startPct = Math.max(0, Math.min(100, (hl.startTime / duration) * 100));
     const endPct = Math.max(
       startPct,
@@ -285,95 +339,207 @@ function renderLayer(layer: HTMLElement, duration: number): void {
     );
     const widthPct = Math.max(0.4, endPct - startPct);
     const hasNote = Boolean(hl.note?.trim());
-    const color = hl.color || "#ef4444";
+    const color = isShot ? "#38bdf8" : hl.color || "#ef4444";
 
-    const band = document.createElement("div");
-    band.className = "vsa-hl-band";
-    band.title = formatTip(hl);
-    band.style.cssText = `
-      position: absolute;
-      left: ${startPct}%;
-      width: ${widthPct}%;
-      top: 0;
-      bottom: 0;
-      background: ${color};
-      opacity: ${hasNote ? 0.65 : 0.45};
-      pointer-events: auto;
-      cursor: pointer;
-      border-radius: 1px;
-      box-shadow: 0 0 6px ${color}88;
-    `;
-    band.addEventListener("click", (e) => {
-      stop(e);
-      onMarkerClick?.(hl);
+    appendMarkMarker(layer, {
+      startPct,
+      widthPct,
+      color,
+      title: formatTip(hl),
+      isShot,
+      hasNote,
+      onClick: () => onMarkerClick?.(hl),
     });
-    layer.appendChild(band);
+  }
 
-    const tick = document.createElement("div");
-    tick.className = "vsa-hl-tick";
-    tick.title = formatTip(hl);
-    tick.style.cssText = `
-      position: absolute;
-      left: ${startPct}%;
-      top: -4px;
-      bottom: -4px;
-      width: 3px;
-      margin-left: -1.5px;
-      background: ${color};
-      border-radius: 2px;
-      pointer-events: auto;
-      cursor: pointer;
-      box-shadow: 0 0 8px ${color};
-      z-index: 2;
-    `;
-    tick.addEventListener("click", (e) => {
-      stop(e);
-      onMarkerClick?.(hl);
+  // Pure screenshot pins — cyan camera icons on the scrubber
+  for (const shot of currentShots) {
+    const startPct = Math.max(
+      0,
+      Math.min(100, (shot.videoTime / duration) * 100)
+    );
+    appendShotMarker(layer, {
+      startPct,
+      title: formatShotTip(shot),
+      onClick: () => onShotClick?.(shot),
     });
-    layer.appendChild(tick);
+  }
+}
 
-    const icon = document.createElement("button");
-    icon.type = "button";
-    icon.className = hasNote
+function appendMarkMarker(
+  layer: HTMLElement,
+  opts: {
+    startPct: number;
+    widthPct: number;
+    color: string;
+    title: string;
+    isShot: boolean;
+    hasNote: boolean;
+    onClick: () => void;
+  }
+): void {
+  const { startPct, widthPct, color, title, isShot, hasNote, onClick } = opts;
+
+  const band = document.createElement("div");
+  band.className = isShot ? "vsa-hl-band is-shot" : "vsa-hl-band";
+  band.title = title;
+  band.style.cssText = `
+    position: absolute;
+    left: ${startPct}%;
+    width: ${widthPct}%;
+    top: 0;
+    bottom: 0;
+    background: ${color};
+    opacity: ${hasNote || isShot ? 0.7 : 0.45};
+    pointer-events: auto;
+    cursor: pointer;
+    border-radius: 1px;
+    box-shadow: 0 0 6px ${color}88;
+  `;
+  band.addEventListener("click", (e) => {
+    stop(e);
+    onClick();
+  });
+  layer.appendChild(band);
+
+  const tick = document.createElement("div");
+  tick.className = "vsa-hl-tick";
+  tick.title = title;
+  tick.style.cssText = `
+    position: absolute;
+    left: ${startPct}%;
+    top: -4px;
+    bottom: -4px;
+    width: 3px;
+    margin-left: -1.5px;
+    background: ${color};
+    border-radius: 2px;
+    pointer-events: auto;
+    cursor: pointer;
+    box-shadow: 0 0 8px ${color};
+    z-index: 2;
+  `;
+  tick.addEventListener("click", (e) => {
+    stop(e);
+    onClick();
+  });
+  layer.appendChild(tick);
+
+  const icon = document.createElement("button");
+  icon.type = "button";
+  icon.className = isShot
+    ? "vsa-hl-marker-ico is-shot"
+    : hasNote
       ? "vsa-hl-marker-ico has-note"
       : "vsa-hl-marker-ico";
-    icon.title = formatTip(hl);
-    icon.setAttribute(
-      "aria-label",
-      hasNote
-        ? `Open note at ${formatTip(hl)}`
-        : `Open highlight at ${formatTip(hl)}`
-    );
-    const sz = hasNote ? 18 : 16;
-    icon.innerHTML = iconHtml(hasNote ? "notes" : "highlight", sz - 6);
-    icon.style.cssText = `
-      position: absolute;
-      left: ${startPct}%;
-      bottom: 100%;
-      transform: translate(-50%, -3px);
-      margin: 0;
-      padding: 0;
-      width: ${sz}px;
-      height: ${sz}px;
-      border: none;
-      border-radius: 6px;
-      background: linear-gradient(145deg, ${hasNote ? "#f87171" : "#1f2937"}, ${hasNote ? "#dc2626" : "#0f172a"});
-      color: ${hasNote ? "#fff" : "#fca5a5"};
-      box-shadow: 0 0 0 1.5px ${color}, 0 3px 10px rgba(0,0,0,0.55);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      pointer-events: auto;
-      cursor: pointer;
-      z-index: 5;
-    `;
-    icon.addEventListener("click", (e) => {
-      stop(e);
-      onMarkerClick?.(hl);
-    });
-    icon.addEventListener("mousedown", stop);
-    layer.appendChild(icon);
-  }
+  icon.title = title;
+  icon.setAttribute("aria-label", title);
+  const sz = isShot || hasNote ? 18 : 16;
+  icon.innerHTML = iconHtml(
+    isShot ? "camera" : hasNote ? "notes" : "highlight",
+    sz - 6
+  );
+  icon.style.cssText = `
+    position: absolute;
+    left: ${startPct}%;
+    bottom: 100%;
+    transform: translate(-50%, -3px);
+    margin: 0;
+    padding: 0;
+    width: ${sz}px;
+    height: ${sz}px;
+    border: none;
+    border-radius: ${isShot ? "50%" : "6px"};
+    background: ${
+      isShot
+        ? "linear-gradient(145deg, #7dd3fc, #0ea5e9)"
+        : hasNote
+          ? "linear-gradient(145deg, #f87171, #dc2626)"
+          : "linear-gradient(145deg, #1f2937, #0f172a)"
+    };
+    color: ${isShot || hasNote ? "#fff" : "#fca5a5"};
+    box-shadow: 0 0 0 1.5px ${color}, 0 3px 10px rgba(0,0,0,0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    cursor: pointer;
+    z-index: 5;
+  `;
+  icon.addEventListener("click", (e) => {
+    stop(e);
+    onClick();
+  });
+  icon.addEventListener("mousedown", stop);
+  layer.appendChild(icon);
+}
+
+function appendShotMarker(
+  layer: HTMLElement,
+  opts: { startPct: number; title: string; onClick: () => void }
+): void {
+  const { startPct, title, onClick } = opts;
+  const color = "#38bdf8";
+
+  const tick = document.createElement("div");
+  tick.className = "vsa-ss-tick";
+  tick.title = title;
+  tick.style.cssText = `
+    position: absolute;
+    left: ${startPct}%;
+    top: -3px;
+    bottom: -3px;
+    width: 3px;
+    margin-left: -1.5px;
+    background: ${color};
+    border-radius: 2px;
+    pointer-events: auto;
+    cursor: pointer;
+    box-shadow: 0 0 10px ${color};
+    z-index: 3;
+  `;
+  tick.addEventListener("click", (e) => {
+    stop(e);
+    onClick();
+  });
+  layer.appendChild(tick);
+
+  const icon = document.createElement("button");
+  icon.type = "button";
+  icon.className = "vsa-ss-marker-ico";
+  icon.title = title;
+  icon.setAttribute("aria-label", title);
+  icon.innerHTML = iconHtml("camera", 11);
+  icon.style.cssText = `
+    position: absolute;
+    left: ${startPct}%;
+    bottom: 100%;
+    transform: translate(-50%, -4px);
+    margin: 0;
+    padding: 0;
+    width: 18px;
+    height: 18px;
+    border: none;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #7dd3fc, #0284c7 55%, #0369a1);
+    color: #fff;
+    box-shadow:
+      0 0 0 2px rgba(14, 165, 233, 0.9),
+      0 0 12px rgba(56, 189, 248, 0.75),
+      0 4px 12px rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    cursor: pointer;
+    z-index: 6;
+  `;
+  icon.addEventListener("click", (e) => {
+    stop(e);
+    onClick();
+  });
+  icon.addEventListener("mousedown", stop);
+  layer.appendChild(icon);
 }
 
 function wireButton(
@@ -571,14 +737,18 @@ function schedulePaint(): void {
 }
 
 /**
- * Update highlights + player controls (chrome + floating screenshot).
+ * Update marks + screenshot pins + player controls.
  */
 export function setTimelineHighlights(
   highlights: VideoHighlight[],
   handlers?: TimelineHighlightHandlers
 ): void {
   current = highlights.slice();
+  if (handlers && "shots" in handlers) {
+    currentShots = (handlers.shots || []).slice();
+  }
   if (handlers?.onClick) onMarkerClick = handlers.onClick;
+  if (handlers?.onShotClick) onShotClick = handlers.onShotClick;
   if (handlers?.onAdd) onAddClick = handlers.onAdd;
   if (handlers?.onCapture) onCaptureClick = handlers.onCapture;
   paint();
@@ -603,6 +773,7 @@ function scheduleRepaintBurst(): void {
 
 export function clearTimelineHighlights(): void {
   current = [];
+  currentShots = [];
   document.getElementById(LAYER_ID)?.remove();
   document.getElementById(CTRL_ID)?.remove();
   document.getElementById(CAM_ID)?.remove();
@@ -616,7 +787,7 @@ function ensureObserver(): void {
       const bar = getProgressBar();
       const needLayer =
         Boolean(bar) &&
-        current.length > 0 &&
+        (current.length > 0 || currentShots.length > 0) &&
         !bar!.querySelector(`#${LAYER_ID}`);
       const needFloat =
         Boolean(getMoviePlayer()) && !document.getElementById(FLOAT_ID);

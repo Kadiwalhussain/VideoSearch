@@ -14,6 +14,91 @@ export interface CapturePopupResult {
   saved: boolean;
 }
 
+/**
+ * Isolate popup fields from YouTube without breaking Save/Skip clicks.
+ *
+ * IMPORTANT: never stopPropagation on pointer/click in the *capture* phase on
+ * the popup root — that blocks the event before it reaches the buttons.
+ * MAIN-world YouTube hotkeys are handled in pageBridge while inputs are focused.
+ */
+function wirePopupFieldIsolation(
+  root: HTMLElement,
+  ta: HTMLTextAreaElement,
+  opts: {
+    onSave: () => void;
+    onSkip: () => void;
+  }
+): void {
+  const stopBubble = (e: Event) => e.stopPropagation();
+
+  // Keys only on the textarea (target phase / bubble). Do NOT capture-stop on root.
+  for (const type of [
+    "keydown",
+    "keyup",
+    "keypress",
+    "input",
+    "beforeinput",
+  ] as const) {
+    ta.addEventListener(type, stopBubble, false);
+  }
+
+  ta.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      opts.onSave();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      opts.onSkip();
+    }
+  });
+
+  // Bubble phase only — children (Save/Skip) receive the event first
+  for (const type of [
+    "mousedown",
+    "mouseup",
+    "click",
+    "dblclick",
+    "pointerdown",
+    "pointerup",
+    "touchstart",
+    "touchend",
+  ] as const) {
+    root.addEventListener(type, stopBubble, false);
+  }
+}
+
+function bindPopupActions(
+  saveBtn: HTMLButtonElement,
+  skipBtn: HTMLButtonElement,
+  onSave: () => void,
+  onSkip: () => void
+): void {
+  const fire =
+    (fn: () => void) =>
+    (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fn();
+    };
+  saveBtn.addEventListener("click", fire(onSave));
+  skipBtn.addEventListener("click", fire(onSkip));
+  // Extra path if YouTube swallows click but not pointerup
+  saveBtn.addEventListener("pointerup", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onSave();
+  });
+  skipBtn.addEventListener("pointerup", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onSkip();
+  });
+}
+
 function ensureStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement("style");
@@ -37,36 +122,38 @@ function ensureStyles(): void {
 
     #${POPUP_ID} {
       position: absolute !important;
-      right: 18px !important;
-      bottom: 88px !important;
+      left: 50% !important;
+      right: auto !important;
+      bottom: 84px !important;
+      transform: translateX(-50%) !important;
       z-index: 80 !important;
       width: min(300px, calc(100% - 32px)) !important;
       font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif !important;
       color: #f4f5f7 !important;
       pointer-events: auto !important;
       animation: vsa-polaroid-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both !important;
-      transform-origin: 90% 100% !important;
+      transform-origin: 50% 100% !important;
       will-change: transform, opacity !important;
     }
     #movie_player.ytp-autohide #${POPUP_ID} {
-      bottom: 24px !important;
+      bottom: 28px !important;
     }
     @keyframes vsa-polaroid-in {
-      0% { opacity: 0; transform: translateY(16px) scale(0.94); }
-      100% { opacity: 1; transform: translateY(0) scale(1); }
+      0% { opacity: 0; transform: translateX(-50%) translateY(16px) scale(0.94); }
+      100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
     }
     #${POPUP_ID}.is-saving {
       animation: vsa-polaroid-save 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
     }
     @keyframes vsa-polaroid-save {
-      0% { opacity: 1; transform: translateY(0) scale(1); }
-      100% { opacity: 0; transform: translate(28px, -48px) scale(0.55); }
+      0% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+      100% { opacity: 0; transform: translateX(-50%) translateY(-40px) scale(0.55); }
     }
     #${POPUP_ID}.is-dismiss {
       animation: vsa-polaroid-out 0.28s ease forwards !important;
     }
     @keyframes vsa-polaroid-out {
-      to { opacity: 0; transform: translateY(16px) scale(0.92); }
+      to { opacity: 0; transform: translateX(-50%) translateY(16px) scale(0.92); }
     }
 
     #${POPUP_ID} .vsa-cap-card {
@@ -344,37 +431,16 @@ export function showCapturePopup(opts: {
       }
     };
 
-    saveBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      finish(true, ta.value.trim());
-    });
-    skipBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      // still saved as shot, just no note from popup — treat as saved with empty note
-      finish(true, "");
-    });
-    ta.addEventListener("keydown", (e) => {
-      e.stopPropagation();
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        finish(true, ta.value.trim());
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        finish(true, "");
-      }
-    });
-    // stop youtube hotkeys
-    for (const type of ["keydown", "keyup", "keypress"] as const) {
-      root.addEventListener(type, (e) => e.stopPropagation(), true);
-    }
-    root.addEventListener("mousedown", (e) => e.stopPropagation());
-    root.addEventListener("click", (e) => e.stopPropagation());
+    const doSave = () => finish(true, ta.value.trim());
+    // still saved as shot, just no note from popup
+    const doSkip = () => finish(true, "");
+    bindPopupActions(saveBtn, skipBtn, doSave, doSkip);
+    wirePopupFieldIsolation(root, ta, { onSave: doSave, onSkip: doSkip });
 
     host.appendChild(root);
-    window.setTimeout(() => ta.focus({ preventScroll: true }), 180);
+    window.setTimeout(() => {
+      ta.focus({ preventScroll: true });
+    }, 180);
   });
 }
 
@@ -387,4 +453,256 @@ export function flashNoteSaved(el: HTMLElement | null): void {
   void el.offsetWidth;
   el.classList.add("vsa-note-saved-flash");
   window.setTimeout(() => el.classList.remove("vsa-note-saved-flash"), 1200);
+}
+
+const MARK_POPUP_ID = "vsa-mark-popup";
+const MARK_STYLE_ID = "vsa-mark-fx-style";
+
+export interface MarkNotePopupResult {
+  note: string;
+  /** false only if user dismissed without saving the mark note path — we always keep the mark */
+  kept: boolean;
+}
+
+function ensureMarkStyles(): void {
+  if (document.getElementById(MARK_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = MARK_STYLE_ID;
+  style.textContent = `
+    #${MARK_POPUP_ID} {
+      position: absolute !important;
+      left: 50% !important;
+      right: auto !important;
+      bottom: 84px !important;
+      z-index: 82 !important;
+      width: min(320px, calc(100% - 32px)) !important;
+      font-family: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui, sans-serif !important;
+      color: #f4f5f7 !important;
+      pointer-events: auto !important;
+      animation: vsa-mark-in 0.38s cubic-bezier(0.16, 1, 0.3, 1) both !important;
+      transform-origin: 50% 100% !important;
+    }
+    #movie_player.ytp-autohide #${MARK_POPUP_ID} {
+      bottom: 28px !important;
+    }
+    @keyframes vsa-mark-in {
+      0% { opacity: 0; transform: translateX(-50%) translateY(18px) scale(0.92); }
+      60% { opacity: 1; transform: translateX(-50%) translateY(-4px) scale(1.02); }
+      100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+    }
+    #${MARK_POPUP_ID}.is-saving {
+      animation: vsa-mark-save 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
+    }
+    @keyframes vsa-mark-save {
+      0% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+      100% { opacity: 0; transform: translateX(-50%) translateY(-40px) scale(0.5); }
+    }
+    #${MARK_POPUP_ID}.is-dismiss {
+      animation: vsa-mark-out 0.25s ease forwards !important;
+    }
+    @keyframes vsa-mark-out {
+      to { opacity: 0; transform: translateX(-50%) translateY(12px) scale(0.94); }
+    }
+    #${MARK_POPUP_ID} .vsa-mark-card {
+      border-radius: 18px !important;
+      overflow: hidden !important;
+      background: linear-gradient(165deg, #1a1214 0%, #12151c 55%, #0e1118 100%) !important;
+      border: 1px solid rgba(248,113,113,0.35) !important;
+      box-shadow:
+        0 0 0 1px rgba(248,113,113,0.12),
+        0 28px 56px rgba(0,0,0,0.55),
+        0 0 48px rgba(239,68,68,0.12) !important;
+    }
+    #${MARK_POPUP_ID} .vsa-mark-glow {
+      height: 3px !important;
+      background: linear-gradient(90deg, #f87171, #fb7185, #fbbf24) !important;
+    }
+    #${MARK_POPUP_ID} .vsa-mark-head {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: 10px !important;
+      padding: 12px 14px 0 !important;
+    }
+    #${MARK_POPUP_ID} .vsa-mark-title {
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+      font-size: 13px !important;
+      font-weight: 800 !important;
+      letter-spacing: -0.02em !important;
+    }
+    #${MARK_POPUP_ID} .vsa-mark-title .vsa-ico { color: #fca5a5 !important; }
+    #${MARK_POPUP_ID} .vsa-mark-time {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
+      font-size: 12px !important;
+      font-weight: 750 !important;
+      color: #fecaca !important;
+      background: rgba(248,113,113,0.15) !important;
+      border: 1px solid rgba(248,113,113,0.3) !important;
+      border-radius: 999px !important;
+      padding: 4px 10px !important;
+    }
+    #${MARK_POPUP_ID} .vsa-mark-body {
+      padding: 10px 14px 14px !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 8px !important;
+    }
+    #${MARK_POPUP_ID} .vsa-mark-sub {
+      margin: 0 !important;
+      font-size: 12px !important;
+      line-height: 1.4 !important;
+      color: #8b95a8 !important;
+    }
+    #${MARK_POPUP_ID} label {
+      font-size: 10px !important;
+      font-weight: 750 !important;
+      letter-spacing: 0.08em !important;
+      text-transform: uppercase !important;
+      color: #6b7280 !important;
+    }
+    #${MARK_POPUP_ID} textarea {
+      width: 100% !important;
+      box-sizing: border-box !important;
+      border: 1px solid rgba(255,255,255,0.1) !important;
+      border-radius: 12px !important;
+      background: rgba(0,0,0,0.35) !important;
+      color: #f4f5f7 !important;
+      font-family: inherit !important;
+      font-size: 13px !important;
+      line-height: 1.45 !important;
+      padding: 10px 12px !important;
+      resize: none !important;
+      outline: none !important;
+      min-height: 72px !important;
+    }
+    #${MARK_POPUP_ID} textarea:focus {
+      border-color: rgba(248,113,113,0.45) !important;
+      box-shadow: 0 0 0 3px rgba(248,113,113,0.12) !important;
+    }
+    #${MARK_POPUP_ID} textarea::placeholder { color: #5c6678 !important; }
+    #${MARK_POPUP_ID} .vsa-mark-actions {
+      display: flex !important;
+      gap: 8px !important;
+      margin-top: 4px !important;
+    }
+    #${MARK_POPUP_ID} .vsa-mark-skip {
+      flex: 1 !important;
+      border: 1px solid rgba(255,255,255,0.1) !important;
+      background: transparent !important;
+      color: #8b95a8 !important;
+      border-radius: 11px !important;
+      padding: 10px !important;
+      font-family: inherit !important;
+      font-size: 12.5px !important;
+      font-weight: 700 !important;
+      cursor: pointer !important;
+    }
+    #${MARK_POPUP_ID} .vsa-mark-skip:hover {
+      color: #f4f5f7 !important;
+      border-color: rgba(255,255,255,0.18) !important;
+    }
+    #${MARK_POPUP_ID} .vsa-mark-save {
+      flex: 1.35 !important;
+      border: none !important;
+      border-radius: 11px !important;
+      padding: 10px !important;
+      font-family: inherit !important;
+      font-size: 12.5px !important;
+      font-weight: 800 !important;
+      cursor: pointer !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 6px !important;
+      color: #1a0508 !important;
+      background: linear-gradient(135deg, #fca5a5, #f87171 50%, #ef4444) !important;
+      box-shadow: 0 8px 22px rgba(239,68,68,0.3) !important;
+    }
+    #${MARK_POPUP_ID} .vsa-mark-save:hover { filter: brightness(1.05) !important; }
+  `;
+  document.documentElement.appendChild(style);
+}
+
+/**
+ * Animated mark popup after pinning a moment.
+ * Optional note — Skip keeps the mark without text.
+ */
+export function showMarkNotePopup(opts: {
+  videoTime: number;
+}): Promise<MarkNotePopupResult> {
+  ensureMarkStyles();
+  const player = getPlayer();
+  document.getElementById(MARK_POPUP_ID)?.remove();
+
+  return new Promise((resolve) => {
+    const host = player || document.body;
+    if (player) {
+      const cs = getComputedStyle(player);
+      if (cs.position === "static") player.style.position = "relative";
+    }
+
+    const root = document.createElement("div");
+    root.id = MARK_POPUP_ID;
+    root.setAttribute("data-vsa", "mark-popup");
+    root.innerHTML = `
+      <div class="vsa-mark-card">
+        <div class="vsa-mark-glow"></div>
+        <div class="vsa-mark-head">
+          <div class="vsa-mark-title">
+            ${iconHtml("highlight", 15)}
+            Moment marked
+          </div>
+          <span class="vsa-mark-time">${formatTime(opts.videoTime)}</span>
+        </div>
+        <div class="vsa-mark-body">
+          <p class="vsa-mark-sub">Want to remember why? Add a note — or skip and keep the pin only.</p>
+          <label>Optional note</label>
+          <textarea placeholder="e.g. definition, formula, important point…" rows="3"></textarea>
+          <div class="vsa-mark-actions">
+            <button type="button" class="vsa-mark-skip">Skip note</button>
+            <button type="button" class="vsa-mark-save">
+              ${iconHtml("notes", 14)}
+              Save note
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+    const saveBtn = root.querySelector(".vsa-mark-save") as HTMLButtonElement;
+    const skipBtn = root.querySelector(".vsa-mark-skip") as HTMLButtonElement;
+
+    let settled = false;
+    const finish = (note: string, animated: boolean) => {
+      if (settled) return;
+      settled = true;
+      root.classList.add(animated ? "is-saving" : "is-dismiss");
+      window.setTimeout(
+        () => {
+          root.remove();
+          resolve({ note, kept: true });
+        },
+        animated ? 420 : 220
+      );
+    };
+
+    const doSave = () => finish(ta.value.trim(), true);
+    const doSkip = () => finish("", false);
+    bindPopupActions(saveBtn, skipBtn, doSave, doSkip);
+    wirePopupFieldIsolation(root, ta, { onSave: doSave, onSkip: doSkip });
+
+    host.appendChild(root);
+    window.setTimeout(() => {
+      ta.focus({ preventScroll: true });
+      const len = ta.value.length;
+      try {
+        ta.setSelectionRange(len, len);
+      } catch {
+        /* ignore */
+      }
+    }, 200);
+  });
 }

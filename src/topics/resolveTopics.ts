@@ -83,8 +83,8 @@ export async function resolveTopics(
     };
   }
 
-  // ── 2) No official chapters → LLM then local ──────────────────────────
-  onStatus?.("Finding main topics…");
+  // ── 2) No official chapters → LLM first (quality), then local fallback ─
+  onStatus?.("Finding main topics with AI…");
 
   const llm = await extractTopicsWithLlm(
     videoId,
@@ -95,37 +95,38 @@ export async function resolveTopics(
     const cleaned = snapTopicTimes(llm, chunks).filter((t) =>
       isGoodUserLabel(t.label)
     );
-    if (cleaned.length >= Math.min(12, budget * 0.5)) {
-      // Still merge local to hit budget with more coverage
+    // Prefer pure LLM titles — do NOT mix price/SKU local junk into good AI chapters
+    if (cleaned.length >= 4) {
       if (cleaned.length < budget) {
-        const local = extractTopics(chunks);
+        onStatus?.("Adding coverage topics…");
+        const local = extractTopics(chunks).filter((t) =>
+          isGoodUserLabel(t.label)
+        );
         const merged = mergeTopics(cleaned, local);
-        return {
-          topics: snapTopicTimes(merged, chunks)
-            .filter((t) => isGoodUserLabel(t.label))
-            .slice(0, budget),
-          source: "mixed",
-        };
+        const final = snapTopicTimes(merged, chunks).filter((t) =>
+          isGoodUserLabel(t.label)
+        );
+        // If merge re-introduced garbage, fall back to LLM-only
+        if (final.length >= cleaned.length) {
+          return {
+            topics: final.slice(0, budget),
+            source: final.length > cleaned.length ? "mixed" : "llm",
+          };
+        }
       }
       return { topics: cleaned.slice(0, budget), source: "llm" };
     }
-    onStatus?.("Improving topic labels…");
-    const local = extractTopics(chunks);
-    const merged = mergeTopics(cleaned, local);
-    return {
-      topics: snapTopicTimes(merged, chunks)
-        .filter((t) => isGoodUserLabel(t.label))
-        .slice(0, budget),
-      source: "mixed",
-    };
   }
 
   onStatus?.("Building topics from transcript…");
-  const local = extractTopics(chunks);
+  const local = extractTopics(chunks)
+    .map((t) => ({ ...t, label: t.label.trim() }))
+    .filter((t) => isGoodUserLabel(t.label));
+  const snapped = snapTopicTimes(local, chunks).filter((t) =>
+    isGoodUserLabel(t.label)
+  );
   return {
-    topics: snapTopicTimes(local, chunks)
-      .filter((t) => isGoodUserLabel(t.label))
-      .slice(0, budget),
+    topics: snapped.slice(0, budget),
     source: "local",
   };
 }

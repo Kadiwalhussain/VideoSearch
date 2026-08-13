@@ -17,6 +17,10 @@ import {
   LogOut,
   MessageSquare,
   Minus,
+  Bookmark,
+  BookmarkCheck,
+  Clock,
+  FolderPlus,
   RefreshCw,
   Search,
   Send,
@@ -53,7 +57,11 @@ export type IconName =
   | "eyeOff"
   | "trash"
   | "refresh"
-  | "grid";
+  | "grid"
+  | "bookmark"
+  | "bookmarkCheck"
+  | "clock"
+  | "playlist";
 
 const MAP: Record<IconName, IconNode> = {
   search: Search,
@@ -81,6 +89,10 @@ const MAP: Record<IconName, IconNode> = {
   trash: Trash2,
   refresh: RefreshCw,
   grid: LayoutGrid,
+  bookmark: Bookmark,
+  bookmarkCheck: BookmarkCheck,
+  clock: Clock,
+  playlist: FolderPlus,
 };
 
 function attrsToString(attrs: Record<string, string | number>): string {

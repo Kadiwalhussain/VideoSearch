@@ -1,12 +1,34 @@
-# VideoSearch Vault (web)
+# VideoSearch Studio (React)
 
-Account login UI for your private vault (same JWT as the Chrome extension).
+Cinematic SaaS dashboard for the vault API — **React 18 + React Router + shared vault store**.
 
-## Run
+## Develop
 
-1. Start the API: `cd server && npm run dev`
-2. Open `webapp/index.html` (static file — any static server or open in browser)
-3. **Create account** or **Log in** with the same email as the extension
-4. Browse highlights and R2-backed screenshots
+```bash
+# Terminal 1 — API
+cd server && npm run start:always
 
-Data never mixes between users — each JWT only loads that account’s Mongo rows and R2 keys under `users/<userId>/`.
+# Terminal 2 — Studio HMR
+cd webapp && npm install && npm run dev
+# → http://localhost:5173/app/  (proxies /api → :8787)
+```
+
+## Production build (served by Express at /app/)
+
+```bash
+cd webapp && npm run build
+# output: webapp/dist
+# open http://127.0.0.1:8787/app/
+```
+
+## Architecture
+
+| Layer | Role |
+|--------|------|
+| `SessionContext` | JWT + API URL |
+| `VaultContext` | Single vault dataset + library mutations |
+| `StudioLayout` | Sidebar + topbar; `<Outlet />` for routes |
+| `pages/*` | Route screens (Dashboard, Library, Notes, …) |
+| `api/*` | Thin fetch wrappers for `/api/auth` and `/api/vault` |
+
+All nav items are real URLs under basename `/app`.

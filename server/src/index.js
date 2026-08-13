@@ -15,6 +15,7 @@ import {
   loginUser,
   publicUser,
   registerUser,
+  resetPassword,
   verifyToken,
 } from "./auth.js";
 import {
@@ -24,12 +25,16 @@ import {
   isR2Configured,
   uploadJpeg,
 } from "./r2.js";
+import { getLlmConfig, serverChatCompletions } from "./ai.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WEBAPP_DIR = path.resolve(__dirname, "../../webapp");
+/** React Studio build output (vite base: /app/) */
+const WEBAPP_DIR = path.resolve(__dirname, "../../webapp/dist");
 const WEBSITE_ASSETS = path.resolve(__dirname, "../../website/assets");
 
 const PORT = Number(process.env.PORT || 8787);
+/** Bind all interfaces so LAN devices can reach the vault (set HOST=127.0.0.1 to lock local-only) */
+const HOST = (process.env.HOST || "0.0.0.0").trim() || "0.0.0.0";
 const MONGODB_URI = process.env.MONGODB_URI || "";
 const PUBLIC_API_BASE = (
   process.env.PUBLIC_API_BASE || `http://localhost:${PORT}`
@@ -40,14 +45,61 @@ if (!MONGODB_URI) {
   process.exit(1);
 }
 
+/**
+ * Absolute API base for media URLs — prefer the request Host so both
+ * http://localhost:8787 and http://192.168.x.x:8787 work with the same process.
+ */
+function apiBaseFromReq(req) {
+  const host = String(
+    req?.headers?.["x-forwarded-host"] || req?.headers?.host || ""
+  ).trim();
+  if (host) {
+    const proto = String(
+      req.headers["x-forwarded-proto"] ||
+        (req.secure ? "https" : "http")
+    )
+      .split(",")[0]
+      .trim();
+    return `${proto}://${host}`.replace(/\/$/, "");
+  }
+  return PUBLIC_API_BASE;
+}
+
 const app = express();
-app.use(cors({ origin: true }));
+app.use(cors({ origin: true, credentials: true }));
+// Chrome Private Network Access (HTTPS page → localhost): allow preflight
+app.use((req, res, next) => {
+  if (req.headers["access-control-request-private-network"] === "true") {
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
+  }
+  res.setHeader("Access-Control-Allow-Private-Network", "true");
+  next();
+});
 app.use(express.json({ limit: "25mb" }));
 app.use(morgan("dev"));
 
-// Full vault UI (login + browse notes / shots)
-app.use("/app", express.static(WEBAPP_DIR, { index: "index.html" }));
+// Full vault UI — React SPA (vite build → webapp/dist)
+app.use(
+  "/app",
+  express.static(WEBAPP_DIR, {
+    index: "index.html",
+    // hashed assets always revalidate via filenames
+    maxAge: process.env.NODE_ENV === "production" ? "1d" : 0,
+  })
+);
+// Brand assets (logo) used by studio favicon / optional UI
 app.use("/app/assets", express.static(WEBSITE_ASSETS));
+
+// SPA client routes: /app/library, /app/video/:id, …
+app.get("/app/*", (req, res, next) => {
+  // Don't swallow missing static files that look like assets
+  if (/\.[a-zA-Z0-9]+$/.test(req.path) && !req.path.endsWith(".html")) {
+    return next();
+  }
+  res.sendFile(path.join(WEBAPP_DIR, "index.html"), (err) => {
+    if (err) next();
+  });
+});
 
 async function healthPayload() {
   const r2 = await checkR2();
@@ -155,6 +207,22 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+/** Reset password (MVP / local — sets a new password for an existing email) */
+app.post("/api/auth/reset-password", async (req, res) => {
+  try {
+    const out = await resetPassword({
+      email: req.body?.email,
+      password: req.body?.password,
+    });
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Reset failed",
+    });
+  }
+});
+
 app.get("/api/auth/me", authMiddleware, async (req, res) => {
   try {
     if (req.authMode === "service") {
@@ -196,7 +264,7 @@ async function refreshUserStats(userId) {
   );
 }
 
-async function processScreenshots(userId, videoId, screenshots) {
+async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC_API_BASE) {
   if (!Array.isArray(screenshots)) return { list: [], uploaded: 0, r2Errors: 0 };
 
   const existing = await VaultVideo.findOne({ userId, videoId }).lean();
@@ -207,6 +275,7 @@ async function processScreenshots(userId, videoId, screenshots) {
   let uploaded = 0;
   let r2Errors = 0;
   const list = [];
+  const base = (apiBase || PUBLIC_API_BASE).replace(/\/$/, "");
 
   for (const raw of screenshots) {
     if (!raw?.id) continue;
@@ -225,7 +294,7 @@ async function processScreenshots(userId, videoId, screenshots) {
           buffer,
         });
         r2Key = out.key;
-        imageUrl = out.publicUrl || `${PUBLIC_API_BASE}${out.proxyPath}`;
+        imageUrl = out.publicUrl || `${base}${out.proxyPath}`;
         dataUrl = "";
         uploaded += 1;
       } catch (err) {
@@ -253,12 +322,13 @@ async function processScreenshots(userId, videoId, screenshots) {
   return { list, uploaded, r2Errors };
 }
 
-function mapScreenshotOut(s, includeImages) {
+function mapScreenshotOut(s, includeImages, apiBase = PUBLIC_API_BASE) {
+  const base = (apiBase || PUBLIC_API_BASE).replace(/\/$/, "");
   const imageUrl =
     s.imageUrl ||
     (s.dataUrl?.startsWith("data:") ? s.dataUrl : undefined) ||
     (s.r2Key
-      ? `${PUBLIC_API_BASE}/api/media/${encodeURIComponent(s.r2Key)}`
+      ? `${base}/api/media/${encodeURIComponent(s.r2Key)}`
       : undefined);
 
   return {
@@ -279,6 +349,18 @@ function mapScreenshotOut(s, includeImages) {
 
 // ─── Vault (auth required) ──────────────────────────────────────────
 
+/** Merge mark lists by id — client wins on conflict; never drop unknown server-only rows when client list is partial. */
+function mergeById(serverList, clientList) {
+  const map = new Map();
+  for (const item of serverList || []) {
+    if (item?.id) map.set(String(item.id), item);
+  }
+  for (const item of clientList || []) {
+    if (item?.id) map.set(String(item.id), item);
+  }
+  return [...map.values()];
+}
+
 app.post("/api/vault/sync", authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -288,28 +370,54 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
       videoUrl = "",
       highlights = [],
       screenshots = [],
+      /** when true, client list fully replaces (after explicit delete-all) */
+      replaceHighlights = false,
+      replaceScreenshots = false,
     } = req.body || {};
 
     if (!videoId || typeof videoId !== "string") {
       return res.status(400).json({ ok: false, message: "videoId required" });
     }
 
-    const processed = await processScreenshots(userId, videoId, screenshots);
+    const existing = await VaultVideo.findOne({ userId, videoId }).lean();
 
+    const processed = await processScreenshots(
+      userId,
+      videoId,
+      screenshots,
+      apiBaseFromReq(req)
+    );
+
+    const clientHighlights = Array.isArray(highlights) ? highlights : [];
+    const nextHighlights = replaceHighlights
+      ? clientHighlights
+      : mergeById(existing?.highlights || [], clientHighlights);
+
+    // Screenshots: merge by id; processed.list already includes R2 keys
+    const nextScreenshots = replaceScreenshots
+      ? processed.list
+      : mergeById(existing?.screenshots || [], processed.list);
+
+    const setDoc = {
+      userId,
+      videoId,
+      videoTitle:
+        (videoTitle && String(videoTitle).trim()) ||
+        existing?.videoTitle ||
+        "",
+      videoUrl:
+        videoUrl ||
+        existing?.videoUrl ||
+        `https://www.youtube.com/watch?v=${videoId}`,
+      highlights: nextHighlights,
+      screenshots: nextScreenshots,
+      updatedAt: new Date(),
+    };
+    // Preserve library flags (saved / watch later / playlists) on note/shot sync
     const doc = await VaultVideo.findOneAndUpdate(
       { userId, videoId },
-      {
-        $set: {
-          userId,
-          videoId,
-          videoTitle,
-          videoUrl: videoUrl || `https://www.youtube.com/watch?v=${videoId}`,
-          highlights: Array.isArray(highlights) ? highlights : [],
-          screenshots: processed.list,
-          updatedAt: new Date(),
-        },
-      },
-      { upsert: true, new: true }
+      { $set: setDoc },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
     await refreshUserStats(userId);
@@ -320,10 +428,12 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
 
     res.json({
       ok: true,
-      message: `Saved for ${userId} · ${doc.highlights.length} marks · ${doc.screenshots.length} shots${r2Note}`,
+      message: `Saved · ${doc.highlights.length} marks · ${doc.screenshots.length} shots${r2Note}`,
       videoId: doc.videoId,
       userId,
       uploadedToR2: processed.uploaded,
+      highlightCount: doc.highlights.length,
+      screenshotCount: doc.screenshots.length,
     });
   } catch (err) {
     console.error("sync error", err);
@@ -338,32 +448,317 @@ app.get("/api/vault", authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
     const includeImages = req.query.images === "1";
+    const base = apiBaseFromReq(req);
     const rows = await VaultVideo.find({ userId })
       .sort({ updatedAt: -1 })
       .lean();
 
     res.json({
       ok: true,
-      rows: rows.map((r) => ({
-        video_id: r.videoId,
-        updated_at: r.updatedAt,
-        payload: {
-          videoId: r.videoId,
-          videoTitle: r.videoTitle,
-          videoUrl: r.videoUrl,
-          highlights: r.highlights || [],
-          screenshots: (r.screenshots || []).map((s) =>
-            mapScreenshotOut(s, includeImages)
-          ),
-          updatedAt: new Date(r.updatedAt).getTime(),
-        },
-      })),
+      rows: rows.map((r) => mapVaultRow(r, includeImages, base)),
     });
   } catch (err) {
     res.status(500).json({
       ok: false,
       message: err instanceof Error ? err.message : "List failed",
       rows: [],
+    });
+  }
+});
+
+function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
+  return {
+    video_id: r.videoId,
+    updated_at: r.updatedAt,
+    payload: {
+      videoId: r.videoId,
+      videoTitle: r.videoTitle,
+      videoUrl: r.videoUrl,
+      highlights: r.highlights || [],
+      screenshots: (r.screenshots || []).map((s) =>
+        mapScreenshotOut(s, includeImages, apiBase)
+      ),
+      saved: Boolean(r.saved),
+      savedAt: r.savedAt ? new Date(r.savedAt).getTime() : null,
+      watchLater: Boolean(r.watchLater),
+      watchLaterAt: r.watchLaterAt
+        ? new Date(r.watchLaterAt).getTime()
+        : null,
+      playlists: Array.isArray(r.playlists) ? r.playlists : [],
+      updatedAt: new Date(r.updatedAt).getTime(),
+    },
+  };
+}
+
+/**
+ * Save video to library / watch later / playlists.
+ * Does not wipe notes or screenshots.
+ *
+ * body: {
+ *   videoId, videoTitle?, videoUrl?,
+ *   action: 'save' | 'unsave' | 'watch_later' | 'unwatch_later'
+ *         | 'toggle_save' | 'toggle_watch_later'
+ *         | 'add_playlist' | 'remove_playlist',
+ *   playlist?: string
+ * }
+ */
+app.post("/api/vault/library", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const {
+      videoId,
+      videoTitle = "",
+      videoUrl = "",
+      action,
+      playlist,
+    } = req.body || {};
+
+    if (!videoId || typeof videoId !== "string") {
+      return res.status(400).json({ ok: false, message: "videoId required" });
+    }
+    if (!action || typeof action !== "string") {
+      return res.status(400).json({ ok: false, message: "action required" });
+    }
+
+    const existing = await VaultVideo.findOne({ userId, videoId }).lean();
+    const now = new Date();
+    const set = {
+      userId,
+      videoId,
+      updatedAt: now,
+      videoTitle:
+        (videoTitle && String(videoTitle).slice(0, 500)) ||
+        existing?.videoTitle ||
+        videoId,
+      videoUrl:
+        (videoUrl && String(videoUrl)) ||
+        existing?.videoUrl ||
+        `https://www.youtube.com/watch?v=${videoId}`,
+    };
+
+    let playlists = Array.isArray(existing?.playlists)
+      ? [...existing.playlists]
+      : [];
+    let saved = Boolean(existing?.saved);
+    let watchLater = Boolean(existing?.watchLater);
+    let savedAt = existing?.savedAt || null;
+    let watchLaterAt = existing?.watchLaterAt || null;
+
+    const plName =
+      typeof playlist === "string" ? playlist.trim().slice(0, 80) : "";
+
+    /** Case-insensitive find; prefer existing casing so "politics" matches "Politics" */
+    const findPlaylistIndex = (name) => {
+      const key = name.toLowerCase();
+      return playlists.findIndex((p) => String(p).toLowerCase() === key);
+    };
+    /** Resolve canonical name from user's library if this playlist already exists */
+    const resolveCanonicalName = async (name) => {
+      const key = name.toLowerCase();
+      const rows = await VaultVideo.find({
+        userId,
+        playlists: { $exists: true, $ne: [] },
+      })
+        .select("playlists")
+        .lean();
+      for (const r of rows) {
+        for (const p of r.playlists || []) {
+          if (String(p).toLowerCase() === key) return p;
+        }
+      }
+      return name;
+    };
+
+    switch (action) {
+      case "save":
+        saved = true;
+        savedAt = now;
+        break;
+      case "unsave":
+        saved = false;
+        savedAt = null;
+        break;
+      case "toggle_save":
+        saved = !saved;
+        savedAt = saved ? now : null;
+        break;
+      case "watch_later":
+        watchLater = true;
+        watchLaterAt = now;
+        break;
+      case "unwatch_later":
+        watchLater = false;
+        watchLaterAt = null;
+        break;
+      case "toggle_watch_later":
+        watchLater = !watchLater;
+        watchLaterAt = watchLater ? now : null;
+        break;
+      case "add_playlist":
+      case "toggle_playlist": {
+        if (!plName) {
+          return res
+            .status(400)
+            .json({ ok: false, message: "playlist name required" });
+        }
+        const idx = findPlaylistIndex(plName);
+        if (action === "toggle_playlist" && idx >= 0) {
+          playlists.splice(idx, 1);
+          break;
+        }
+        if (idx < 0) {
+          const canonical = await resolveCanonicalName(plName);
+          playlists.push(canonical);
+        }
+        // already in list with add_playlist → no-op (still ok)
+        saved = true;
+        if (!savedAt) savedAt = now;
+        break;
+      }
+      case "remove_playlist": {
+        if (!plName) {
+          return res
+            .status(400)
+            .json({ ok: false, message: "playlist name required" });
+        }
+        const key = plName.toLowerCase();
+        playlists = playlists.filter(
+          (p) => String(p).toLowerCase() !== key
+        );
+        break;
+      }
+      default:
+        return res.status(400).json({
+          ok: false,
+          message: `Unknown action: ${action}`,
+        });
+    }
+
+    set.saved = saved;
+    set.watchLater = watchLater;
+    set.savedAt = savedAt;
+    set.watchLaterAt = watchLaterAt;
+    set.playlists = playlists;
+
+    const doc = await VaultVideo.findOneAndUpdate(
+      { userId, videoId },
+      {
+        $set: set,
+        $setOnInsert: {
+          highlights: [],
+          screenshots: [],
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    await refreshUserStats(userId);
+
+    res.json({
+      ok: true,
+      message: libraryActionMessage(action, plName, doc),
+      videoId: doc.videoId,
+      library: {
+        saved: Boolean(doc.saved),
+        savedAt: doc.savedAt ? new Date(doc.savedAt).getTime() : null,
+        watchLater: Boolean(doc.watchLater),
+        watchLaterAt: doc.watchLaterAt
+          ? new Date(doc.watchLaterAt).getTime()
+          : null,
+        playlists: doc.playlists || [],
+      },
+    });
+  } catch (err) {
+    console.error("library error", err);
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Library update failed",
+    });
+  }
+});
+
+function libraryActionMessage(action, playlist, doc) {
+  const inList =
+    playlist &&
+    (doc.playlists || []).some(
+      (p) => String(p).toLowerCase() === String(playlist).toLowerCase()
+    );
+  switch (action) {
+    case "save":
+    case "toggle_save":
+      return doc.saved ? "Saved to library" : "Removed from library";
+    case "unsave":
+      return "Removed from library";
+    case "watch_later":
+    case "toggle_watch_later":
+      return doc.watchLater ? "Added to Watch later" : "Removed from Watch later";
+    case "unwatch_later":
+      return "Removed from Watch later";
+    case "add_playlist":
+      return `Added to “${playlist}”`;
+    case "toggle_playlist":
+      return inList
+        ? `Added to “${playlist}”`
+        : `Removed from “${playlist}”`;
+    case "remove_playlist":
+      return `Removed from “${playlist}”`;
+    default:
+      return "Library updated";
+  }
+}
+
+/** Playlist names + video counts for the signed-in user */
+app.get("/api/library/playlists", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const rows = await VaultVideo.find({
+      userId,
+      playlists: { $exists: true, $ne: [] },
+    })
+      .select("playlists videoId videoTitle")
+      .lean();
+
+    // Merge case-insensitive duplicates under first-seen casing
+    const counts = new Map(); // lower -> { name, count, videoIds }
+    for (const r of rows) {
+      for (const name of r.playlists || []) {
+        if (!name) continue;
+        const key = String(name).toLowerCase();
+        const cur = counts.get(key) || {
+          name,
+          count: 0,
+          videoIds: [],
+        };
+        cur.count += 1;
+        if (r.videoId) cur.videoIds.push(r.videoId);
+        counts.set(key, cur);
+      }
+    }
+
+    const playlists = [...counts.values()]
+      .map(({ name, count, videoIds }) => ({ name, count, videoIds }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const watchLaterCount = await VaultVideo.countDocuments({
+      userId,
+      watchLater: true,
+    });
+    const savedCount = await VaultVideo.countDocuments({
+      userId,
+      saved: true,
+    });
+
+    res.json({
+      ok: true,
+      playlists,
+      watchLaterCount,
+      savedCount,
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Playlists failed",
+      playlists: [],
     });
   }
 });
@@ -376,21 +771,7 @@ app.get("/api/vault/:videoId", authMiddleware, async (req, res) => {
       videoId: req.params.videoId,
     }).lean();
     if (!r) return res.status(404).json({ ok: false, message: "Not found" });
-    res.json({
-      ok: true,
-      video_id: r.videoId,
-      updated_at: r.updatedAt,
-      payload: {
-        videoId: r.videoId,
-        videoTitle: r.videoTitle,
-        videoUrl: r.videoUrl,
-        highlights: r.highlights || [],
-        screenshots: (r.screenshots || []).map((s) =>
-          mapScreenshotOut(s, true)
-        ),
-        updatedAt: new Date(r.updatedAt).getTime(),
-      },
-    });
+    res.json({ ok: true, ...mapVaultRow(r, true, apiBaseFromReq(req)) });
   } catch (err) {
     res.status(500).json({
       ok: false,
@@ -411,6 +792,96 @@ app.delete("/api/vault/:videoId", authMiddleware, async (req, res) => {
     res.status(500).json({
       ok: false,
       message: err instanceof Error ? err.message : "Delete failed",
+    });
+  }
+});
+
+// ─── AI (server-side LLM for perfect Chat / Ask / Topics) ───────────
+
+app.get("/api/ai/status", authMiddleware, (req, res) => {
+  const cfg = getLlmConfig();
+  res.json({
+    ok: true,
+    configured: cfg.configured,
+    provider: cfg.provider,
+    model: cfg.configured ? cfg.model : null,
+    baseUrl: cfg.configured ? cfg.baseUrl : null,
+  });
+});
+
+/**
+ * Authenticated chat completions proxy.
+ * Body: { messages, temperature?, max_tokens?, model? }
+ */
+app.post("/api/ai/chat", authMiddleware, async (req, res) => {
+  try {
+    const { messages, temperature, max_tokens, model } = req.body || {};
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "messages[] required",
+      });
+    }
+    // Hard cap payload size for abuse
+    const est = JSON.stringify(messages).length;
+    if (est > 120_000) {
+      return res.status(413).json({
+        ok: false,
+        message: "Prompt too large",
+      });
+    }
+
+    const cleaned = messages
+      .filter(
+        (m) =>
+          m &&
+          typeof m.content === "string" &&
+          ["system", "user", "assistant"].includes(m.role)
+      )
+      .map((m) => ({
+        role: m.role,
+        content: String(m.content).slice(0, 24_000),
+      }))
+      .slice(0, 24);
+
+    if (!cleaned.length) {
+      return res.status(400).json({ ok: false, message: "No valid messages" });
+    }
+
+    const result = await serverChatCompletions({
+      messages: cleaned,
+      temperature:
+        typeof temperature === "number"
+          ? Math.min(1.2, Math.max(0, temperature))
+          : 0.28,
+      max_tokens:
+        typeof max_tokens === "number"
+          ? Math.min(4096, Math.max(64, max_tokens))
+          : 1400,
+      model: typeof model === "string" ? model : undefined,
+    });
+
+    res.json({
+      ok: true,
+      content: result.content,
+      model: result.model,
+      provider: result.provider,
+      usage: result.usage,
+    });
+  } catch (err) {
+    const code = err?.code || "";
+    if (code === "AI_NOT_CONFIGURED") {
+      return res.status(503).json({
+        ok: false,
+        message: err.message,
+        code,
+      });
+    }
+    console.error("[vault-api] AI chat error", err);
+    res.status(err?.status && err.status < 600 ? err.status : 502).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "AI request failed",
+      code: code || "AI_ERROR",
     });
   }
 });
@@ -456,23 +927,98 @@ app.get("/api/media/*", async (req, res) => {
   }
 });
 
+const LOCAL_MONGO =
+  process.env.MONGODB_URI_FALLBACK || "mongodb://127.0.0.1:27017/videosearch";
+
+function mongoLabel(uri) {
+  if (/127\.0\.0\.1|localhost/.test(uri)) return "local";
+  if (/mongodb\.net|atlas/i.test(uri)) return "Atlas";
+  return "remote";
+}
+
+async function connectMongo() {
+  const candidates = [MONGODB_URI, LOCAL_MONGO].filter(Boolean);
+  const seen = new Set();
+  let lastErr;
+
+  for (const uri of candidates) {
+    if (seen.has(uri)) continue;
+    seen.add(uri);
+    const label = mongoLabel(uri);
+    try {
+      console.log(`[vault-api] connecting MongoDB (${label})…`);
+      await mongoose.connect(uri, { serverSelectionTimeoutMS: 10_000 });
+      console.log(`[vault-api] MongoDB connected (${label})`);
+      if (label !== "Atlas" && MONGODB_URI && uri !== MONGODB_URI) {
+        console.warn(
+          "[vault-api] Using fallback DB — Atlas unreachable. Whitelist this machine IP in Atlas Network Access to restore cloud data."
+        );
+      }
+      return label;
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[vault-api] Mongo (${label}) failed: ${msg.slice(0, 160)}`);
+      try {
+        await mongoose.disconnect();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  throw lastErr || new Error("Could not connect to MongoDB");
+}
+
 async function main() {
-  console.log("[vault-api] connecting MongoDB…");
-  await mongoose.connect(MONGODB_URI);
-  console.log("[vault-api] MongoDB connected");
+  await connectMongo();
 
   const r2 = await checkR2();
   if (r2.ok) console.log(`[vault-api] R2 ready · ${r2.bucket}`);
   else console.warn(`[vault-api] R2: ${r2.message}`);
 
-  app.listen(PORT, () => {
-    console.log(`[vault-api] http://localhost:${PORT}`);
-    console.log(`[vault-api] web vault: http://localhost:${PORT}/app/`);
+  // Dual-stack when HOST is 0.0.0.0/:: — Chrome often resolves "localhost" → ::1.
+  // Binding only 0.0.0.0 makes http://localhost:8787 fail in the extension.
+  const listenOpts =
+    HOST === "0.0.0.0" || HOST === "::"
+      ? { port: PORT, host: "::", ipv6Only: false }
+      : { port: PORT, host: HOST };
+
+  const server = app.listen(listenOpts, () => {
+    const ai = getLlmConfig();
+    const addr = server.address();
+    console.log(
+      `[vault-api] listening`,
+      typeof addr === "object" && addr
+        ? `${addr.address}:${addr.port}`
+        : `${HOST}:${PORT}`
+    );
+    console.log(`[vault-api] local:   http://127.0.0.1:${PORT}/app/`);
+    console.log(`[vault-api] local:   http://localhost:${PORT}/app/`);
+    console.log(
+      `[vault-api] network: http://<lan-ip>:${PORT}/app/  (same Wi‑Fi)`
+    );
+    console.log(`[vault-api] health:  http://127.0.0.1:${PORT}/health`);
     console.log(`[vault-api] auth: POST /api/auth/register | /api/auth/login`);
+    console.log(
+      ai.configured
+        ? `[vault-api] AI ready · ${ai.provider} · ${ai.model}`
+        : `[vault-api] AI off · set XAI_API_KEY in server/.env for Chat/Ask/Topics`
+    );
   });
 }
 
 main().catch((e) => {
   console.error(e);
+  if (
+    String(e?.message || e).includes("whitelist") ||
+    String(e?.message || e).includes("ServerSelection")
+  ) {
+    console.error(
+      "\n[vault-api] Fix: MongoDB Atlas Network Access → Add IP Access List\n" +
+        "  • Add your current public IP, or temporarily 0.0.0.0/0 for local dev\n" +
+        "  • Or run local mongod and set MONGODB_URI=mongodb://127.0.0.1:27017/videosearch\n"
+    );
+  }
   process.exit(1);
 });

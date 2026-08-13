@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "studio:dev": "npm run dev --prefix webapp",
+    "studio:build": "npm run build --prefix webapp",
+    "vault": "npm run start:always --prefix server"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.28",

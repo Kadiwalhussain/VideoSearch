@@ -101,11 +101,24 @@ export async function checkR2() {
       publicBase: publicBase || null,
     };
   } catch (err) {
+    const status = err?.$metadata?.httpStatusCode;
+    const code = err?.Code || err?.name || "";
+    const base =
+      err instanceof Error && err.message && err.message !== "UnknownError"
+        ? err.message
+        : code || "R2 check failed";
+    const hint =
+      status === 403
+        ? " (403 — check R2 API token has Object Read & Write on this bucket)"
+        : status
+          ? ` (HTTP ${status})`
+          : "";
     return {
       ok: false,
-      message: err instanceof Error ? err.message : "R2 check failed",
+      message: `${base}${hint}`,
       endpoint,
       bucket,
+      status: status || null,
     };
   }
 }

@@ -129,7 +129,7 @@ async function loadComments(
       );
 
       const fetched = await fetchYouTubeComments(videoId, {
-        maxComments: 120,
+        maxComments: 200,
         onProgress: (n) => {
           if (!stillHere()) return;
           panel.setCommentsState({
@@ -267,21 +267,29 @@ async function paintHighlights(
   sessionHighlights.set(videoId, items);
   panel.setHighlights(items);
 
+  const shots = sessionScreenshots.get(videoId) ?? [];
+  panel.setScreenshots(shots);
+
   const { setTimelineHighlights } = await import(
     "../player/timelineHighlights"
   );
   setTimelineHighlights(items, {
-    // Click red mark / 📝 on the progress bar → seek + open Notes
+    shots,
+    // Red mark / note pin on progress bar → seek + open Notes
     onClick: (hl) => {
       seekTo(hl.startTime);
       panel.openHighlightsTab();
       panel.flashHighlight(hl.id);
     },
-    // Highlight control next to time remaining → mark now + open Notes
+    // Cyan camera pin on progress bar → seek + open Notes (shots list)
+    onShotClick: (shot) => {
+      seekTo(shot.videoTime);
+      panel.openHighlightsTab();
+      panel.flashScreenshot(shot.id);
+    },
     onAdd: () => {
       void addHighlightAtNow(videoId, panel);
     },
-    // Camera next to highlight → freeze frame
     onCapture: () => {
       void captureFrameNow(videoId, panel);
     },
@@ -314,24 +322,66 @@ async function addHighlightAtNow(
 ): Promise<void> {
   try {
     const { getCurrentTime, getDuration } = await import("../player/seekTo");
-    const { addHighlight } = await import("../storage/highlightsStore");
+    const { addHighlightWithMeta, updateHighlight } = await import(
+      "../storage/highlightsStore"
+    );
+    const { showMarkNotePopup } = await import("../ui/captureFx");
+
     const t = getCurrentTime();
     const dur = getDuration();
     const end = dur > 0 ? Math.min(dur, t + 2.5) : t + 2.5;
-    const list = await addHighlight(videoId, {
+
+    // 1) Place pin immediately so the timeline feels instant
+    const created = await addHighlightWithMeta(videoId, {
       startTime: t,
       endTime: end,
       note: "",
     });
-    const newest = list.find(
-      (h) => Math.abs(h.startTime - t) < 0.05
-    ) ?? list[list.length - 1];
+    let list = created.list;
+    let newest = created.highlight;
     await paintHighlights(videoId, panel, list);
+
+    // 2) Animated popup — optional note (Skip keeps the mark)
+    const popup = await showMarkNotePopup({ videoTime: t });
+    const noteText = (popup.note || "").trim();
+    if (newest?.id && noteText) {
+      list = await updateHighlight(videoId, newest.id, { note: noteText });
+      newest = list.find((h) => h.id === newest.id) ?? newest;
+      await paintHighlights(videoId, panel, list);
+    } else {
+      // Refresh list in case storage changed while popup was open
+      await paintHighlights(videoId, panel, list);
+    }
+
+    // 3) Open Notes list + flash the row (note fully visible)
     panel.openHighlightsTab();
-    if (newest) panel.flashHighlight(newest.id);
-    console.info(LOG, "Highlight added at", t.toFixed(1), "s for", videoId);
+    if (newest?.id) {
+      window.setTimeout(() => panel.flashHighlight(newest.id), 80);
+    }
+    panel.setVaultSyncMessage(
+      noteText ? "Mark + note saved locally" : "Mark saved locally"
+    );
+    // Immediate vault upload (not only debounced) so Studio always gets the mark
+    await flushSyncToVault(videoId, panel);
+    console.info(
+      LOG,
+      "Highlight saved",
+      newest.id,
+      "at",
+      t.toFixed(1),
+      "s",
+      noteText ? `note=${noteText.slice(0, 40)}` : "(no note)"
+    );
   } catch (err) {
     console.error(LOG, "add highlight failed", err);
+    try {
+      panel.setVaultSyncMessage(
+        err instanceof Error ? `Mark failed: ${err.message}` : "Mark failed",
+        true
+      );
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -389,7 +439,7 @@ async function captureFrameNow(
       note ? "Screenshot + note saved" : "Screenshot saved to Notes"
     );
 
-    // 4) Persist off the critical path (IndexedDB + timeline)
+    // 4) Persist off the critical path (IndexedDB + timeline), then auto-sync
     const persist = async () => {
       await saveScreenshot(shot);
       const list = await addHighlight(videoId, {
@@ -400,8 +450,9 @@ async function captureFrameNow(
         color: "#38bdf8",
       });
       sessionHighlights.set(videoId, list);
-      // Defer timeline paint so popup animation never janks
       await paintHighlights(videoId, panel, list);
+      // Push to cloud + website vault immediately
+      await flushSyncToVault(videoId, panel);
     };
 
     if (typeof requestIdleCallback === "function") {
@@ -428,6 +479,211 @@ async function captureFrameNow(
   }
 }
 
+function videoTitleFromPage(videoId: string): string {
+  return (
+    document.querySelector("h1.ytd-watch-metadata yt-formatted-string")
+      ?.textContent?.trim() ||
+    document.title ||
+    videoId
+  );
+}
+
+/** Debounced auto-sync to Mongo/R2 → website vault */
+function queueAutoSync(
+  videoId: string,
+  panel: SearchPanel,
+  delayMs = 1200
+): void {
+  void import("../cloud/cloudSync").then(({ scheduleAutoSync }) => {
+    scheduleAutoSync(videoId, {
+      delayMs,
+      getTitle: () => videoTitleFromPage(videoId),
+      onStatus: (msg, isError) => panel.setVaultSyncMessage(msg, isError),
+    });
+  });
+}
+
+/** Force sync current video to vault now (awaitable). */
+async function flushSyncToVault(
+  videoId: string,
+  panel: SearchPanel
+): Promise<void> {
+  try {
+    const { loadCloudSettings } = await import("../settings/cloudSettings");
+    const settings = await loadCloudSettings();
+    if (!settings.enabled || !settings.apiKey) {
+      panel.setVaultSyncMessage(
+        "Saved on this device · sign in (Account) to upload to vault",
+        true
+      );
+      return;
+    }
+    panel.setVaultSyncMessage("Uploading to vault…");
+    const { loadHighlights } = await import("../storage/highlightsStore");
+    const { loadScreenshots } = await import("../storage/screenshotStore");
+    const { syncVideoToCloud } = await import("../cloud/cloudSync");
+    const highlights = await loadHighlights(videoId);
+    const screenshots = await loadScreenshots(videoId);
+    const result = await syncVideoToCloud({
+      videoId,
+      videoTitle: videoTitleFromPage(videoId),
+      highlights,
+      screenshots,
+    });
+    panel.setVaultSyncMessage(
+      result.ok
+        ? result.message || "Synced to vault"
+        : result.message || "Vault sync failed",
+      !result.ok
+    );
+  } catch (err) {
+    panel.setVaultSyncMessage(
+      err instanceof Error ? err.message : "Vault sync failed",
+      true
+    );
+  }
+}
+
+/** After login: push every local mark/shot to the cloud vault. */
+async function pushAllMarksToVault(panel: SearchPanel): Promise<void> {
+  try {
+    const { pushAllLocalToCloud } = await import("../cloud/cloudSync");
+    panel.setVaultSyncMessage("Uploading all local marks to vault…");
+    const result = await pushAllLocalToCloud({
+      onStatus: (msg, isError) => panel.setVaultSyncMessage(msg, isError),
+      getTitleFor: (id) =>
+        id === activeVideoId ? videoTitleFromPage(id) : id,
+    });
+    panel.setVaultSyncMessage(result.message, !result.ok);
+  } catch (err) {
+    panel.setVaultSyncMessage(
+      err instanceof Error ? err.message : "Bulk upload failed",
+      true
+    );
+  }
+}
+
+async function refreshLibraryUi(
+  videoId: string,
+  panel: SearchPanel
+): Promise<void> {
+  try {
+    const { getLibraryEntry } = await import("../storage/libraryStore");
+    const entry = await getLibraryEntry(videoId);
+    panel.setLibraryState({
+      saved: Boolean(entry?.saved),
+      watchLater: Boolean(entry?.watchLater),
+      playlists: entry?.playlists || [],
+    });
+  } catch {
+    panel.setLibraryState({ saved: false, watchLater: false, playlists: [] });
+  }
+}
+
+async function loadPlaylistsForPanel(panel: SearchPanel): Promise<void> {
+  try {
+    const { fetchUserPlaylists } = await import("../cloud/cloudSync");
+    const res = await fetchUserPlaylists();
+    panel.setKnownPlaylists(res.playlists || []);
+  } catch {
+    panel.setKnownPlaylists([]);
+  }
+}
+
+async function runLibraryAction(
+  videoId: string,
+  panel: SearchPanel,
+  action:
+    | "toggle_save"
+    | "toggle_watch_later"
+    | "add_playlist"
+    | "remove_playlist"
+    | "toggle_playlist",
+  playlist?: string
+): Promise<void> {
+  const title = videoTitleFromPage(videoId);
+  const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  panel.setVaultSyncMessage(
+    action.includes("playlist") ? "Updating playlist…" : "Saving to library…"
+  );
+  try {
+    const { updateLibraryOnCloud } = await import("../cloud/cloudSync");
+    const result = await updateLibraryOnCloud({
+      videoId,
+      videoTitle: title,
+      videoUrl,
+      action,
+      playlist,
+    });
+    if (result.ok && result.library) {
+      panel.setLibraryState(result.library);
+      panel.setVaultSyncMessage(result.message);
+      void loadPlaylistsForPanel(panel);
+    } else if (result.ok) {
+      await refreshLibraryUi(videoId, panel);
+      panel.setVaultSyncMessage(result.message);
+      void loadPlaylistsForPanel(panel);
+    } else {
+      panel.setVaultSyncMessage(result.message, true);
+      // Local fallback when offline / not signed in
+      if (/offline|sign in/i.test(result.message)) {
+        const { getLibraryEntry, applyLibraryFlags } = await import(
+          "../storage/libraryStore"
+        );
+        const prev = await getLibraryEntry(videoId);
+        if (action === "toggle_watch_later") {
+          const on = !prev?.watchLater;
+          await applyLibraryFlags(videoId, {
+            videoTitle: title,
+            videoUrl,
+            watchLater: on,
+            watchLaterAt: on ? Date.now() : null,
+          });
+        } else if (action === "toggle_save") {
+          const on = !prev?.saved;
+          await applyLibraryFlags(videoId, {
+            videoTitle: title,
+            videoUrl,
+            saved: on,
+            savedAt: on ? Date.now() : null,
+          });
+        } else if (
+          (action === "add_playlist" ||
+            action === "toggle_playlist" ||
+            action === "remove_playlist") &&
+          playlist
+        ) {
+          let list = [...(prev?.playlists || [])];
+          const key = playlist.toLowerCase();
+          const idx = list.findIndex((p) => p.toLowerCase() === key);
+          if (action === "remove_playlist") {
+            list = list.filter((p) => p.toLowerCase() !== key);
+          } else if (action === "toggle_playlist") {
+            if (idx >= 0) list.splice(idx, 1);
+            else list.push(playlist);
+          } else if (idx < 0) {
+            list.push(playlist);
+          }
+          await applyLibraryFlags(videoId, {
+            videoTitle: title,
+            videoUrl,
+            saved: true,
+            savedAt: prev?.savedAt || Date.now(),
+            playlists: list,
+          });
+        }
+        await refreshLibraryUi(videoId, panel);
+        void loadPlaylistsForPanel(panel);
+      }
+    }
+  } catch (err) {
+    panel.setVaultSyncMessage(
+      err instanceof Error ? err.message : "Library update failed",
+      true
+    );
+  }
+}
+
 async function syncVaultCloud(
   videoId: string,
   panel: SearchPanel
@@ -439,19 +695,14 @@ async function syncVaultCloud(
     const { loadScreenshots } = await import("../storage/screenshotStore");
     const highlights = await loadHighlights(videoId);
     const screenshots = await loadScreenshots(videoId);
-    const title =
-      document.querySelector("h1.ytd-watch-metadata yt-formatted-string")
-        ?.textContent?.trim() ||
-      document.title ||
-      videoId;
     const result = await syncVideoToCloud({
       videoId,
-      videoTitle: title,
+      videoTitle: videoTitleFromPage(videoId),
       highlights,
       screenshots,
     });
     panel.setVaultSyncMessage(result.message, !result.ok);
-    // Refresh shot badges after sync
+    // Refresh shot badges after sync (cloud URLs may update)
     const shots = await loadScreenshots(videoId);
     sessionScreenshots.set(videoId, shots);
     panel.setScreenshots(shots);
@@ -501,10 +752,15 @@ async function indexVideo(
       pipeline = await loadPipeline();
     } catch (err) {
       console.error(LOG, "Failed to load pipeline module", err);
+      const detail =
+        err instanceof Error
+          ? err.message.slice(0, 120)
+          : typeof err === "string"
+            ? err.slice(0, 120)
+            : "unknown error";
       panel.setStatus({
         kind: "error",
-        message:
-          "Could not load embedding engine. Remove + re-load the extension from dist/, then refresh YouTube.",
+        message: `Could not load search engine (${detail}). Reload the extension from dist/ and hard-refresh YouTube.`,
       });
       return null;
     }
@@ -863,7 +1119,14 @@ function mountPanel(videoId: string): void {
         void captureFrameNow(videoId, panel);
       },
       onSyncCloud: () => {
-        void syncVaultCloud(videoId, panel);
+        void (async () => {
+          await flushSyncToVault(videoId, panel);
+          await pushAllMarksToVault(panel);
+        })();
+      },
+      onCloudSettingsSaved: () => {
+        // Login / signup succeeded → push every local mark to Studio vault
+        void pushAllMarksToVault(panel);
       },
       onHighlightSeek: (t) => seekTo(t),
       onHighlightNote: (id, note) => {
@@ -873,6 +1136,7 @@ function mountPanel(videoId: string): void {
           );
           const list = await updateHighlight(videoId, id, { note });
           await paintHighlights(videoId, panel, list);
+          queueAutoSync(videoId, panel, 1400);
         })();
       },
       onDeleteHighlight: (id) => {
@@ -882,6 +1146,7 @@ function mountPanel(videoId: string): void {
           );
           const list = await deleteHighlight(videoId, id);
           await paintHighlights(videoId, panel, list);
+          queueAutoSync(videoId, panel, 500);
         })();
       },
       onDeleteScreenshot: (id) => {
@@ -893,6 +1158,8 @@ function mountPanel(videoId: string): void {
           const shots = await loadScreenshots(videoId);
           sessionScreenshots.set(videoId, shots);
           panel.setScreenshots(shots);
+          await paintHighlights(videoId, panel);
+          queueAutoSync(videoId, panel, 500);
         })();
       },
       onScreenshotNote: (id, note) => {
@@ -904,7 +1171,27 @@ function mountPanel(videoId: string): void {
           const shots = await loadScreenshots(videoId);
           sessionScreenshots.set(videoId, shots);
           panel.setScreenshots(shots);
+          await paintHighlights(videoId, panel);
+          queueAutoSync(videoId, panel, 1400);
         })();
+      },
+      onToggleWatchLater: () => {
+        void runLibraryAction(videoId, panel, "toggle_watch_later");
+      },
+      onToggleSave: () => {
+        void runLibraryAction(videoId, panel, "toggle_save");
+      },
+      onAddToPlaylist: (name) => {
+        void runLibraryAction(videoId, panel, "add_playlist", name);
+      },
+      onRemoveFromPlaylist: (name) => {
+        void runLibraryAction(videoId, panel, "remove_playlist", name);
+      },
+      onTogglePlaylist: (name) => {
+        void runLibraryAction(videoId, panel, "toggle_playlist", name);
+      },
+      onRequestPlaylists: () => {
+        void loadPlaylistsForPanel(panel);
       },
       onSettingsSaved: () => {
         // Clear topic caches so LLM re-runs with new key
@@ -938,13 +1225,33 @@ function mountPanel(videoId: string): void {
 
     // Load local highlights → red marks + inject screenshot/mark on player
     void loadHighlightsForVideo(videoId, panel);
+    void refreshLibraryUi(videoId, panel);
+    void loadPlaylistsForPanel(panel);
+    // If already signed in, keep vault fresh for this video
+    void (async () => {
+      try {
+        const { loadCloudSettings } = await import("../settings/cloudSettings");
+        const s = await loadCloudSettings();
+        if (s.enabled && s.apiKey) {
+          queueAutoSync(videoId, panel, 1500);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
     // Also inject player chrome ASAP (don't wait on IndexedDB)
     void import("../player/timelineHighlights").then((m) => {
       m.setTimelineHighlights(sessionHighlights.get(videoId) ?? [], {
+        shots: sessionScreenshots.get(videoId) ?? [],
         onClick: (hl) => {
           seekTo(hl.startTime);
           panel.openHighlightsTab();
           panel.flashHighlight(hl.id);
+        },
+        onShotClick: (shot) => {
+          seekTo(shot.videoTime);
+          panel.openHighlightsTab();
+          panel.flashScreenshot(shot.id);
         },
         onAdd: () => {
           void addHighlightAtNow(videoId, panel);
@@ -1001,6 +1308,9 @@ function injectOrUpdate(): void {
       console.info(LOG, "Video changed", activeVideoId, "→", videoId);
       // Cancel in-flight comment jobs for old id by clearing map
       commentJobs.clear();
+      void import("../cloud/cloudSync").then(({ cancelAutoSync }) => {
+        cancelAutoSync(activeVideoId || undefined);
+      });
       if (timelineReady) {
         void import("../player/timelineHighlights").then((m) => {
           m.clearTimelineHighlights();

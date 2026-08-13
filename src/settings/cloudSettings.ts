@@ -2,6 +2,8 @@
  * Cloud vault + account settings (MongoDB vault API with JWT auth).
  */
 
+import { vaultHttp } from "../net/vaultHttp";
+
 export interface CloudSettings {
   /** API base URL */
   projectUrl: string;
@@ -22,7 +24,9 @@ const STORAGE_KEY = "vsa_cloud_settings";
 const SETTINGS_VERSION = 4; // proper account auth UI
 
 export const DEFAULT_CLOUD_SETTINGS: CloudSettings = {
-  projectUrl: "http://localhost:8787",
+  // Prefer 127.0.0.1 — Chrome often resolves "localhost" to ::1, while the
+  // Node vault may only accept IPv4 unless dual-stack is enabled.
+  projectUrl: "http://127.0.0.1:8787",
   apiKey: "",
   userId: "",
   email: "",
@@ -32,6 +36,41 @@ export const DEFAULT_CLOUD_SETTINGS: CloudSettings = {
   highlightCount: 0,
   screenshotCount: 0,
 };
+
+/** Normalize vault base URL (strip trailing slash; map localhost → 127.0.0.1). */
+export function normalizeVaultUrl(url: string): string {
+  let base = (url || DEFAULT_CLOUD_SETTINGS.projectUrl).trim().replace(/\/$/, "");
+  if (!base) base = DEFAULT_CLOUD_SETTINGS.projectUrl;
+  try {
+    const u = new URL(base);
+    if (u.hostname === "localhost") {
+      u.hostname = "127.0.0.1";
+      base = u.origin;
+    }
+  } catch {
+    /* keep as-is */
+  }
+  return base.replace(/\/$/, "");
+}
+
+/** Alternate host for retry when localhost/127.0.0.1 fails. */
+export function vaultUrlAlternates(url: string): string[] {
+  const primary = normalizeVaultUrl(url);
+  const out = [primary];
+  try {
+    const u = new URL(primary);
+    if (u.hostname === "127.0.0.1") {
+      u.hostname = "localhost";
+      out.push(u.origin);
+    } else if (u.hostname === "localhost") {
+      u.hostname = "127.0.0.1";
+      out.push(u.origin);
+    }
+  } catch {
+    /* ignore */
+  }
+  return [...new Set(out)];
+}
 
 function isLoggedIn(s: Pick<CloudSettings, "apiKey" | "projectUrl">): boolean {
   return Boolean(
@@ -57,9 +96,8 @@ export async function loadCloudSettings(): Promise<CloudSettings> {
     }
 
     const merged: CloudSettings = {
-      projectUrl: (raw.projectUrl ?? DEFAULT_CLOUD_SETTINGS.projectUrl).replace(
-        /\/$/,
-        ""
+      projectUrl: normalizeVaultUrl(
+        raw.projectUrl ?? DEFAULT_CLOUD_SETTINGS.projectUrl
       ),
       apiKey: raw.apiKey ?? "",
       userId: raw.userId ?? "",
@@ -71,7 +109,9 @@ export async function loadCloudSettings(): Promise<CloudSettings> {
       screenshotCount: raw.screenshotCount ?? 0,
     };
     merged.enabled = isLoggedIn(merged);
-    if (ver !== SETTINGS_VERSION) {
+    // Persist migrated localhost → 127.0.0.1 (and version bumps)
+    const urlChanged = merged.projectUrl !== (raw.projectUrl || "").replace(/\/$/, "");
+    if (ver !== SETTINGS_VERSION || urlChanged) {
       await chrome.storage.local.set({
         [STORAGE_KEY]: merged,
         vsa_cloud_ver: SETTINGS_VERSION,
@@ -90,7 +130,9 @@ export async function saveCloudSettings(
   const next: CloudSettings = {
     ...current,
     ...partial,
-    projectUrl: (partial.projectUrl ?? current.projectUrl).replace(/\/$/, ""),
+    projectUrl: normalizeVaultUrl(
+      partial.projectUrl ?? current.projectUrl
+    ),
   };
   next.enabled = isLoggedIn(next);
   await chrome.storage.local.set({
@@ -155,27 +197,40 @@ export async function vaultAuth(
     throw new Error("Password must be at least 6 characters");
   }
 
-  const base = (opts.projectUrl || DEFAULT_CLOUD_SETTINGS.projectUrl).replace(
-    /\/$/,
-    ""
-  );
   const path =
     mode === "register" ? "/api/auth/register" : "/api/auth/login";
+  const bases = vaultUrlAlternates(
+    opts.projectUrl || DEFAULT_CLOUD_SETTINGS.projectUrl
+  );
+  const body = JSON.stringify({
+    email,
+    password: opts.password,
+    displayName: opts.displayName?.trim(),
+  });
 
-  let res: Response;
-  try {
-    res = await fetch(`${base}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email,
-        password: opts.password,
-        displayName: opts.displayName?.trim(),
-      }),
-    });
-  } catch {
+  let res: Response | null = null;
+  let usedBase = bases[0];
+  let lastNetErr: unknown = null;
+
+  for (const base of bases) {
+    try {
+      res = await vaultHttp(`${base}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      usedBase = base;
+      break;
+    } catch (err) {
+      lastNetErr = err;
+      res = null;
+    }
+  }
+
+  if (!res) {
+    console.warn("[VideoSearch AI] vault auth network error", lastNetErr);
     throw new Error(
-      "Cannot reach vault API. Run: cd server && npm run dev  (http://localhost:8787)"
+      "Cannot reach vault API. Start it with: cd server && npm run start:always  → open http://127.0.0.1:8787/health"
     );
   }
 
@@ -196,7 +251,7 @@ export async function vaultAuth(
     throw new Error(authErrorMessage(res.status, data.message));
   }
   return saveCloudSettings({
-    projectUrl: base,
+    projectUrl: usedBase,
     apiKey: data.token,
     userId: data.user.userId,
     email: data.user.email,
@@ -212,10 +267,28 @@ export async function refreshSession(): Promise<CloudSettings> {
   const current = await loadCloudSettings();
   if (!current.enabled) return current;
 
+  const bases = vaultUrlAlternates(current.projectUrl);
   try {
-    const res = await fetch(`${current.projectUrl}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${current.apiKey}` },
-    });
+    let res: Response | null = null;
+    let usedBase = bases[0];
+    for (const base of bases) {
+      try {
+        res = await vaultHttp(`${base}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${current.apiKey}` },
+        });
+        usedBase = base;
+        break;
+      } catch {
+        res = null;
+      }
+    }
+    if (!res) {
+      throw new Error("Cannot reach vault API");
+    }
+    // Persist working URL if we fell back
+    if (usedBase !== current.projectUrl) {
+      await saveCloudSettings({ projectUrl: usedBase });
+    }
     if (res.status === 401) {
       return clearCloudSession();
     }
@@ -232,6 +305,7 @@ export async function refreshSession(): Promise<CloudSettings> {
     };
     if (!res.ok || !data.user) return current;
     return saveCloudSettings({
+      projectUrl: usedBase,
       userId: data.user.userId,
       email: data.user.email,
       displayName: data.user.displayName || current.displayName,

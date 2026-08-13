@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VideoSearch · Studio</title>
+  <meta name="description" content="VideoSearch Studio — cinematic vault for notes, screenshots, analytics, and AI search." />
+  <link rel="icon" href="/app/assets/logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&family=JetBrains+Mono:wght@500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <link rel="stylesheet" href="/app/styles.css" />
+</head>
+<body>
+  <div class="ambient" aria-hidden="true">
+    <div class="mesh"></div>
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <div class="orb orb-c"></div>
+    <div class="grid-floor"></div>
+    <div class="noise"></div>
+  </div>
+
+  <!-- AUTH -->
+  <div id="pageAuth" class="page page-auth" hidden>
+    <div class="auth-shell">
+      <aside class="auth-brand">
+        <div class="auth-brand-inner reveal">
+          <div class="brand-mark"><span>VS</span></div>
+          <p class="eyebrow">Video intelligence studio</p>
+          <h1>Every lecture,<br/><em>searchable.</em></h1>
+          <p class="lede">Notes, board captures, and timeline marks — synced from the Chrome extension into a private cloud vault with live analytics.</p>
+          <div class="auth-metrics">
+            <div><b>AI</b><span>Semantic search</span></div>
+            <div><b>R2</b><span>Frame storage</span></div>
+            <div><b>Live</b><span>Auto-sync vault</span></div>
+          </div>
+          <div class="auth-float-cards">
+            <div class="float-card f1"><i data-lucide="camera"></i><span>Frame shots</span></div>
+            <div class="float-card f2"><i data-lucide="highlighter"></i><span>Timeline marks</span></div>
+            <div class="float-card f3"><i data-lucide="bar-chart-3"></i><span>Studio analytics</span></div>
+          </div>
+        </div>
+      </aside>
+      <main class="auth-main">
+        <div class="glass-card auth-card reveal">
+          <div class="auth-card-top">
+            <div>
+              <div class="auth-card-title">Welcome</div>
+              <div class="auth-card-sub">Same account as the Chrome extension</div>
+            </div>
+            <button type="button" class="icon-btn" id="themeBtnAuth" title="Theme" aria-label="Toggle theme">◐</button>
+          </div>
+          <div class="auth-modes" role="tablist">
+            <button type="button" class="auth-mode is-on" data-auth="login">Log in</button>
+            <button type="button" class="auth-mode" data-auth="register">Sign up</button>
+            <button type="button" class="auth-mode" data-auth="reset">Reset</button>
+          </div>
+          <p class="auth-hint" id="authHint">Enter your credentials to open the vault</p>
+          <label class="field" id="nameField" hidden>
+            <span>Display name</span>
+            <input id="displayName" type="text" autocomplete="nickname" />
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input id="email" type="email" placeholder="you@example.com" autocomplete="username" />
+          </label>
+          <label class="field">
+            <span id="passwordLabel">Password</span>
+            <input id="password" type="password" placeholder="Min. 6 characters" autocomplete="current-password" />
+          </label>
+          <label class="field field-advanced">
+            <span>API URL</span>
+            <input id="cloudUrl" type="url" value="http://localhost:8787" placeholder="http://localhost:8787" />
+          </label>
+          <button type="button" class="btn-glow" id="btnAuth">Log in</button>
+          <p class="status" id="statusMsg" role="status"></p>
+          <p class="auth-help">Open at <code>http://localhost:8787/app/</code> · vault API must be running</p>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div id="pageApp" class="page page-app" hidden>
+    <aside class="nav-rail glass-rail">
+      <div class="nav-brand">
+        <div class="brand-mark sm"><span>VS</span></div>
+        <div>
+          <div class="nav-name">VideoSearch</div>
+          <div class="nav-tag">Studio</div>
+        </div>
+      </div>
+
+      <nav class="nav-menu" id="navMenu">
+        <button type="button" class="nav-item is-on" data-view="dashboard"><i data-lucide="layout-dashboard"></i><span>Dashboard</span></button>
+        <button type="button" class="nav-item" data-view="library"><i data-lucide="library"></i><span>Library</span></button>
+        <button type="button" class="nav-item" data-view="watchlater"><i data-lucide="clock"></i><span>Watch later</span></button>
+        <button type="button" class="nav-item" data-view="playlists"><i data-lucide="list-video"></i><span>Playlists</span></button>
+        <button type="button" class="nav-item" data-view="search"><i data-lucide="sparkles"></i><span>AI Search</span></button>
+        <button type="button" class="nav-item" data-view="history"><i data-lucide="history"></i><span>History</span></button>
+        <button type="button" class="nav-item" data-view="bookmarks"><i data-lucide="highlighter"></i><span>Notes</span></button>
+        <button type="button" class="nav-item" data-view="shots"><i data-lucide="camera"></i><span>Shots</span></button>
+        <button type="button" class="nav-item" data-view="analytics"><i data-lucide="bar-chart-3"></i><span>Analytics</span></button>
+        <button type="button" class="nav-item" data-view="extension"><i data-lucide="puzzle"></i><span>Extension</span></button>
+        <button type="button" class="nav-item" data-view="settings"><i data-lucide="settings"></i><span>Settings</span></button>
+      </nav>
+
+      <div class="nav-foot">
+        <div class="glass-card mini storage-card">
+          <div class="storage-label">Vault pulse</div>
+          <div class="storage-bar"><i id="storageBar" style="width:12%"></i></div>
+          <div class="storage-meta" id="storageUsed">—</div>
+        </div>
+        <div class="pro-card">
+          <div class="pro-glow"></div>
+          <i data-lucide="chrome"></i>
+          <strong>Extension live</strong>
+          <p>Mark · shot · chat · auto-sync on YouTube</p>
+          <button type="button" class="btn-pro" id="btnExtGuide">Open guide</button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="app-main">
+      <header class="topbar glass-top">
+        <div class="search-bar">
+          <i data-lucide="search"></i>
+          <input id="globalSearch" type="search" placeholder="Search notes, shots, titles…" />
+          <kbd>⌘K</kbd>
+        </div>
+        <div class="topbar-actions">
+          <button type="button" class="btn-glow sm" id="btnRefresh"><i data-lucide="refresh-cw"></i> Refresh</button>
+          <button type="button" class="icon-btn" id="themeBtnApp" title="Theme" aria-label="Toggle theme">◐</button>
+          <div class="top-user">
+            <div class="top-av" id="userAv">—</div>
+            <div class="top-user-meta">
+              <strong id="userLabel">Account</strong>
+              <span id="userMeta"></span>
+            </div>
+            <button type="button" class="btn-ghost sm" id="btnLogout">Log out</button>
+          </div>
+        </div>
+      </header>
+      <div class="view-host" id="viewHost"></div>
+    </div>
+  </div>
+
+  <div id="lightbox" class="lightbox" hidden>
+    <button type="button" class="lightbox-close" id="lightboxClose" aria-label="Close">×</button>
+    <button type="button" class="lightbox-nav lightbox-prev" id="lightboxPrev" aria-label="Previous">‹</button>
+    <button type="button" class="lightbox-nav lightbox-next" id="lightboxNext" aria-label="Next">›</button>
+    <div class="lightbox-stage"><img id="lightboxImg" alt="" /></div>
+    <div class="lightbox-meta"><time id="lightboxTime"></time><p id="lightboxNote"></p></div>
+  </div>
+
+  <script type="module" src="/app/app.js"></script>
+</body>
+</html>

@@ -41,6 +41,14 @@ export const VaultVideo = mongoose.model(
       videoUrl: { type: String, default: "" },
       highlights: { type: [highlightSchema], default: [] },
       screenshots: { type: [screenshotMetaSchema], default: [] },
+      /** Saved to personal library (like “Save video”) */
+      saved: { type: Boolean, default: false, index: true },
+      savedAt: { type: Date, default: null },
+      /** Watch later queue */
+      watchLater: { type: Boolean, default: false, index: true },
+      watchLaterAt: { type: Date, default: null },
+      /** Named playlists this video belongs to */
+      playlists: { type: [String], default: [] },
       updatedAt: { type: Date, default: Date.now },
     },
     { timestamps: true }
@@ -48,6 +56,8 @@ export const VaultVideo = mongoose.model(
 );
 
 VaultVideo.schema.index({ userId: 1, videoId: 1 }, { unique: true });
+VaultVideo.schema.index({ userId: 1, watchLater: 1, watchLaterAt: -1 });
+VaultVideo.schema.index({ userId: 1, saved: 1, savedAt: -1 });
 
 /** Auth user account */
 export const User = mongoose.model(

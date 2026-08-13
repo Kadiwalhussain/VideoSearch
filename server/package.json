@@ -6,7 +6,9 @@
   "description": "MongoDB API for VideoSearch AI vault (notes, highlights, screenshots, users)",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "start:network": "HOST=0.0.0.0 node src/index.js",
+    "start:always": "bash scripts/start-vault.sh"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.758.0",
