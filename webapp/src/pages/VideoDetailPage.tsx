@@ -12,6 +12,7 @@ import { useSession } from "../store/SessionContext";
 import {
   formatTime,
   relTime,
+  rowActivityMs,
   ytThumb,
   ytWatchUrl,
 } from "../lib/format";
@@ -75,8 +76,8 @@ export function VideoDetailPage() {
             {p.videoTitle || videoId}
           </h1>
           <p className="view-sub">
-            Updated {relTime(row.updated_at)} · {marks.length} marks ·{" "}
-            {shots.length} shots
+            Updated {relTime(rowActivityMs(row) ?? row.updated_at)} ·{" "}
+            {marks.length} marks · {shots.length} shots
           </p>
           <div className="v-actions" style={{ marginTop: 12 }}>
             <a

@@ -18,16 +18,16 @@ import { ExtensionPage } from "./pages/ExtensionPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
 import type { ReactNode } from "react";
+import { SessionLoader } from "./components/SessionLoader";
 
 function Protected({ children }: { children: ReactNode }) {
   const { session, loading } = useSession();
   if (loading) {
     return (
-      <div className="page page-auth">
-        <div className="empty" style={{ margin: "20vh auto" }}>
-          Loading session…
-        </div>
-      </div>
+      <SessionLoader
+        title="Loading session"
+        sub="Verifying your account and restoring vault access…"
+      />
     );
   }
   if (!session) return <Navigate to="/login" replace />;

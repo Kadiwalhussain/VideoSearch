@@ -13,6 +13,7 @@ import { useVault } from "../store/VaultContext";
 import { useState } from "react";
 import { formatTime } from "../lib/format";
 import { EmptyState } from "../components/EmptyState";
+import { SessionLoader } from "../components/SessionLoader";
 import { Inbox } from "lucide-react";
 
 export function DashboardPage() {
@@ -61,7 +62,11 @@ export function DashboardPage() {
           </Link>
         </div>
         {loading && !recent.length ? (
-          <div className="empty">Loading vault…</div>
+          <SessionLoader
+            variant="inline"
+            title="Loading vault"
+            sub="Syncing recent videos and activity…"
+          />
         ) : recent.length ? (
           <div className="video-grid">
             {recent.map((r) => (

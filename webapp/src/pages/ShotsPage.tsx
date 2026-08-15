@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
   Camera,
@@ -96,7 +97,13 @@ export function ShotsPage() {
         );
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Lock page scroll while lightbox is open
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
   }, [lb, flatFiltered.length]);
 
   const active = lb != null ? flatFiltered[lb] : null;
@@ -248,105 +255,112 @@ export function ShotsPage() {
         </div>
       )}
 
-      {active ? (
-        <div
-          className="shot-lightbox"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setLb(null)}
-        >
-          <button
-            type="button"
-            className="shot-lb-close"
-            onClick={() => setLb(null)}
-            aria-label="Close"
-          >
-            <X size={22} />
-          </button>
-          {flatFiltered.length > 1 ? (
-            <>
+      {active
+        ? createPortal(
+            <div
+              className="shot-lightbox"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Shot preview"
+              onClick={() => setLb(null)}
+            >
               <button
                 type="button"
-                className="shot-lb-nav prev"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setLb(
-                    (i) =>
-                      i == null
-                        ? 0
-                        : (i - 1 + flatFiltered.length) % flatFiltered.length
-                  );
-                }}
-                aria-label="Previous"
+                className="shot-lb-close"
+                onClick={() => setLb(null)}
+                aria-label="Close"
               >
-                <ChevronLeft size={28} />
+                <X size={22} />
               </button>
-              <button
-                type="button"
-                className="shot-lb-nav next"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setLb((i) =>
-                    i == null ? 0 : (i + 1) % flatFiltered.length
-                  );
-                }}
-                aria-label="Next"
+              {flatFiltered.length > 1 ? (
+                <>
+                  <button
+                    type="button"
+                    className="shot-lb-nav prev"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLb((i) =>
+                        i == null
+                          ? 0
+                          : (i - 1 + flatFiltered.length) % flatFiltered.length
+                      );
+                    }}
+                    aria-label="Previous"
+                  >
+                    <ChevronLeft size={28} />
+                  </button>
+                  <button
+                    type="button"
+                    className="shot-lb-nav next"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLb((i) =>
+                        i == null ? 0 : (i + 1) % flatFiltered.length
+                      );
+                    }}
+                    aria-label="Next"
+                  >
+                    <ChevronRight size={28} />
+                  </button>
+                </>
+              ) : null}
+              <div
+                className="shot-lb-stage"
+                onClick={(e) => e.stopPropagation()}
               >
-                <ChevronRight size={28} />
-              </button>
-            </>
-          ) : null}
-          <div
-            className="shot-lb-stage"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <img
-              src={mediaSrc(
-                active.shot.imageUrl || active.shot.dataUrl,
-                session?.token
-              )}
-              alt=""
-            />
-            <div className="shot-lb-info">
-              <div className="shot-lb-video">
-                <img src={ytThumb(active.videoId)} alt="" />
-                <div>
-                  <Link to={`/video/${active.videoId}`}>{active.title}</Link>
-                  <span>
-                    {formatTime(active.shot.videoTime)}
-                    {lb != null
-                      ? ` · ${lb + 1} / ${flatFiltered.length}`
-                      : ""}
-                  </span>
+                <div className="shot-lb-frame">
+                  <img
+                    src={mediaSrc(
+                      active.shot.imageUrl || active.shot.dataUrl,
+                      session?.token
+                    )}
+                    alt=""
+                  />
+                </div>
+                <div className="shot-lb-info">
+                  <div className="shot-lb-video">
+                    <img src={ytThumb(active.videoId)} alt="" />
+                    <div>
+                      <Link to={`/video/${active.videoId}`}>
+                        {active.title}
+                      </Link>
+                      <span>
+                        {formatTime(active.shot.videoTime)}
+                        {lb != null
+                          ? ` · ${lb + 1} / ${flatFiltered.length}`
+                          : ""}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="shot-lb-note">
+                    {active.shot.note?.trim() || "No note on this capture"}
+                  </p>
+                  <div className="shot-lb-actions">
+                    <a
+                      className="btn-watch"
+                      href={ytWatchUrl(
+                        active.videoId,
+                        active.videoUrl,
+                        active.shot.videoTime
+                      )}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <ExternalLink size={14} /> Watch at this moment
+                    </a>
+                    <Link
+                      className="btn-notes"
+                      to={`/video/${active.videoId}`}
+                    >
+                      Open in vault
+                    </Link>
+                  </div>
                 </div>
               </div>
-              <p className="shot-lb-note">
-                {active.shot.note?.trim() || "No note on this capture"}
-              </p>
-              <div className="shot-lb-actions">
-                <a
-                  className="btn-watch"
-                  href={ytWatchUrl(
-                    active.videoId,
-                    active.videoUrl,
-                    active.shot.videoTime
-                  )}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <ExternalLink size={14} /> Watch at this moment
-                </a>
-                <Link
-                  className="btn-notes"
-                  to={`/video/${active.videoId}`}
-                >
-                  Open in vault
-                </Link>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

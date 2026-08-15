@@ -13,6 +13,7 @@ import {
   Trophy,
   Sparkles,
 } from "lucide-react";
+import { SessionLoader } from "../components/SessionLoader";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -334,7 +335,11 @@ export function AnalyticsPage() {
       </div>
 
       {loading && !rows.length ? (
-        <div className="empty">Loading analytics…</div>
+        <SessionLoader
+          variant="inline"
+          title="Loading analytics"
+          sub="Crunching marks, shots, and activity from your vault…"
+        />
       ) : null}
 
       <div className="ana-kpi-strip">

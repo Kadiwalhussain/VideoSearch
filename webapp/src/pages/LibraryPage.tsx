@@ -1,5 +1,6 @@
 import { VideoCard } from "../components/VideoCard";
 import { EmptyState } from "../components/EmptyState";
+import { SessionLoader } from "../components/SessionLoader";
 import { useVault } from "../store/VaultContext";
 import { Library, Inbox } from "lucide-react";
 
@@ -17,7 +18,11 @@ export function LibraryPage() {
         </p>
       </header>
       {loading && !rows.length ? (
-        <div className="empty">Loading…</div>
+        <SessionLoader
+          variant="inline"
+          title="Loading library"
+          sub="Pulling videos, marks, and shots from your vault…"
+        />
       ) : rows.length ? (
         <div className="video-grid">
           {rows.map((r) => (

@@ -42,6 +42,8 @@ export interface VaultPayload {
   watchLater?: boolean;
   watchLaterAt?: number | null;
   playlists?: string[];
+  /** Server activity time (ms epoch) */
+  updatedAt?: number | null;
 }
 
 export interface VaultRow {

@@ -59,3 +59,22 @@ export async function fetchPlaylists(
   if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
   return data.playlists || [];
 }
+
+/** Backfill full YouTube titles when stored title is just the video id */
+export async function repairTitles(
+  session: Session
+): Promise<{ fixed: number; message: string }> {
+  const res = await apiFetch(session.url, "/api/vault/repair-titles", {
+    method: "POST",
+    token: session.token,
+    body: "{}",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `HTTP ${res.status}`);
+  }
+  return {
+    fixed: Number(data.fixed) || 0,
+    message: data.message || "Titles updated",
+  };
+}

@@ -479,13 +479,48 @@ async function captureFrameNow(
   }
 }
 
+/**
+ * Best-effort full YouTube title from the watch page.
+ * Never return a bare video id when a real title is available.
+ */
 function videoTitleFromPage(videoId: string): string {
-  return (
-    document.querySelector("h1.ytd-watch-metadata yt-formatted-string")
-      ?.textContent?.trim() ||
-    document.title ||
-    videoId
-  );
+  const candidates: string[] = [];
+
+  const h1 =
+    document.querySelector(
+      "h1.ytd-watch-metadata yt-formatted-string"
+    )?.textContent ||
+    document.querySelector("h1.ytd-watch-metadata")?.textContent ||
+    document.querySelector(
+      "#title h1 yt-formatted-string"
+    )?.textContent ||
+    document.querySelector("h1.title")?.textContent;
+  if (h1?.trim()) candidates.push(h1.trim());
+
+  const meta = document.querySelector(
+    'meta[name="title"], meta[property="og:title"]'
+  ) as HTMLMetaElement | null;
+  if (meta?.content?.trim()) candidates.push(meta.content.trim());
+
+  if (document.title?.trim()) candidates.push(document.title.trim());
+
+  for (const raw of candidates) {
+    const cleaned = cleanYouTubeTitle(raw, videoId);
+    if (cleaned) return cleaned;
+  }
+  return videoId;
+}
+
+function cleanYouTubeTitle(raw: string, videoId: string): string | null {
+  let t = raw.replace(/\s+/g, " ").trim();
+  // "Title - YouTube" / "Title • YouTube"
+  t = t.replace(/\s*[-–—|•]\s*YouTube\s*$/i, "").trim();
+  t = t.replace(/\s+YouTube\s*$/i, "").trim();
+  if (!t || t === videoId) return null;
+  // Reject if it's basically just the id
+  if (/^[A-Za-z0-9_-]{10,12}$/.test(t)) return null;
+  if (t.length < 2) return null;
+  return t.slice(0, 300);
 }
 
 /** Debounced auto-sync to Mongo/R2 → website vault */
@@ -503,64 +538,115 @@ function queueAutoSync(
   });
 }
 
-/** Force sync current video to vault now (awaitable). */
+/** Force sync current video (local always kept; queues if vault offline). */
 async function flushSyncToVault(
   videoId: string,
   panel: SearchPanel
 ): Promise<void> {
   try {
-    const { loadCloudSettings } = await import("../settings/cloudSettings");
-    const settings = await loadCloudSettings();
-    if (!settings.enabled || !settings.apiKey) {
-      panel.setVaultSyncMessage(
-        "Saved on this device · sign in (Account) to upload to vault",
-        true
-      );
-      return;
-    }
-    panel.setVaultSyncMessage("Uploading to vault…");
+    const title = videoTitleFromPage(videoId);
     const { loadHighlights } = await import("../storage/highlightsStore");
     const { loadScreenshots } = await import("../storage/screenshotStore");
     const { syncVideoToCloud } = await import("../cloud/cloudSync");
     const highlights = await loadHighlights(videoId);
     const screenshots = await loadScreenshots(videoId);
+
+    panel.setVaultSyncMessage("Saving…");
     const result = await syncVideoToCloud({
       videoId,
-      videoTitle: videoTitleFromPage(videoId),
+      videoTitle: title,
       highlights,
       screenshots,
     });
+    const warn = Boolean(result.offlineQueued) || !result.ok;
     panel.setVaultSyncMessage(
-      result.ok
-        ? result.message || "Synced to vault"
-        : result.message || "Vault sync failed",
-      !result.ok
+      result.message ||
+        (result.ok ? "Synced to vault" : "Saved on device"),
+      warn
     );
+
+    // If we just came online, flush any other pending videos too
+    if (result.ok && !result.offlineQueued) {
+      void import("../cloud/offlineSync").then(({ flushOfflineQueue }) =>
+        flushOfflineQueue({
+          onStatus: (msg, isError) => panel.setVaultSyncMessage(msg, isError),
+          getTitleFor: (id) =>
+            id === activeVideoId ? videoTitleFromPage(id) : id,
+        })
+      );
+    }
   } catch (err) {
-    panel.setVaultSyncMessage(
-      err instanceof Error ? err.message : "Vault sync failed",
-      true
-    );
+    // Last resort: still enqueue offline
+    try {
+      const { enqueueVideoSync } = await import("../cloud/offlineSync");
+      const pending = await enqueueVideoSync(videoId, {
+        title: videoTitleFromPage(videoId),
+      });
+      panel.setVaultSyncMessage(
+        `Saved on device · will sync when vault is back (${pending} pending)`,
+        true
+      );
+    } catch {
+      panel.setVaultSyncMessage(
+        err instanceof Error ? err.message : "Vault sync failed",
+        true
+      );
+    }
   }
 }
 
-/** After login: push every local mark/shot to the cloud vault. */
+/** After login or manual sync: flush offline queue + all local vault data. */
 async function pushAllMarksToVault(panel: SearchPanel): Promise<void> {
   try {
-    const { pushAllLocalToCloud } = await import("../cloud/cloudSync");
-    panel.setVaultSyncMessage("Uploading all local marks to vault…");
-    const result = await pushAllLocalToCloud({
-      onStatus: (msg, isError) => panel.setVaultSyncMessage(msg, isError),
-      getTitleFor: (id) =>
+    const handlers = {
+      onStatus: (msg: string, isError?: boolean) =>
+        panel.setVaultSyncMessage(msg, isError),
+      getTitleFor: (id: string) =>
         id === activeVideoId ? videoTitleFromPage(id) : id,
+    };
+
+    panel.setVaultSyncMessage("Checking vault connection…");
+    const { flushOfflineQueue } = await import("../cloud/offlineSync");
+    const offline = await flushOfflineQueue(handlers, {
+      includeAllLocal: true,
     });
-    panel.setVaultSyncMessage(result.message, !result.ok);
+
+    if (offline.wasOffline) {
+      panel.setVaultSyncMessage(offline.message, true);
+      return;
+    }
+
+    // Also run full local push for any edge cases
+    const { pushAllLocalToCloud } = await import("../cloud/cloudSync");
+    const result = await pushAllLocalToCloud(handlers);
+    panel.setVaultSyncMessage(
+      offline.synced > 0
+        ? `${offline.message}${result.videos ? ` · +${result.videos} local` : ""}`
+        : result.message,
+      !result.ok && offline.pending > 0
+    );
   } catch (err) {
     panel.setVaultSyncMessage(
       err instanceof Error ? err.message : "Bulk upload failed",
       true
     );
   }
+}
+
+/** Background: when API returns, auto-upload offline queue. */
+function ensureOfflineSyncWatcher(panel: SearchPanel): void {
+  void import("../cloud/offlineSync").then(({ startOfflineSyncWatcher }) => {
+    startOfflineSyncWatcher({
+      onStatus: (msg, isError) => {
+        // Only surface status if this panel is still active
+        if (activePanel === panel) {
+          panel.setVaultSyncMessage(msg, isError);
+        }
+      },
+      getTitleFor: (id) =>
+        id === activeVideoId ? videoTitleFromPage(id) : id,
+    });
+  });
 }
 
 async function refreshLibraryUi(
@@ -1227,13 +1313,34 @@ function mountPanel(videoId: string): void {
     void loadHighlightsForVideo(videoId, panel);
     void refreshLibraryUi(videoId, panel);
     void loadPlaylistsForPanel(panel);
-    // If already signed in, keep vault fresh for this video
+    // Offline queue watcher + soft sync of current video
+    ensureOfflineSyncWatcher(panel);
     void (async () => {
       try {
-        const { loadCloudSettings } = await import("../settings/cloudSettings");
-        const s = await loadCloudSettings();
-        if (s.enabled && s.apiKey) {
-          queueAutoSync(videoId, panel, 1500);
+        const { getPendingSyncCount, flushOfflineQueue } = await import(
+          "../cloud/offlineSync"
+        );
+        const pending = await getPendingSyncCount();
+        if (pending > 0) {
+          panel.setVaultSyncMessage(
+            `${pending} offline change${pending === 1 ? "" : "s"} · waiting for vault…`,
+            true
+          );
+          await flushOfflineQueue({
+            onStatus: (msg, isError) =>
+              panel.setVaultSyncMessage(msg, isError),
+            getTitleFor: (id) =>
+              id === activeVideoId ? videoTitleFromPage(id) : id,
+          });
+        } else {
+          // Keep cloud warm if signed in
+          const { loadCloudSettings } = await import(
+            "../settings/cloudSettings"
+          );
+          const s = await loadCloudSettings();
+          if (s.enabled && s.apiKey) {
+            queueAutoSync(videoId, panel, 1500);
+          }
         }
       } catch {
         /* ignore */

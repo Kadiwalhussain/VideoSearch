@@ -44,9 +44,10 @@ const NAV: Array<{
 export function StudioLayout() {
   const { session, logout } = useSession();
   const { toggle, theme } = useTheme();
-  const { stats, refresh, loading } = useVault();
+  const { stats, refresh, loading, repairTitles } = useVault();
   const nav = useNavigate();
   const [q, setQ] = useState("");
+  const [repairing, setRepairing] = useState(false);
 
   const pulse = Math.min(
     100,
@@ -58,8 +59,8 @@ export function StudioLayout() {
       <Ambient />
       <aside className="nav-rail glass-rail">
         <div className="nav-brand">
-          <div className="brand-mark sm">
-            <span>VS</span>
+          <div className="brand-mark sm brand-mark-logo" aria-hidden>
+            <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" />
           </div>
           <div>
             <div className="nav-name">VideoSearch</div>
@@ -127,6 +128,27 @@ export function StudioLayout() {
             <kbd>⌘K</kbd>
           </div>
           <div className="top-actions">
+            <button
+              type="button"
+              className="btn-ghost sm"
+              disabled={loading || repairing}
+              title="Fetch full YouTube titles for cards that only show video ids"
+              onClick={() => {
+                setRepairing(true);
+                void repairTitles()
+                  .then((r) => {
+                    if (r.fixed > 0) {
+                      /* titles reloaded via refresh inside repairTitles */
+                    }
+                  })
+                  .catch((e) =>
+                    alert(e instanceof Error ? e.message : "Title repair failed")
+                  )
+                  .finally(() => setRepairing(false));
+              }}
+            >
+              {repairing ? "Fixing titles…" : "Fix titles"}
+            </button>
             <button
               type="button"
               className="btn-glow sm"

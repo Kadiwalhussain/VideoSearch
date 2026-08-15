@@ -7,7 +7,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { fetchVault, libraryAction as apiLibrary } from "../api/vault";
+import {
+  fetchVault,
+  libraryAction as apiLibrary,
+  repairTitles,
+} from "../api/vault";
 import {
   allNotes,
   allShots,
@@ -51,6 +55,7 @@ type VaultCtx = {
     action: LibraryAction,
     playlist?: string
   ) => Promise<void>;
+  repairTitles: () => Promise<{ fixed: number; message: string }>;
 };
 
 const Ctx = createContext<VaultCtx | null>(null);
@@ -69,6 +74,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
+      // Repair id-only titles on the server, then load
+      try {
+        await repairTitles(session);
+      } catch {
+        /* non-fatal */
+      }
       const data = await fetchVault(session);
       setRows(data);
     } catch (e) {
@@ -89,6 +100,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
+  }, [session, refresh]);
+
+  const repairTitlesFn = useCallback(async () => {
+    if (!session) throw new Error("Not signed in");
+    const out = await repairTitles(session);
+    await refresh();
+    return out;
   }, [session, refresh]);
 
   const libraryAction = useCallback(
@@ -165,8 +183,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       search: (q) => searchVault(rows, q),
       getVideo: (id) => findRow(rows, id),
       libraryAction,
+      repairTitles: repairTitlesFn,
     };
-  }, [rows, loading, error, refresh, libraryAction]);
+  }, [rows, loading, error, refresh, libraryAction, repairTitlesFn]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

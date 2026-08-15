@@ -361,6 +361,66 @@ function mergeById(serverList, clientList) {
   return [...map.values()];
 }
 
+function isBareVideoId(s) {
+  return /^[A-Za-z0-9_-]{10,12}$/.test(String(s || "").trim());
+}
+
+const titleCache = new Map();
+
+/** Resolve human title via YouTube oEmbed (no API key). */
+async function resolveYouTubeTitle(videoId) {
+  if (!videoId || !isBareVideoId(videoId) && videoId.length < 6) {
+    /* still try */
+  }
+  if (titleCache.has(videoId)) return titleCache.get(videoId);
+
+  try {
+    const url = `https://www.youtube.com/oembed?url=${encodeURIComponent(
+      `https://www.youtube.com/watch?v=${videoId}`
+    )}&format=json`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "VideoSearchVault/1.0" },
+      signal: AbortSignal.timeout?.(8000),
+    });
+    if (!res.ok) {
+      titleCache.set(videoId, null);
+      return null;
+    }
+    const data = await res.json();
+    const title = String(data?.title || "").trim();
+    if (title && !isBareVideoId(title)) {
+      titleCache.set(videoId, title);
+      return title;
+    }
+  } catch (err) {
+    console.warn("[vault-api] oEmbed title failed", videoId, err?.message);
+  }
+  titleCache.set(videoId, null);
+  return null;
+}
+
+/** Backfill missing / id-only titles for a user's vault (best-effort). */
+async function backfillUserTitles(userId, limit = 40) {
+  const rows = await VaultVideo.find({ userId })
+    .select("videoId videoTitle")
+    .limit(200)
+    .lean();
+  let fixed = 0;
+  for (const r of rows) {
+    if (fixed >= limit) break;
+    const t = (r.videoTitle || "").trim();
+    if (t && t !== r.videoId && !isBareVideoId(t)) continue;
+    const resolved = await resolveYouTubeTitle(r.videoId);
+    if (!resolved) continue;
+    await VaultVideo.updateOne(
+      { userId, videoId: r.videoId },
+      { $set: { videoTitle: resolved } }
+    );
+    fixed += 1;
+  }
+  return fixed;
+}
+
 app.post("/api/vault/sync", authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -398,13 +458,21 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
       ? processed.list
       : mergeById(existing?.screenshots || [], processed.list);
 
+    let nextTitle =
+      (videoTitle && String(videoTitle).trim()) ||
+      existing?.videoTitle ||
+      "";
+    // Never keep a bare YouTube id as the title when we can resolve a real one
+    if (!nextTitle || nextTitle === videoId || isBareVideoId(nextTitle)) {
+      const resolved = await resolveYouTubeTitle(videoId);
+      if (resolved) nextTitle = resolved;
+      else if (!nextTitle) nextTitle = videoId;
+    }
+
     const setDoc = {
       userId,
       videoId,
-      videoTitle:
-        (videoTitle && String(videoTitle).trim()) ||
-        existing?.videoTitle ||
-        "",
+      videoTitle: nextTitle,
       videoUrl:
         videoUrl ||
         existing?.videoUrl ||
@@ -449,6 +517,14 @@ app.get("/api/vault", authMiddleware, async (req, res) => {
     const userId = req.user.userId;
     const includeImages = req.query.images === "1";
     const base = apiBaseFromReq(req);
+
+    // Quietly repair bad titles (id-as-title) so cards show full names
+    try {
+      await backfillUserTitles(userId, 12);
+    } catch (e) {
+      console.warn("[vault-api] title backfill", e?.message);
+    }
+
     const rows = await VaultVideo.find({ userId })
       .sort({ updatedAt: -1 })
       .lean();
@@ -466,10 +542,27 @@ app.get("/api/vault", authMiddleware, async (req, res) => {
   }
 });
 
+/** Force full title repair for the signed-in user */
+app.post("/api/vault/repair-titles", authMiddleware, async (req, res) => {
+  try {
+    const fixed = await backfillUserTitles(req.user.userId, 80);
+    res.json({ ok: true, fixed, message: `Updated ${fixed} video titles` });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Repair failed",
+    });
+  }
+});
+
 function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
+  const updatedMs = r.updatedAt ? new Date(r.updatedAt).getTime() : Date.now();
   return {
     video_id: r.videoId,
-    updated_at: r.updatedAt,
+    // Always ISO string so clients parse consistently
+    updated_at: Number.isFinite(updatedMs)
+      ? new Date(updatedMs).toISOString()
+      : new Date().toISOString(),
     payload: {
       videoId: r.videoId,
       videoTitle: r.videoTitle,
@@ -485,7 +578,7 @@ function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
         ? new Date(r.watchLaterAt).getTime()
         : null,
       playlists: Array.isArray(r.playlists) ? r.playlists : [],
-      updatedAt: new Date(r.updatedAt).getTime(),
+      updatedAt: Number.isFinite(updatedMs) ? updatedMs : Date.now(),
     },
   };
 }

@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { BarChart3, Camera, Highlighter } from "lucide-react";
 import { Ambient } from "../components/Ambient";
+import { SessionLoader } from "../components/SessionLoader";
 import { useSession } from "../store/SessionContext";
 import { useTheme } from "../store/ThemeContext";
 import type { AuthMode } from "../api/auth";
@@ -17,7 +18,16 @@ export function LoginPage() {
   const [err, setErr] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  if (!loading && session) return <Navigate to="/" replace />;
+  // Restore session on hard refresh / first paint — don't flash the form
+  if (loading) {
+    return (
+      <SessionLoader
+        title="Loading session"
+        sub="Checking saved sign-in and connecting to your vault…"
+      />
+    );
+  }
+  if (session) return <Navigate to="/" replace />;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -47,8 +57,8 @@ export function LoginPage() {
       <div className="auth-shell">
         <aside className="auth-brand">
           <div className="auth-brand-inner reveal">
-            <div className="brand-mark">
-              <span>VS</span>
+            <div className="brand-mark brand-mark-logo" aria-hidden>
+              <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" />
             </div>
             <p className="eyebrow">Video intelligence studio</p>
             <h1>

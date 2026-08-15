@@ -59,6 +59,9 @@ export interface SyncResult {
   ok: boolean;
   message: string;
   uploadedScreenshots?: number;
+  /** True when data is safe on-device and queued for later cloud upload */
+  offlineQueued?: boolean;
+  pendingCount?: number;
 }
 
 function authHeaders(token: string): HeadersInit {
@@ -73,9 +76,24 @@ export async function syncVideoToCloud(opts: {
   videoTitle?: string;
   highlights: VideoHighlight[];
   screenshots: VideoScreenshot[];
+  /** When true, do not re-enqueue on failure (used by offline queue flusher) */
+  skipOfflineEnqueue?: boolean;
 }): Promise<SyncResult> {
   const settings = await loadCloudSettings();
   if (!settings.enabled || !settings.apiKey) {
+    // Still keep local data; queue for when user signs in + server is up
+    if (!opts.skipOfflineEnqueue) {
+      const { enqueueVideoSync } = await import("./offlineSync");
+      const pending = await enqueueVideoSync(opts.videoId, {
+        title: opts.videoTitle,
+      });
+      return {
+        ok: true,
+        offlineQueued: true,
+        pendingCount: pending,
+        message: `Saved on this device · sign in to sync (${pending} pending)`,
+      };
+    }
     return {
       ok: false,
       message: "Not logged in. Create an account in Settings → Cloud vault.",
@@ -120,6 +138,19 @@ export async function syncVideoToCloud(opts: {
           message: "Session expired — log in again in Settings.",
         };
       }
+      // 5xx → treat as offline-ish and queue
+      if (res.status >= 500 && !opts.skipOfflineEnqueue) {
+        const { enqueueVideoSync } = await import("./offlineSync");
+        const pending = await enqueueVideoSync(opts.videoId, {
+          title: opts.videoTitle,
+        });
+        return {
+          ok: true,
+          offlineQueued: true,
+          pendingCount: pending,
+          message: `Server error · saved on device · ${pending} pending sync`,
+        };
+      }
       return {
         ok: false,
         message: data.message || `HTTP ${res.status}`,
@@ -134,6 +165,14 @@ export async function syncVideoToCloud(opts: {
       });
     }
 
+    // Success — drop from offline queue if present
+    try {
+      const { dequeueVideoSync } = await import("./offlineSync");
+      await dequeueVideoSync(opts.videoId);
+    } catch {
+      /* ignore */
+    }
+
     return {
       ok: true,
       message: data.message || "Synced to your account",
@@ -141,7 +180,23 @@ export async function syncVideoToCloud(opts: {
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Cloud sync failed";
-    if (/Failed to fetch|NetworkError|Cannot reach vault/i.test(msg)) {
+    if (
+      /Failed to fetch|NetworkError|Cannot reach vault|timeout|offline|Load failed/i.test(
+        msg
+      )
+    ) {
+      if (!opts.skipOfflineEnqueue) {
+        const { enqueueVideoSync } = await import("./offlineSync");
+        const pending = await enqueueVideoSync(opts.videoId, {
+          title: opts.videoTitle,
+        });
+        return {
+          ok: true,
+          offlineQueued: true,
+          pendingCount: pending,
+          message: `Saved on this device · vault offline · ${pending} pending cloud sync`,
+        };
+      }
       return {
         ok: false,
         message:
@@ -239,25 +294,36 @@ async function runAutoSync(
 
   const job = (async (): Promise<SyncResult> => {
     const settings = await loadCloudSettings();
-    if (!settings.enabled || !settings.apiKey) {
-      opts.onStatus?.("Sign in (avatar) to auto-sync", true);
-      return { ok: false, message: "Not logged in" };
-    }
+    const title =
+      opts.getTitle?.() ||
+      document.querySelector("h1.ytd-watch-metadata yt-formatted-string")
+        ?.textContent?.trim() ||
+      document.title ||
+      videoId;
 
-    opts.onStatus?.("Uploading…");
-
+    // Always load local data first (source of truth on device)
     try {
       const { loadHighlights } = await import("../storage/highlightsStore");
       const { loadScreenshots } = await import("../storage/screenshotStore");
       const highlights = await loadHighlights(videoId);
       const screenshots = await loadScreenshots(videoId);
-      const title =
-        opts.getTitle?.() ||
-        document.querySelector("h1.ytd-watch-metadata yt-formatted-string")
-          ?.textContent?.trim() ||
-        document.title ||
-        videoId;
 
+      if (!settings.enabled || !settings.apiKey) {
+        const { enqueueVideoSync } = await import("./offlineSync");
+        const pending = await enqueueVideoSync(videoId, { title });
+        opts.onStatus?.(
+          `Saved on device · sign in to cloud-sync (${pending} pending)`,
+          true
+        );
+        return {
+          ok: true,
+          offlineQueued: true,
+          pendingCount: pending,
+          message: "Queued offline",
+        };
+      }
+
+      opts.onStatus?.("Uploading…");
       const result = await syncVideoToCloud({
         videoId,
         videoTitle: title,
@@ -266,16 +332,40 @@ async function runAutoSync(
       });
 
       if (result.ok) {
-        const n = result.uploadedScreenshots || 0;
-        opts.onStatus?.(
-          n > 0 ? `Synced · ${n} shot${n === 1 ? "" : "s"} uploaded` : "Synced"
-        );
+        if (result.offlineQueued) {
+          opts.onStatus?.(result.message, true);
+        } else {
+          const n = result.uploadedScreenshots || 0;
+          opts.onStatus?.(
+            n > 0
+              ? `Synced · ${n} shot${n === 1 ? "" : "s"} uploaded`
+              : "Synced to cloud"
+          );
+        }
       } else {
         opts.onStatus?.(result.message, true);
       }
       return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Auto-sync failed";
+      try {
+        const { enqueueVideoSync, isOfflineError } = await import(
+          "./offlineSync"
+        );
+        if (isOfflineError(msg)) {
+          const pending = await enqueueVideoSync(videoId, { title });
+          const offlineMsg = `Saved on device · vault offline · ${pending} pending`;
+          opts.onStatus?.(offlineMsg, true);
+          return {
+            ok: true,
+            offlineQueued: true,
+            pendingCount: pending,
+            message: offlineMsg,
+          };
+        }
+      } catch {
+        /* ignore */
+      }
       opts.onStatus?.(msg, true);
       return { ok: false, message: msg };
     } finally {
@@ -440,10 +530,25 @@ export async function updateLibraryOnCloud(opts: {
   playlist?: string;
 }): Promise<{ ok: boolean; message: string; library?: LibraryState }> {
   const settings = await loadCloudSettings();
+  const { applyLibraryFlags } = await import("../storage/libraryStore");
+
+  // Apply optimistically on device first so UI works offline
+  const localLib = await applyLocalLibraryAction(opts);
+  await applyLibraryFlags(opts.videoId, {
+    videoTitle: opts.videoTitle,
+    videoUrl: opts.videoUrl,
+    ...localLib,
+  });
+
   if (!settings.enabled || !settings.apiKey) {
+    const { enqueueVideoSync } = await import("./offlineSync");
+    const pending = await enqueueVideoSync(opts.videoId, {
+      title: opts.videoTitle,
+    });
     return {
-      ok: false,
-      message: "Sign in (avatar) to save videos to your vault",
+      ok: true,
+      message: `Saved on device · sign in to sync (${pending} pending)`,
+      library: localLib,
     };
   }
 
@@ -472,14 +577,23 @@ export async function updateLibraryOnCloud(opts: {
     };
     if (!res.ok || data.ok === false) {
       if (res.status === 401) {
-        return { ok: false, message: "Session expired — log in again" };
+        return {
+          ok: false,
+          message: "Session expired — log in again",
+          library: localLib,
+        };
       }
-      return { ok: false, message: data.message || `HTTP ${res.status}` };
+      // Keep local; queue for retry
+      const { enqueueVideoSync } = await import("./offlineSync");
+      await enqueueVideoSync(opts.videoId, { title: opts.videoTitle });
+      return {
+        ok: true,
+        message: data.message || "Saved on device · will retry cloud",
+        library: localLib,
+      };
     }
 
-    // Mirror into local IndexedDB
     if (data.library) {
-      const { applyLibraryFlags } = await import("../storage/libraryStore");
       await applyLibraryFlags(opts.videoId, {
         videoTitle: opts.videoTitle,
         videoUrl: opts.videoUrl,
@@ -490,19 +604,95 @@ export async function updateLibraryOnCloud(opts: {
     return {
       ok: true,
       message: data.message || "Library updated",
-      library: data.library,
+      library: data.library || localLib,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Library update failed";
-    if (/Failed to fetch|NetworkError|Cannot reach/i.test(msg)) {
-      return {
-        ok: false,
-        message:
-          "Vault API offline. Run: cd server && npm run start:always → http://127.0.0.1:8787",
-      };
-    }
-    return { ok: false, message: msg };
+    const { enqueueVideoSync } = await import("./offlineSync");
+    const pending = await enqueueVideoSync(opts.videoId, {
+      title: opts.videoTitle,
+    });
+    return {
+      ok: true,
+      message: `Saved on device · vault offline · ${pending} pending`,
+      library: localLib,
+    };
   }
+}
+
+/** Pure local library action (offline-safe). */
+async function applyLocalLibraryAction(opts: {
+  videoId: string;
+  videoTitle?: string;
+  videoUrl?: string;
+  action: LibraryAction;
+  playlist?: string;
+}): Promise<LibraryState> {
+  const { getLibraryEntry } = await import("../storage/libraryStore");
+  const prev = (await getLibraryEntry(opts.videoId)) || {
+    videoId: opts.videoId,
+    saved: false,
+    savedAt: null as number | null,
+    watchLater: false,
+    watchLaterAt: null as number | null,
+    playlists: [] as string[],
+  };
+  let saved = prev.saved;
+  let savedAt = prev.savedAt;
+  let watchLater = prev.watchLater;
+  let watchLaterAt = prev.watchLaterAt;
+  let playlists = [...(prev.playlists || [])];
+  const pl = (opts.playlist || "").trim();
+  const now = Date.now();
+
+  switch (opts.action) {
+    case "save":
+      saved = true;
+      savedAt = now;
+      break;
+    case "unsave":
+      saved = false;
+      savedAt = null;
+      break;
+    case "toggle_save":
+      saved = !saved;
+      savedAt = saved ? now : null;
+      break;
+    case "watch_later":
+      watchLater = true;
+      watchLaterAt = now;
+      break;
+    case "unwatch_later":
+      watchLater = false;
+      watchLaterAt = null;
+      break;
+    case "toggle_watch_later":
+      watchLater = !watchLater;
+      watchLaterAt = watchLater ? now : null;
+      break;
+    case "add_playlist":
+      if (pl && !playlists.some((p) => p.toLowerCase() === pl.toLowerCase())) {
+        playlists.push(pl);
+      }
+      break;
+    case "remove_playlist":
+      playlists = playlists.filter(
+        (p) => p.toLowerCase() !== pl.toLowerCase()
+      );
+      break;
+    case "toggle_playlist":
+      if (pl) {
+        const has = playlists.some((p) => p.toLowerCase() === pl.toLowerCase());
+        playlists = has
+          ? playlists.filter((p) => p.toLowerCase() !== pl.toLowerCase())
+          : [...playlists, pl];
+      }
+      break;
+    default:
+      break;
+  }
+
+  return { saved, savedAt, watchLater, watchLaterAt, playlists };
 }
 
 /** All playlist names the user already has (for picker UI) */
