@@ -322,14 +322,30 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
   return { list, uploaded, r2Errors };
 }
 
-function mapScreenshotOut(s, includeImages, apiBase = PUBLIC_API_BASE) {
+/**
+ * Lightweight screenshot DTO for list/sync responses.
+ * NEVER embed full base64 dataUrls in list payloads (they hang Studio).
+ * Images load on demand via /api/vault/shot/:videoId/:shotId (or R2 media).
+ */
+function mapScreenshotOut(
+  s,
+  videoId,
+  _includeImages = false,
+  apiBase = PUBLIC_API_BASE
+) {
   const base = (apiBase || PUBLIC_API_BASE).replace(/\/$/, "");
-  const imageUrl =
-    s.imageUrl ||
-    (s.dataUrl?.startsWith("data:") ? s.dataUrl : undefined) ||
-    (s.r2Key
-      ? `${base}/api/media/${encodeURIComponent(s.r2Key)}`
-      : undefined);
+  const external =
+    s.imageUrl && !String(s.imageUrl).startsWith("data:")
+      ? String(s.imageUrl)
+      : undefined;
+  const mediaUrl = s.r2Key
+    ? `${base}/api/media/${encodeURIComponent(s.r2Key)}`
+    : undefined;
+  // Lazy proxy always available — browser loads one image at a time (no hang)
+  const shotProxy =
+    videoId && s.id
+      ? `${base}/api/vault/shot/${encodeURIComponent(videoId)}/${encodeURIComponent(s.id)}`
+      : undefined;
 
   return {
     id: s.id,
@@ -338,12 +354,9 @@ function mapScreenshotOut(s, includeImages, apiBase = PUBLIC_API_BASE) {
     width: s.width,
     height: s.height,
     createdAt: s.createdAt,
-    imageUrl: includeImages
-      ? imageUrl
-      : s.imageUrl || (s.dataUrl ? "inline" : undefined),
-    dataUrl:
-      includeImages && s.dataUrl?.startsWith("data:") ? s.dataUrl : undefined,
+    imageUrl: external || mediaUrl || shotProxy || undefined,
     r2Key: s.r2Key,
+    hasImage: true,
   };
 }
 
@@ -515,23 +528,26 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
 app.get("/api/vault", authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
+    // images=1 still does NOT ship huge base64 blobs — only media URLs (+ tiny inline)
     const includeImages = req.query.images === "1";
     const base = apiBaseFromReq(req);
 
-    // Quietly repair bad titles (id-as-title) so cards show full names
-    try {
-      await backfillUserTitles(userId, 12);
-    } catch (e) {
-      console.warn("[vault-api] title backfill", e?.message);
-    }
-
+    // Exclude embedded base64 from Mongo projection — huge win for list speed
     const rows = await VaultVideo.find({ userId })
+      .select("-screenshots.dataUrl")
       .sort({ updatedAt: -1 })
       .lean();
 
     res.json({
       ok: true,
       rows: rows.map((r) => mapVaultRow(r, includeImages, base)),
+    });
+
+    // Non-blocking: fix bare titles in background (never delay first paint)
+    setImmediate(() => {
+      backfillUserTitles(userId, 6).catch((e) =>
+        console.warn("[vault-api] title backfill", e?.message)
+      );
     });
   } catch (err) {
     res.status(500).json({
@@ -569,7 +585,7 @@ function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
       videoUrl: r.videoUrl,
       highlights: r.highlights || [],
       screenshots: (r.screenshots || []).map((s) =>
-        mapScreenshotOut(s, includeImages, apiBase)
+        mapScreenshotOut(s, r.videoId, includeImages, apiBase)
       ),
       saved: Boolean(r.saved),
       savedAt: r.savedAt ? new Date(r.savedAt).getTime() : null,
@@ -582,6 +598,112 @@ function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
     },
   };
 }
+
+/**
+ * Serve one shot image on demand (from R2 or Mongo dataUrl).
+ * Keeps vault list tiny while Shots gallery still shows previews.
+ */
+function authFromReq(req) {
+  const h = req.headers.authorization || "";
+  const bearer = h.startsWith("Bearer ") ? h.slice(7) : "";
+  const qToken = String(req.query.token || req.query.key || "");
+  return bearer || qToken;
+}
+
+app.get("/api/vault/shot/:videoId/:shotId", async (req, res) => {
+  try {
+    const token = authFromReq(req);
+    if (!token) {
+      return res.status(401).json({ ok: false, message: "Auth required" });
+    }
+    let userId;
+    try {
+      if (process.env.VSA_API_KEY && token === process.env.VSA_API_KEY) {
+        userId = String(req.query.userId || "");
+      } else {
+        // JWT payload uses `sub` (same as authMiddleware)
+        const payload = verifyToken(token);
+        userId = payload.sub || payload.userId || "";
+      }
+    } catch {
+      return res.status(401).json({ ok: false, message: "Invalid token" });
+    }
+    if (!userId) {
+      return res.status(401).json({ ok: false, message: "Auth required" });
+    }
+
+    const videoId = String(req.params.videoId || "");
+    const shotId = String(req.params.shotId || "");
+    if (!videoId || !shotId) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "videoId and shotId required" });
+    }
+
+    // Load only matching screenshot (includes dataUrl for this one shot)
+    let shot = null;
+    const doc = await VaultVideo.findOne(
+      { userId, videoId, "screenshots.id": shotId },
+      { screenshots: { $elemMatch: { id: shotId } } }
+    ).lean();
+    shot = doc?.screenshots?.[0] || null;
+
+    // Fallback if elemMatch projection empty (older mongoose edge cases)
+    if (!shot) {
+      const full = await VaultVideo.findOne(
+        { userId, videoId },
+        { screenshots: 1 }
+      ).lean();
+      shot = (full?.screenshots || []).find((s) => s.id === shotId) || null;
+    }
+
+    if (!shot) {
+      return res.status(404).json({ ok: false, message: "Shot not found" });
+    }
+
+    res.setHeader("Cache-Control", "private, max-age=3600");
+
+    // Prefer R2 when configured
+    if (shot.r2Key && isR2Configured()) {
+      try {
+        const out = await getObjectStream(shot.r2Key);
+        res.setHeader("Content-Type", out.ContentType || "image/jpeg");
+        if (out.Body?.transformToByteArray) {
+          const bytes = await out.Body.transformToByteArray();
+          return res.end(Buffer.from(bytes));
+        }
+      } catch (e) {
+        console.warn("[vault-api] shot R2 miss", shotId, e?.message);
+      }
+    }
+
+    // External non-data URL
+    if (shot.imageUrl && !String(shot.imageUrl).startsWith("data:")) {
+      return res.redirect(302, shot.imageUrl);
+    }
+
+    // Inline dataUrl in Mongo (normal path when R2 is unavailable)
+    if (shot.dataUrl && String(shot.dataUrl).startsWith("data:image")) {
+      const m = String(shot.dataUrl).match(
+        /^data:(image\/[\w+.-]+);base64,(.+)$/s
+      );
+      if (m) {
+        res.setHeader("Content-Type", m[1]);
+        return res.end(Buffer.from(m[2], "base64"));
+      }
+    }
+
+    return res
+      .status(404)
+      .json({ ok: false, message: "No image data for shot" });
+  } catch (err) {
+    console.error("[vault-api] shot serve error", err);
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Shot failed",
+    });
+  }
+});
 
 /**
  * Save video to library / watch later / playlists.

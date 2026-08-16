@@ -46,7 +46,11 @@ export function DashboardPage() {
       {error ? (
         <div className="empty" style={{ marginBottom: 16, borderColor: "rgba(248,113,113,0.4)" }}>
           {error}{" "}
-          <button type="button" className="link-btn" onClick={() => void refresh()}>
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => void refresh({ force: true })}
+          >
             Retry
           </button>
         </div>

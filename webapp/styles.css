@@ -137,10 +137,11 @@ code {
   background: radial-gradient(circle, rgba(109, 40, 217, 0.12), transparent 70%);
 }
 [data-theme="light"] .grid-floor {
-  opacity: 0.2;
+  /* Keep subtle — strong grid looked like broken empty cards under Notes */
+  opacity: 0.08;
   background-image:
-    linear-gradient(rgba(15, 23, 42, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(15, 23, 42, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.03) 1px, transparent 1px);
 }
 [data-theme="light"] .noise { opacity: 0.02; }
 
@@ -168,6 +169,15 @@ code {
 .page { position: relative; z-index: 1; }
 .page-app:not([hidden]) { display: grid !important; grid-template-columns: 268px 1fr; min-height: 100vh; }
 .page-auth:not([hidden]) { display: block !important; min-height: 100vh; }
+/* Session loader must never inherit page-auth block layout */
+.session-loader-page.page-auth:not([hidden]),
+.page-auth.session-loader-page:not([hidden]) {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 100vh !important;
+  min-height: 100dvh !important;
+}
 
 /* Brand */
 .brand-mark {

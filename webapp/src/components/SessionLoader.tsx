@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { Ambient } from "./Ambient";
 
 type Props = {
@@ -10,8 +11,7 @@ type Props = {
 };
 
 /**
- * Cinematic loading state while restoring the vault session
- * or fetching the library.
+ * Loading UI — full-page always centered in the viewport.
  */
 export function SessionLoader({
   title = "Loading session",
@@ -20,7 +20,11 @@ export function SessionLoader({
 }: Props) {
   if (variant === "inline") {
     return (
-      <div className="session-loader session-loader--inline" role="status" aria-live="polite">
+      <div
+        className="session-loader session-loader--inline"
+        role="status"
+        aria-live="polite"
+      >
         <div className="session-loader-card">
           <div className="session-loader-mark">
             <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" />
@@ -37,7 +41,11 @@ export function SessionLoader({
         </div>
         <div className="session-loader-skeletons" aria-hidden>
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="session-skel-card" style={{ animationDelay: `${i * 80}ms` }}>
+            <div
+              key={i}
+              className="session-skel-card"
+              style={{ animationDelay: `${i * 80}ms` }}
+            >
               <div className="session-skel-thumb" />
               <div className="session-skel-lines">
                 <span className="session-skel-line w80" />
@@ -51,10 +59,16 @@ export function SessionLoader({
     );
   }
 
-  return (
-    <div className="page page-auth session-loader-page" role="status" aria-live="polite" aria-busy="true">
+  // Portal to body + fixed overlay so parent layouts cannot offset it
+  const node = (
+    <div
+      className="session-loader-overlay"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
       <Ambient />
-      <div className="session-loader session-loader--full">
+      <div className="session-loader-center">
         <div className="session-loader-card session-loader-card--hero">
           <div className="session-loader-mark session-loader-mark--lg">
             <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" />
@@ -84,4 +98,7 @@ export function SessionLoader({
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return node;
+  return createPortal(node, document.body);
 }

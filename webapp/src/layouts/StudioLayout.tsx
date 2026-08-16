@@ -153,7 +153,7 @@ export function StudioLayout() {
               type="button"
               className="btn-glow sm"
               disabled={loading}
-              onClick={() => void refresh()}
+              onClick={() => void refresh({ force: true })}
             >
               <RefreshCw size={14} className={loading ? "spin" : undefined} />
               Refresh

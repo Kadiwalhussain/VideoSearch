@@ -26,6 +26,36 @@ type Group = {
   shots: ShotItem[];
 };
 
+/** Lazy image with graceful fallback — never blocks the page */
+function ShotImg({
+  src,
+  className,
+  alt = "",
+}: {
+  src: string;
+  className?: string;
+  alt?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div className={`shot-ph${className ? ` ${className}` : ""}`}>
+        <Camera size={22} />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      className={className}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 export function ShotsPage() {
   const { shots, rows } = useVault();
   const { session } = useSession();
@@ -201,13 +231,7 @@ export function ShotsPage() {
                       className="shot-tile"
                       onClick={() => openFlat(s)}
                     >
-                      {src ? (
-                        <img src={src} alt="" loading="lazy" />
-                      ) : (
-                        <div className="shot-ph">
-                          <Camera size={22} />
-                        </div>
-                      )}
+                      <ShotImg src={src} />
                       <div className="shot-tile-meta">
                         <time>{formatTime(s.shot.videoTime)}</time>
                         {s.shot.note?.trim() ? (
@@ -235,13 +259,7 @@ export function ShotsPage() {
                 className="shot-tile tall glass-card"
                 onClick={() => openFlat(s)}
               >
-                {src ? (
-                  <img src={src} alt="" loading="lazy" />
-                ) : (
-                  <div className="shot-ph">
-                    <Camera size={22} />
-                  </div>
-                )}
+                <ShotImg src={src} />
                 <div className="shot-tile-footer">
                   <time>{formatTime(s.shot.videoTime)}</time>
                   <span className="shot-from">{s.title}</span>
@@ -309,12 +327,11 @@ export function ShotsPage() {
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="shot-lb-frame">
-                  <img
+                  <ShotImg
                     src={mediaSrc(
                       active.shot.imageUrl || active.shot.dataUrl,
                       session?.token
                     )}
-                    alt=""
                   />
                 </div>
                 <div className="shot-lb-info">

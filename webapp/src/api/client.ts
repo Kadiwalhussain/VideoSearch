@@ -70,7 +70,12 @@ export function mediaSrc(
 ): string {
   if (!url) return "";
   if (url.startsWith("data:")) return url;
-  if (url.includes("/api/media/") && token && !url.includes("token=")) {
+  // <img> cannot send Authorization headers — attach JWT as query for media routes
+  const needsToken =
+    token &&
+    !url.includes("token=") &&
+    (url.includes("/api/media/") || url.includes("/api/vault/shot/"));
+  if (needsToken) {
     const sep = url.includes("?") ? "&" : "?";
     return `${url}${sep}token=${encodeURIComponent(token)}`;
   }

@@ -29,6 +29,7 @@ export interface Screenshot {
   imageUrl?: string;
   dataUrl?: string;
   r2Key?: string;
+  hasImage?: boolean;
 }
 
 export interface VaultPayload {

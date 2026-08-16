@@ -111,15 +111,20 @@ export async function syncVideoToCloud(opts: {
           videoTitle: opts.videoTitle,
           videoUrl: `https://www.youtube.com/watch?v=${opts.videoId}`,
           highlights: opts.highlights,
-          screenshots: opts.screenshots.map((s) => ({
-            id: s.id,
-            videoTime: s.videoTime,
-            note: s.note || "",
-            width: s.width,
-            height: s.height,
-            createdAt: s.createdAt,
-            dataUrl: s.dataUrl,
-          })),
+          // Skip base64 for shots already uploaded (huge payload = hang)
+          screenshots: opts.screenshots.map((s) => {
+            const alreadySynced = Boolean(s.cloudUrl || s.syncedAt);
+            return {
+              id: s.id,
+              videoTime: s.videoTime,
+              note: s.note || "",
+              width: s.width,
+              height: s.height,
+              createdAt: s.createdAt,
+              dataUrl: alreadySynced ? undefined : s.dataUrl,
+              imageUrl: s.cloudUrl || undefined,
+            };
+          }),
         }),
       },
       settings.projectUrl
@@ -217,8 +222,9 @@ export async function fetchCloudVault(): Promise<{
     return { ok: false, rows: [], message: "Not logged in" };
   }
   try {
+    // Fast list — no base64 blobs (media URLs only)
     const { res } = await vaultFetch(
-      "/api/vault?images=1",
+      "/api/vault",
       { headers: authHeaders(settings.apiKey) },
       settings.projectUrl
     );
@@ -271,7 +277,8 @@ export function scheduleAutoSync(
   videoId: string,
   opts: AutoSyncHandlers & { delayMs?: number } = {}
 ): void {
-  const delay = opts.delayMs ?? 1200;
+  // Slightly longer debounce keeps YouTube UI snappy while typing notes
+  const delay = opts.delayMs ?? 2200;
   const prev = autoSyncTimers.get(videoId);
   if (prev != null) window.clearTimeout(prev);
 

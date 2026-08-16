@@ -6,8 +6,12 @@ import type {
   VaultRow,
 } from "../types";
 
+/**
+ * Lightweight vault list — media URLs only, no base64 screenshots.
+ * Use YouTube thumbs for cards; load shot images via /api/media when needed.
+ */
 export async function fetchVault(session: Session): Promise<VaultRow[]> {
-  const res = await apiFetch(session.url, "/api/vault?images=1", {
+  const res = await apiFetch(session.url, "/api/vault", {
     token: session.token,
   });
   const data = await res.json().catch(() => ({}));

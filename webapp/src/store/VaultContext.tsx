@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -35,12 +36,16 @@ import type {
 } from "../types";
 import { useSession } from "./SessionContext";
 
+const CACHE_KEY = "vsa_vault_cache_v2";
+/** Min gap between automatic refetches (focus / soft refresh) */
+const SOFT_REFRESH_MS = 45_000;
+
 type VaultCtx = {
   rows: VaultRow[];
   loading: boolean;
   error: string | null;
   stats: VaultStats;
-  refresh: () => Promise<void>;
+  refresh: (opts?: { force?: boolean }) => Promise<void>;
   watchLater: VaultRow[];
   saved: VaultRow[];
   notes: NoteItem[];
@@ -60,52 +65,125 @@ type VaultCtx = {
 
 const Ctx = createContext<VaultCtx | null>(null);
 
+function readCache(userId?: string): VaultRow[] | null {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { userId?: string; rows?: VaultRow[] };
+    if (userId && parsed.userId && parsed.userId !== userId) return null;
+    return Array.isArray(parsed.rows) ? parsed.rows : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(userId: string | undefined, rows: VaultRow[]) {
+  try {
+    sessionStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify({ userId, rows, at: Date.now() })
+    );
+  } catch {
+    /* quota — ignore */
+  }
+}
+
 export function VaultProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
-  const [rows, setRows] = useState<VaultRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const userId = session?.user?.userId;
+  const [rows, setRows] = useState<VaultRow[]>(() => readCache(userId) || []);
+  const [loading, setLoading] = useState(() => !(readCache(userId)?.length));
   const [error, setError] = useState<string | null>(null);
+  const lastFetchAt = useRef(0);
+  const inFlight = useRef<Promise<void> | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!session) {
+        setRows([]);
+        setLoading(false);
+        return;
+      }
+
+      const now = Date.now();
+      if (
+        !opts?.force &&
+        lastFetchAt.current &&
+        now - lastFetchAt.current < SOFT_REFRESH_MS &&
+        rows.length > 0
+      ) {
+        return;
+      }
+
+      if (inFlight.current) {
+        await inFlight.current;
+        return;
+      }
+
+      const run = (async () => {
+        // Only show full-page loading when we have nothing cached
+        if (rows.length === 0) setLoading(true);
+        setError(null);
+        try {
+          // Fast path: no images=1, no blocking title repair
+          const data = await fetchVault(session);
+          setRows(data);
+          writeCache(session.user?.userId, data);
+          lastFetchAt.current = Date.now();
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Failed to load vault");
+        } finally {
+          setLoading(false);
+        }
+      })();
+
+      inFlight.current = run;
+      try {
+        await run;
+      } finally {
+        inFlight.current = null;
+      }
+    },
+    [session, rows.length]
+  );
+
+  useEffect(() => {
     if (!session) {
       setRows([]);
       return;
     }
-    setLoading(true);
-    setError(null);
-    try {
-      // Repair id-only titles on the server, then load
-      try {
-        await repairTitles(session);
-      } catch {
-        /* non-fatal */
-      }
-      const data = await fetchVault(session);
-      setRows(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load vault");
-    } finally {
+    // Hydrate from cache immediately, then soft-refresh
+    const cached = readCache(session.user?.userId);
+    if (cached?.length) {
+      setRows(cached);
       setLoading(false);
     }
-  }, [session]);
+    void refresh({ force: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount / session change only
+  }, [session?.token, session?.user?.userId]);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  // Soft refresh when tab regains focus (extension may have synced)
+  // Soft refresh when tab regains focus — throttled, never blocks UI
   useEffect(() => {
     const onFocus = () => {
-      if (session) void refresh();
+      if (session) void refresh({ force: false });
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible" && session) {
+        void refresh({ force: false });
+      }
     };
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [session, refresh]);
 
   const repairTitlesFn = useCallback(async () => {
     if (!session) throw new Error("Not signed in");
     const out = await repairTitles(session);
-    await refresh();
+    await refresh({ force: true });
     return out;
   }, [session, refresh]);
 
@@ -125,13 +203,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         playlist,
       });
       if (!library) {
-        await refresh();
+        await refresh({ force: true });
         return;
       }
       setRows((prev) => {
         const idx = prev.findIndex((r) => r.video_id === videoId);
+        let next: VaultRow[];
         if (idx === -1) {
-          return [
+          next = [
             {
               video_id: videoId,
               updated_at: new Date().toISOString(),
@@ -146,19 +225,21 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             },
             ...prev,
           ];
+        } else {
+          next = [...prev];
+          next[idx] = {
+            ...next[idx],
+            payload: {
+              ...next[idx].payload,
+              saved: library.saved,
+              savedAt: library.savedAt,
+              watchLater: library.watchLater,
+              watchLaterAt: library.watchLaterAt,
+              playlists: library.playlists || [],
+            },
+          };
         }
-        const next = [...prev];
-        next[idx] = {
-          ...next[idx],
-          payload: {
-            ...next[idx].payload,
-            saved: library.saved,
-            savedAt: library.savedAt,
-            watchLater: library.watchLater,
-            watchLaterAt: library.watchLaterAt,
-            playlists: library.playlists || [],
-          },
-        };
+        writeCache(session.user?.userId, next);
         return next;
       });
     },
@@ -172,7 +253,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       loading,
       error,
       stats,
-      refresh,
+      refresh: (o) => refresh(o),
       watchLater: watchLaterRows(rows),
       saved: savedRows(rows),
       notes: allNotes(rows),

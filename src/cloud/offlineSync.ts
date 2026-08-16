@@ -354,7 +354,8 @@ export function startOfflineSyncWatcher(
 
   // Immediate check
   tick();
-  watcherTimer = window.setInterval(tick, intervalMs);
+  // Default 30s — avoid constant health/check spam on YouTube
+  watcherTimer = window.setInterval(tick, Math.max(intervalMs, 30_000));
 
   const onOnline = () => {
     void flushOfflineQueue(handlers, { includeAllLocal: true });
