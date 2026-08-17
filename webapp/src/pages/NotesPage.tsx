@@ -7,9 +7,11 @@ import {
   Inbox,
   Search,
   StickyNote,
+  Trash2,
 } from "lucide-react";
 import { EmptyState } from "../components/EmptyState";
 import { useVault } from "../store/VaultContext";
+import { useDialog } from "../store/DialogContext";
 import {
   formatTime,
   relTime,
@@ -47,9 +49,11 @@ function noteKey(n: NoteItem, index: number): string {
 }
 
 export function NotesPage() {
-  const { notes } = useVault();
+  const { notes, deleteMark } = useVault();
+  const { confirm, toast } = useDialog();
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   // Deduplicate by videoId+highlight.id (server sometimes has dups)
   const uniqueNotes = useMemo(() => {
@@ -155,14 +159,41 @@ export function NotesPage() {
             const hasText = Boolean(text);
             const color = markColor(n.highlight.color);
             const thumb = ytThumb(n.videoId);
+            const markId = n.highlight.id || `t${n.highlight.startTime}`;
+            const rowKey = noteKey(n, index);
             const when =
               n.highlight.createdAt || n.highlight.updatedAt
                 ? relTime(n.highlight.createdAt || n.highlight.updatedAt)
                 : null;
 
+            const onDeleteMark = async () => {
+              if (!n.highlight.id) {
+                toast("This mark has no id and cannot be deleted.", "error");
+                return;
+              }
+              const label = text || "Mark without text";
+              const ok = await confirm({
+                title: "Delete mark?",
+                message: `“${label.slice(0, 120)}” will be removed.\n\nThe video stays in your vault — only this mark is deleted.`,
+                confirmLabel: "Delete mark",
+                cancelLabel: "Keep mark",
+                danger: true,
+              });
+              if (!ok) return;
+              setBusyId(rowKey);
+              try {
+                await deleteMark(n.videoId, n.highlight.id);
+                toast("Mark deleted", "success");
+              } catch (e) {
+                toast(e instanceof Error ? e.message : "Delete failed", "error");
+              } finally {
+                setBusyId(null);
+              }
+            };
+
             return (
               <article
-                key={noteKey(n, index)}
+                key={rowKey}
                 className="note-card"
                 style={{ borderTopColor: color }}
               >
@@ -226,10 +257,25 @@ export function NotesPage() {
                       <ExternalLink size={13} />
                       Watch at {formatTime(n.highlight.startTime)}
                     </a>
-                    <Link className="note-card-open" to={`/video/${n.videoId}`}>
-                      <FileText size={13} />
-                      Open
-                    </Link>
+                    <div className="note-card-actions-right">
+                      <Link
+                        className="note-card-open"
+                        to={`/video/${n.videoId}`}
+                      >
+                        <FileText size={13} />
+                        Open
+                      </Link>
+                      <button
+                        type="button"
+                        className="note-card-delete"
+                        disabled={busyId === rowKey}
+                        title="Delete this mark"
+                        aria-label={`Delete mark ${markId}`}
+                        onClick={() => void onDeleteMark()}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </article>

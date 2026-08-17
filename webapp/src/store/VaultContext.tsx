@@ -12,6 +12,9 @@ import {
   fetchVault,
   libraryAction as apiLibrary,
   repairTitles,
+  deleteVideo as apiDeleteVideo,
+  deleteHighlight as apiDeleteHighlight,
+  deleteScreenshot as apiDeleteScreenshot,
 } from "../api/vault";
 import {
   allNotes,
@@ -61,6 +64,12 @@ type VaultCtx = {
     playlist?: string
   ) => Promise<void>;
   repairTitles: () => Promise<{ fixed: number; message: string }>;
+  /** Remove video from vault (history, library, all marks/shots). */
+  deleteVideo: (videoId: string) => Promise<void>;
+  /** Remove one mark from a video. */
+  deleteMark: (videoId: string, highlightId: string) => Promise<void>;
+  /** Remove one shot from a video. */
+  deleteShot: (videoId: string, shotId: string) => Promise<void>;
 };
 
 const Ctx = createContext<VaultCtx | null>(null);
@@ -187,6 +196,65 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     return out;
   }, [session, refresh]);
 
+  const deleteVideoFn = useCallback(
+    async (videoId: string) => {
+      if (!session) throw new Error("Not signed in");
+      await apiDeleteVideo(session, videoId);
+      setRows((prev) => {
+        const next = prev.filter((r) => r.video_id !== videoId);
+        writeCache(session.user?.userId, next);
+        return next;
+      });
+    },
+    [session]
+  );
+
+  const deleteMarkFn = useCallback(
+    async (videoId: string, highlightId: string) => {
+      if (!session) throw new Error("Not signed in");
+      await apiDeleteHighlight(session, videoId, highlightId);
+      setRows((prev) => {
+        const next = prev.map((r) => {
+          if (r.video_id !== videoId) return r;
+          const highlights = (r.payload.highlights || []).filter(
+            (h) => h.id !== highlightId
+          );
+          return {
+            ...r,
+            updated_at: new Date().toISOString(),
+            payload: { ...r.payload, highlights },
+          };
+        });
+        writeCache(session.user?.userId, next);
+        return next;
+      });
+    },
+    [session]
+  );
+
+  const deleteShotFn = useCallback(
+    async (videoId: string, shotId: string) => {
+      if (!session) throw new Error("Not signed in");
+      await apiDeleteScreenshot(session, videoId, shotId);
+      setRows((prev) => {
+        const next = prev.map((r) => {
+          if (r.video_id !== videoId) return r;
+          const screenshots = (r.payload.screenshots || []).filter(
+            (s) => s.id !== shotId
+          );
+          return {
+            ...r,
+            updated_at: new Date().toISOString(),
+            payload: { ...r.payload, screenshots },
+          };
+        });
+        writeCache(session.user?.userId, next);
+        return next;
+      });
+    },
+    [session]
+  );
+
   const libraryAction = useCallback(
     async (videoId: string, action: LibraryAction, playlist?: string) => {
       if (!session) throw new Error("Not signed in");
@@ -265,8 +333,21 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       getVideo: (id) => findRow(rows, id),
       libraryAction,
       repairTitles: repairTitlesFn,
+      deleteVideo: deleteVideoFn,
+      deleteMark: deleteMarkFn,
+      deleteShot: deleteShotFn,
     };
-  }, [rows, loading, error, refresh, libraryAction, repairTitlesFn]);
+  }, [
+    rows,
+    loading,
+    error,
+    refresh,
+    libraryAction,
+    repairTitlesFn,
+    deleteVideoFn,
+    deleteMarkFn,
+    deleteShotFn,
+  ]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

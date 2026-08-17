@@ -5,10 +5,12 @@ import {
   ExternalLink,
   ListPlus,
   StickyNote,
+  Trash2,
 } from "lucide-react";
 import { relTime, rowActivityMs, ytThumb, ytWatchUrl } from "../lib/format";
 import type { VaultRow } from "../types";
 import { useVault } from "../store/VaultContext";
+import { useDialog } from "../store/DialogContext";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -33,12 +35,16 @@ export function VideoCard({
   row,
   showRemoveWatchLater,
   playlistName,
+  showDelete = false,
 }: {
   row: VaultRow;
   showRemoveWatchLater?: boolean;
   playlistName?: string;
+  /** Show delete control (history / library). */
+  showDelete?: boolean;
 }) {
-  const { libraryAction, playlistNames } = useVault();
+  const { libraryAction, playlistNames, deleteVideo } = useVault();
+  const { confirm, toast } = useDialog();
   const p = row.payload || {};
   const marks = (p.highlights || []).length;
   const shots = (p.screenshots || []).length;
@@ -96,10 +102,31 @@ export function VideoCard({
     try {
       await libraryAction(row.video_id, action, pl);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Update failed");
+      toast(e instanceof Error ? e.message : "Update failed", "error");
     } finally {
       setBusy(false);
       setPlOpen(false);
+    }
+  };
+
+  const onDelete = async () => {
+    const title = displayTitle(row);
+    const ok = await confirm({
+      title: "Delete video?",
+      message: `“${title}” will be removed from History and Library.\n\nAll marks and shots for this video will be deleted. This cannot be undone.`,
+      confirmLabel: "Delete video",
+      cancelLabel: "Keep video",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await deleteVideo(row.video_id);
+      toast("Video deleted from vault", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Delete failed", "error");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -187,6 +214,18 @@ export function VideoCard({
             >
               <ListPlus size={15} strokeWidth={2} />
             </button>
+            {showDelete ? (
+              <button
+                type="button"
+                className="v-bar-ico is-danger"
+                disabled={busy}
+                title="Delete from vault"
+                aria-label="Delete from vault"
+                onClick={() => void onDelete()}
+              >
+                <Trash2 size={15} strokeWidth={2} />
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

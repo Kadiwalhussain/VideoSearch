@@ -13,8 +13,8 @@ export function LibraryPage() {
           <Library size={22} /> Library
         </h1>
         <p className="view-sub">
-          {stats.videos} video{stats.videos === 1 ? "" : "s"} in your vault. Watch
-          on YouTube or open notes and screenshots.
+          {stats.videos} video{stats.videos === 1 ? "" : "s"} in your vault.
+          Watch, open notes, or delete videos you no longer need.
         </p>
       </header>
       {loading && !rows.length ? (
@@ -26,7 +26,7 @@ export function LibraryPage() {
       ) : rows.length ? (
         <div className="video-grid">
           {rows.map((r) => (
-            <VideoCard key={r.video_id} row={r} />
+            <VideoCard key={r.video_id} row={r} showDelete />
           ))}
         </div>
       ) : (

@@ -499,7 +499,7 @@
   background: var(--accent-dim);
 }
 
-/* Right: fixed 3-icon cluster — same width on every card */
+/* Right: icon cluster (3–4 buttons) */
 .v-bar-icons {
   display: flex;
   flex-wrap: nowrap;
@@ -507,7 +507,8 @@
   justify-content: flex-end;
   gap: 5px;
   flex-shrink: 0;
-  width: calc(32px * 3 + 5px * 2); /* 3 icons + gaps */
+  width: auto;
+  min-width: calc(32px * 3 + 5px * 2);
 }
 
 .v-bar-ico {
@@ -546,6 +547,17 @@
   color: var(--accent);
   border-color: var(--border-glow);
   background: var(--accent-dim);
+}
+
+.v-bar-ico.is-danger {
+  color: #fb7185;
+  border-color: rgba(251, 113, 133, 0.35);
+}
+
+.v-bar-ico.is-danger:hover {
+  color: #fff;
+  background: rgba(251, 113, 133, 0.2);
+  border-color: rgba(251, 113, 133, 0.55);
 }
 
 .v-bar-ico:disabled {
@@ -1103,6 +1115,57 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   margin-top: auto;
+  align-items: center;
+}
+
+.note-card-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.note-card-delete {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(251, 113, 133, 0.35);
+  background: transparent;
+  color: #fb7185;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.note-card-delete:hover:not(:disabled) {
+  background: rgba(251, 113, 133, 0.15);
+  border-color: rgba(251, 113, 133, 0.55);
+  color: #fda4af;
+}
+
+.note-card-delete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.note-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.btn-notes.is-danger {
+  color: #fb7185;
+  border-color: rgba(251, 113, 133, 0.35);
+}
+
+.btn-notes.is-danger:hover:not(:disabled) {
+  background: rgba(251, 113, 133, 0.12);
+  border-color: rgba(251, 113, 133, 0.5);
+  color: #fda4af;
 }
 
 .note-card-watch,
@@ -2028,6 +2091,241 @@
 
 .spin {
   animation: spin 0.8s linear infinite;
+}
+
+/* ── Confirm modal + toasts ── */
+.ui-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(2, 4, 10, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: ui-modal-fade 0.18s ease both;
+  box-sizing: border-box;
+}
+
+@keyframes ui-modal-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ui-modal {
+  width: min(420px, 100%);
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--surface-solid, var(--surface));
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.5);
+  padding: 22px 22px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: ui-modal-pop 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes ui-modal-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ui-modal-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+}
+
+.ui-modal.is-danger .ui-modal-icon {
+  background: rgba(251, 113, 133, 0.12);
+  color: #fb7185;
+  border-color: rgba(251, 113, 133, 0.32);
+}
+
+.ui-modal-title {
+  margin: 0 0 6px;
+  font-family: var(--display);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.ui-modal-message {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: pre-line;
+}
+
+.ui-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.ui-modal-btn {
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 11px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: transform 0.12s ease, filter 0.12s ease, background 0.12s ease;
+}
+
+.ui-modal-btn:hover {
+  transform: translateY(-1px);
+}
+
+.ui-modal-btn-ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.ui-modal-btn-ghost:hover {
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+}
+
+.ui-modal-btn-primary {
+  background: linear-gradient(135deg, #34d399, #2dd4bf);
+  color: #03140c;
+  border: none;
+}
+
+.ui-modal-btn-danger {
+  background: linear-gradient(135deg, #fb7185, #f43f5e);
+  color: #fff;
+  border: none;
+  box-shadow: 0 8px 20px rgba(244, 63, 94, 0.28);
+}
+
+.ui-modal-btn-danger:hover {
+  filter: brightness(1.05);
+}
+
+[data-theme="light"] .ui-modal-overlay {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+[data-theme="light"] .ui-modal {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.18);
+}
+
+[data-theme="light"] .ui-modal-btn-ghost {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+/* Toasts */
+.ui-toast-host {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 30010;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 28px));
+  pointer-events: none;
+}
+
+.ui-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 12px 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-solid, var(--surface));
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.35);
+  animation: ui-toast-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes ui-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ui-toast-ico {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.ui-toast--success .ui-toast-ico {
+  color: #34d399;
+}
+.ui-toast--error .ui-toast-ico {
+  color: #fb7185;
+}
+.ui-toast--info .ui-toast-ico {
+  color: #38bdf8;
+}
+
+.ui-toast-msg {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.ui-toast-close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.ui-toast-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+[data-theme="light"] .ui-toast {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
 }
 
 /* ── Session / vault loading ── */

@@ -13,12 +13,15 @@ export function HistoryPage() {
         <h1>
           <History size={22} /> History
         </h1>
-        <p className="view-sub">Most recently updated vault videos</p>
+        <p className="view-sub">
+          Most recently updated vault videos · use the trash icon to delete a
+          video and all its marks
+        </p>
       </header>
       {list.length ? (
         <div className="video-grid">
           {list.map((r) => (
-            <VideoCard key={r.video_id} row={r} />
+            <VideoCard key={r.video_id} row={r} showDelete />
           ))}
         </div>
       ) : (

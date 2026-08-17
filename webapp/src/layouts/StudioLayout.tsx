@@ -19,6 +19,7 @@ import { Ambient } from "../components/Ambient";
 import { useSession } from "../store/SessionContext";
 import { useTheme } from "../store/ThemeContext";
 import { useVault } from "../store/VaultContext";
+import { useDialog } from "../store/DialogContext";
 import { initials } from "../lib/format";
 import { useState } from "react";
 
@@ -45,6 +46,7 @@ export function StudioLayout() {
   const { session, logout } = useSession();
   const { toggle, theme } = useTheme();
   const { stats, refresh, loading, repairTitles } = useVault();
+  const { toast } = useDialog();
   const nav = useNavigate();
   const [q, setQ] = useState("");
   const [repairing, setRepairing] = useState(false);
@@ -137,12 +139,18 @@ export function StudioLayout() {
                 setRepairing(true);
                 void repairTitles()
                   .then((r) => {
-                    if (r.fixed > 0) {
-                      /* titles reloaded via refresh inside repairTitles */
-                    }
+                    toast(
+                      r.fixed > 0
+                        ? `Updated ${r.fixed} video title${r.fixed === 1 ? "" : "s"}`
+                        : "Titles already look good",
+                      r.fixed > 0 ? "success" : "info"
+                    );
                   })
                   .catch((e) =>
-                    alert(e instanceof Error ? e.message : "Title repair failed")
+                    toast(
+                      e instanceof Error ? e.message : "Title repair failed",
+                      "error"
+                    )
                   )
                   .finally(() => setRepairing(false));
               }}

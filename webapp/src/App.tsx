@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { SessionProvider, useSession } from "./store/SessionContext";
 import { VaultProvider } from "./store/VaultContext";
 import { ThemeProvider } from "./store/ThemeContext";
+import { DialogProvider } from "./store/DialogContext";
 import { StudioLayout } from "./layouts/StudioLayout";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -70,9 +71,11 @@ export default function App() {
   return (
     <ThemeProvider>
       <SessionProvider>
-        <BrowserRouter basename="/app">
-          <AppRoutes />
-        </BrowserRouter>
+        <DialogProvider>
+          <BrowserRouter basename="/app">
+            <AppRoutes />
+          </BrowserRouter>
+        </DialogProvider>
       </SessionProvider>
     </ThemeProvider>
   );

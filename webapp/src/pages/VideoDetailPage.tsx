@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Bookmark,
@@ -6,9 +6,12 @@ import {
   Clock,
   ExternalLink,
   Highlighter,
+  Inbox,
+  Trash2,
 } from "lucide-react";
 import { useVault } from "../store/VaultContext";
 import { useSession } from "../store/SessionContext";
+import { useDialog } from "../store/DialogContext";
 import {
   formatTime,
   relTime,
@@ -19,12 +22,14 @@ import {
 import { mediaSrc } from "../api/client";
 import { useState } from "react";
 import { EmptyState } from "../components/EmptyState";
-import { Inbox } from "lucide-react";
 
 export function VideoDetailPage() {
   const { videoId = "" } = useParams();
-  const { getVideo, libraryAction } = useVault();
+  const { getVideo, libraryAction, deleteVideo, deleteMark, deleteShot } =
+    useVault();
   const { session } = useSession();
+  const { confirm, toast } = useDialog();
+  const nav = useNavigate();
   const row = getVideo(videoId);
   const [tab, setTab] = useState<"marks" | "shots">("marks");
   const [busy, setBusy] = useState(false);
@@ -49,7 +54,70 @@ export function VideoDetailPage() {
     try {
       await libraryAction(videoId, action);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed");
+      toast(e instanceof Error ? e.message : "Failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDeleteVideo = async () => {
+    const title = p.videoTitle || videoId;
+    const ok = await confirm({
+      title: "Delete video?",
+      message: `“${title}” will be removed from your vault.\n\nAll marks and shots for this video will be deleted permanently.`,
+      confirmLabel: "Delete video",
+      cancelLabel: "Keep video",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await deleteVideo(videoId);
+      toast("Video deleted", "success");
+      nav("/history");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Delete failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDeleteMark = async (highlightId: string, note?: string) => {
+    const label = note?.trim() ? `“${note.trim().slice(0, 80)}”` : "this mark";
+    const ok = await confirm({
+      title: "Delete mark?",
+      message: `${label} will be removed from this video. The video stays in your vault.`,
+      confirmLabel: "Delete mark",
+      cancelLabel: "Keep mark",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await deleteMark(videoId, highlightId);
+      toast("Mark deleted", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Delete mark failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDeleteShot = async (shotId: string) => {
+    const ok = await confirm({
+      title: "Delete shot?",
+      message: "This screenshot will be removed from your vault.",
+      confirmLabel: "Delete shot",
+      cancelLabel: "Keep shot",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await deleteShot(videoId, shotId);
+      toast("Shot deleted", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Delete shot failed", "error");
     } finally {
       setBusy(false);
     }
@@ -104,6 +172,14 @@ export function VideoDetailPage() {
             >
               <Bookmark size={14} /> Save
             </button>
+            <button
+              type="button"
+              className="btn-notes is-danger"
+              disabled={busy}
+              onClick={() => void onDeleteVideo()}
+            >
+              <Trash2 size={14} /> Delete video
+            </button>
           </div>
           {(p.playlists || []).length ? (
             <p className="view-sub" style={{ marginTop: 8 }}>
@@ -144,14 +220,25 @@ export function VideoDetailPage() {
                   <div className="note-body">
                     <p>{h.note?.trim() || "Mark (no text)"}</p>
                   </div>
-                  <a
-                    className="btn-notes"
-                    href={ytWatchUrl(videoId, p.videoUrl, h.startTime)}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <ExternalLink size={14} /> Jump
-                  </a>
+                  <div className="note-row-actions">
+                    <a
+                      className="btn-notes"
+                      href={ytWatchUrl(videoId, p.videoUrl, h.startTime)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <ExternalLink size={14} /> Jump
+                    </a>
+                    <button
+                      type="button"
+                      className="btn-notes is-danger"
+                      disabled={busy || !h.id}
+                      title="Delete mark"
+                      onClick={() => void onDeleteMark(h.id, h.note)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </article>
               ))
           )}
@@ -169,6 +256,15 @@ export function VideoDetailPage() {
                   <div className="shot-meta">
                     <time>{formatTime(s.videoTime)}</time>
                     <span>{s.note || "—"}</span>
+                    <button
+                      type="button"
+                      className="btn-notes is-danger sm"
+                      disabled={busy}
+                      title="Delete shot"
+                      onClick={() => void onDeleteShot(s.id)}
+                    >
+                      <Trash2 size={13} /> Delete
+                    </button>
                   </div>
                 </div>
               );

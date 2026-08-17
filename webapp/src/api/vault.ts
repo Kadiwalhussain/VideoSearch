@@ -82,3 +82,62 @@ export async function repairTitles(
     message: data.message || "Titles updated",
   };
 }
+
+/** Remove a whole video (marks + shots + library flags) from the vault. */
+export async function deleteVideo(
+  session: Session,
+  videoId: string
+): Promise<{ message: string }> {
+  const res = await apiFetch(
+    session.url,
+    `/api/vault/${encodeURIComponent(videoId)}`,
+    { method: "DELETE", token: session.token }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `Delete failed (${res.status})`);
+  }
+  return { message: data.message || "Video removed" };
+}
+
+/** Remove one mark/highlight from a video. */
+export async function deleteHighlight(
+  session: Session,
+  videoId: string,
+  highlightId: string
+): Promise<{ message: string; remaining?: number }> {
+  const res = await apiFetch(
+    session.url,
+    `/api/vault/${encodeURIComponent(videoId)}/highlights/${encodeURIComponent(highlightId)}`,
+    { method: "DELETE", token: session.token }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `Delete mark failed (${res.status})`);
+  }
+  return {
+    message: data.message || "Mark deleted",
+    remaining: data.remaining,
+  };
+}
+
+/** Remove one screenshot from a video. */
+export async function deleteScreenshot(
+  session: Session,
+  videoId: string,
+  shotId: string
+): Promise<{ message: string; remaining?: number }> {
+  const res = await apiFetch(
+    session.url,
+    `/api/vault/${encodeURIComponent(videoId)}/screenshots/${encodeURIComponent(shotId)}`,
+    { method: "DELETE", token: session.token }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `Delete shot failed (${res.status})`);
+  }
+  return {
+    message: data.message || "Shot deleted",
+    remaining: data.remaining,
+  };
+}

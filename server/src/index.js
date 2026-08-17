@@ -995,14 +995,27 @@ app.get("/api/vault/:videoId", authMiddleware, async (req, res) => {
   }
 });
 
+/** Delete entire video from vault (history / library / all marks & shots). */
 app.delete("/api/vault/:videoId", authMiddleware, async (req, res) => {
   try {
-    await VaultVideo.deleteOne({
+    const videoId = String(req.params.videoId || "");
+    if (!videoId) {
+      return res.status(400).json({ ok: false, message: "videoId required" });
+    }
+    const result = await VaultVideo.deleteOne({
       userId: req.user.userId,
-      videoId: req.params.videoId,
+      videoId,
     });
     await refreshUserStats(req.user.userId);
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      deleted: result.deletedCount > 0,
+      videoId,
+      message:
+        result.deletedCount > 0
+          ? "Video removed from vault"
+          : "Video was not in vault",
+    });
   } catch (err) {
     res.status(500).json({
       ok: false,
@@ -1010,6 +1023,109 @@ app.delete("/api/vault/:videoId", authMiddleware, async (req, res) => {
     });
   }
 });
+
+/**
+ * Delete one mark/highlight from a video.
+ * DELETE /api/vault/:videoId/highlights/:highlightId
+ */
+app.delete(
+  "/api/vault/:videoId/highlights/:highlightId",
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const userId = req.user.userId;
+      const videoId = String(req.params.videoId || "");
+      const highlightId = String(req.params.highlightId || "");
+      if (!videoId || !highlightId) {
+        return res.status(400).json({
+          ok: false,
+          message: "videoId and highlightId required",
+        });
+      }
+
+      const doc = await VaultVideo.findOne({ userId, videoId });
+      if (!doc) {
+        return res.status(404).json({ ok: false, message: "Video not found" });
+      }
+
+      const before = (doc.highlights || []).length;
+      doc.highlights = (doc.highlights || []).filter(
+        (h) => String(h.id) !== highlightId
+      );
+      const removed = before - doc.highlights.length;
+      if (!removed) {
+        return res.status(404).json({ ok: false, message: "Mark not found" });
+      }
+      doc.updatedAt = new Date();
+      await doc.save();
+      await refreshUserStats(userId);
+
+      res.json({
+        ok: true,
+        videoId,
+        highlightId,
+        remaining: doc.highlights.length,
+        message: "Mark deleted",
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        message: err instanceof Error ? err.message : "Delete mark failed",
+      });
+    }
+  }
+);
+
+/**
+ * Delete one screenshot/shot from a video.
+ * DELETE /api/vault/:videoId/screenshots/:shotId
+ */
+app.delete(
+  "/api/vault/:videoId/screenshots/:shotId",
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const userId = req.user.userId;
+      const videoId = String(req.params.videoId || "");
+      const shotId = String(req.params.shotId || "");
+      if (!videoId || !shotId) {
+        return res
+          .status(400)
+          .json({ ok: false, message: "videoId and shotId required" });
+      }
+
+      const doc = await VaultVideo.findOne({ userId, videoId });
+      if (!doc) {
+        return res.status(404).json({ ok: false, message: "Video not found" });
+      }
+
+      const before = (doc.screenshots || []).length;
+      doc.screenshots = (doc.screenshots || []).filter(
+        (s) => String(s.id) !== shotId
+      );
+      const removed = before - doc.screenshots.length;
+      if (!removed) {
+        return res.status(404).json({ ok: false, message: "Shot not found" });
+      }
+      doc.updatedAt = new Date();
+      await doc.save();
+      await refreshUserStats(userId);
+
+      res.json({
+        ok: true,
+        videoId,
+        shotId,
+        remaining: doc.screenshots.length,
+        message: "Shot deleted",
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        message: err instanceof Error ? err.message : "Delete shot failed",
+      });
+    }
+  }
+);
 
 // ─── AI (server-side LLM for perfect Chat / Ask / Topics) ───────────
 
