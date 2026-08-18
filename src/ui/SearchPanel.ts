@@ -443,6 +443,9 @@ export class SearchPanel {
     this.liveTranscript.setAskHandler(() => {
       void this.openExternalAsk();
     });
+    this.liveTranscript.setAskProviderHandler((id) => {
+      void this.saveAskProviderId(id);
+    });
     host.appendChild(this.liveTranscript.root);
 
     const chatHost = this.root.querySelector(".vsa-chat-host") as HTMLElement;
@@ -1258,7 +1261,28 @@ export class SearchPanel {
         sel.value = current.id;
       }
       this.liveTranscript.setAskLabel(current.label);
+      this.liveTranscript.setAskProvider(current.id);
       this.chatPane.setAskLabel(current.label);
+    } catch {
+      /* optional */
+    }
+  }
+
+  private async saveAskProviderId(id: string): Promise<void> {
+    try {
+      const { saveAskProvider } = await import(
+        "../settings/askExternalSettings"
+      );
+      const p = await saveAskProvider(
+        id as import("../settings/askExternalSettings").AskProviderId
+      );
+      this.liveTranscript.setAskLabel(p.label);
+      this.liveTranscript.setAskProvider(p.id);
+      this.chatPane.setAskLabel(p.label);
+      const sel = this.root.querySelector(
+        "[data-ask-provider]"
+      ) as HTMLSelectElement | null;
+      if (sel) sel.value = p.id;
     } catch {
       /* optional */
     }
@@ -1282,6 +1306,7 @@ export class SearchPanel {
       this.statusEl.textContent = result.ok
         ? `Ask ${result.provider.label}`
         : result.message;
+      this.liveTranscript.setHint(result.message);
     } catch (err) {
       this.statusEl.textContent =
         err instanceof Error ? err.message : "Could not open chat";

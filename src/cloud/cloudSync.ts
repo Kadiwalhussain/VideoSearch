@@ -95,6 +95,8 @@ export async function syncVideoToCloud(opts: {
   bioMarkdown?: string;
   /** When true, do not re-enqueue on failure (used by offline queue flusher) */
   skipOfflineEnqueue?: boolean;
+  /** True only when the user is actually on this video’s watch page */
+  watched?: boolean;
 }): Promise<SyncResult> {
   const settings = await loadCloudSettings();
   if (!settings.enabled || !settings.apiKey) {
@@ -129,6 +131,7 @@ export async function syncVideoToCloud(opts: {
           channelTitle: opts.channelTitle,
           channelUrl: opts.channelUrl,
           videoUrl: `https://www.youtube.com/watch?v=${opts.videoId}`,
+          watched: Boolean(opts.watched),
           highlights: opts.highlights,
           sourceLinks: opts.sourceLinks || [],
           ...(typeof opts.bioText === "string"
@@ -402,6 +405,15 @@ async function runAutoSync(
         highlights,
         screenshots,
         sourceLinks,
+        watched: (() => {
+          try {
+            const href = String(location.href || "");
+            const m = href.match(/[?&]v=([A-Za-z0-9_-]{6,20})/);
+            return Boolean(m && m[1] === videoId);
+          } catch {
+            return false;
+          }
+        })(),
       });
 
       if (result.ok) {

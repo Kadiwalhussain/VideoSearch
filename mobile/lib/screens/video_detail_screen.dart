@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
@@ -41,6 +42,8 @@ class _VideoDetailScreenState extends State<VideoDetailScreen>
   final bioCtrl = TextEditingController();
   bool editingBio = false;
   String? focusMarkId;
+  StreamSubscription<YoutubePlayerValue>? _playerSub;
+  bool _viewRecorded = false;
 
   static int _tabIndex(String? tab) {
     switch (tab) {
@@ -72,6 +75,12 @@ class _VideoDetailScreenState extends State<VideoDetailScreen>
       startSeconds: widget.startSeconds,
       autoPlay: jumpIn && widget.startSeconds > 0,
     );
+    _playerSub = player.listen((value) {
+      if (!mounted) return;
+      if (value.playerState == PlayerState.playing) {
+        _markWatched();
+      }
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       context.read<AppState>().ensureVideo(widget.videoId);
@@ -82,10 +91,17 @@ class _VideoDetailScreenState extends State<VideoDetailScreen>
     });
   }
 
+  void _markWatched() {
+    if (_viewRecorded) return;
+    _viewRecorded = true;
+    context.read<AppState>().recordView(widget.videoId);
+  }
+
   @override
   void didUpdateWidget(covariant VideoDetailScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoId != widget.videoId) {
+      _viewRecorded = false;
       player.loadVideoById(
         videoId: widget.videoId,
         startSeconds: widget.startSeconds > 0 ? widget.startSeconds : null,
@@ -108,6 +124,7 @@ class _VideoDetailScreenState extends State<VideoDetailScreen>
 
   @override
   void dispose() {
+    _playerSub?.cancel();
     player.close();
     tabs.dispose();
     bioCtrl.dispose();
@@ -120,6 +137,7 @@ class _VideoDetailScreenState extends State<VideoDetailScreen>
     try {
       await player.seekTo(seconds: s, allowSeekAhead: true);
       await player.playVideo();
+      _markWatched();
     } catch (_) {
       await player.loadVideoById(
         videoId: widget.videoId,
@@ -458,7 +476,7 @@ class _VideoDetailScreenState extends State<VideoDetailScreen>
                     ),
                   const SizedBox(height: 2),
                   Text(
-                    '${relTime(row.activityMs)} · ${p.markCount} marks · ${p.shotCount} shots'
+                    '${activityLabel(row)} · ${p.markCount} marks · ${p.shotCount} shots'
                     '${sources.isNotEmpty ? ' · ${sources.length} sources' : ''}'
                     '${p.hasBio ? ' · bio' : ''}',
                     style: TextStyle(

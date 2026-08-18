@@ -8,7 +8,7 @@ import {
   StickyNote,
   Trash2,
 } from "lucide-react";
-import { relTime, rowActivityMs, ytThumb, ytWatchUrl } from "../lib/format";
+import { activityLabel, ytThumb, ytWatchUrl } from "../lib/format";
 import type { VaultRow } from "../types";
 import { useVault } from "../store/VaultContext";
 import { useDialog } from "../store/DialogContext";
@@ -30,9 +30,8 @@ function displayTitle(row: VaultRow): string {
   return t || row.video_id;
 }
 
-function activityLabel(row: VaultRow): string {
-  const ms = rowActivityMs(row);
-  return ms != null ? relTime(ms) : "—";
+function cardActivityLabel(row: VaultRow): string {
+  return activityLabel(row);
 }
 
 export function VideoCard({
@@ -47,7 +46,7 @@ export function VideoCard({
   /** Show delete control (history / library). */
   showDelete?: boolean;
 }) {
-  const { libraryAction, playlistNames, deleteVideo } = useVault();
+  const { libraryAction, playlistNames, deleteVideo, recordView } = useVault();
   const { session } = useSession();
   const { confirm, toast } = useDialog();
   const p = row.payload || {};
@@ -138,7 +137,7 @@ export function VideoCard({
   };
 
   // One clean meta line — never duplicate on the thumbnail
-  const metaParts: string[] = [activityLabel(row)];
+  const metaParts: string[] = [cardActivityLabel(row)];
   if (marks > 0) metaParts.push(`${marks} mark${marks === 1 ? "" : "s"}`);
   if (shots > 0) metaParts.push(`${shots} shot${shots === 1 ? "" : "s"}`);
   if (sources > 0)
@@ -176,6 +175,7 @@ export function VideoCard({
               href={ytWatchUrl(row.video_id, p.videoUrl)}
               target="_blank"
               rel="noreferrer"
+              onClick={() => recordView(row.video_id)}
             >
               <ExternalLink size={14} strokeWidth={2.25} aria-hidden />
               <span>Watch</span>

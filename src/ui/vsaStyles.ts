@@ -2025,78 +2025,86 @@ export const VSA_STYLES = `
   margin-top: 2px;
   line-height: 1.35;
 }
-#videosearch-ai-panel .vsa-tx-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
+#videosearch-ai-panel .vsa-tx-bar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding: 10px 12px 0;
 }
-#videosearch-ai-panel .vsa-tx-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--vsa-border);
-  background: rgba(255,255,255,0.03);
-  color: var(--vsa-muted);
-  border-radius: 999px;
-  padding: 6px 10px;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-}
-#videosearch-ai-panel .vsa-tx-copy:hover:not(:disabled) {
-  color: var(--vsa-accent);
-  border-color: rgba(62, 207, 142, 0.35);
-}
-#videosearch-ai-panel .vsa-tx-copy:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-#videosearch-ai-panel .vsa-tx-copy.is-ok {
-  color: var(--vsa-accent);
-  border-color: rgba(62, 207, 142, 0.4);
-}
-#videosearch-ai-panel .vsa-tx-copy .vsa-icon {
-  display: block;
-}
+#videosearch-ai-panel .vsa-tx-copy,
 #videosearch-ai-panel .vsa-tx-ask {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  border: 1px solid rgba(62, 207, 142, 0.35);
-  background: rgba(62, 207, 142, 0.12);
-  color: var(--vsa-accent);
-  border-radius: 999px;
-  padding: 6px 10px;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  border-radius: 10px;
+  padding: 8px 10px;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 750;
   cursor: pointer;
   white-space: nowrap;
 }
-#videosearch-ai-panel .vsa-tx-ask:hover:not(:disabled) {
-  background: rgba(62, 207, 142, 0.2);
+#videosearch-ai-panel .vsa-tx-copy {
+  border: 1px solid var(--vsa-border);
+  background: rgba(255,255,255,0.05);
+  color: var(--vsa-text);
 }
+#videosearch-ai-panel .vsa-tx-copy:hover:not(:disabled) {
+  color: var(--vsa-accent);
+  border-color: rgba(62, 207, 142, 0.4);
+  background: rgba(62, 207, 142, 0.08);
+}
+#videosearch-ai-panel .vsa-tx-copy:disabled,
 #videosearch-ai-panel .vsa-tx-ask:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: default;
 }
-#videosearch-ai-panel .vsa-chat-head-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-#videosearch-ai-panel .vsa-chat-ask {
-  border: 1px solid rgba(62, 207, 142, 0.35);
-  background: rgba(62, 207, 142, 0.12);
+#videosearch-ai-panel .vsa-tx-copy.is-ok {
   color: var(--vsa-accent);
-  border-radius: 999px;
-  padding: 4px 9px;
+  border-color: rgba(62, 207, 142, 0.45);
+}
+#videosearch-ai-panel .vsa-tx-copy .vsa-icon,
+#videosearch-ai-panel .vsa-tx-ask .vsa-icon {
+  display: block;
+  flex-shrink: 0;
+}
+#videosearch-ai-panel .vsa-tx-askrow {
+  display: flex;
+  min-width: 0;
+}
+#videosearch-ai-panel .vsa-tx-ask {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid rgba(62, 207, 142, 0.4);
+  background: rgba(62, 207, 142, 0.16);
+  color: var(--vsa-accent);
+  border-radius: 10px 0 0 10px;
+}
+#videosearch-ai-panel .vsa-tx-ask:hover:not(:disabled) {
+  background: rgba(62, 207, 142, 0.26);
+}
+#videosearch-ai-panel .vsa-tx-model {
+  flex: 0 0 92px;
+  min-width: 0;
+  border: 1px solid rgba(62, 207, 142, 0.4);
+  border-left: 0;
+  border-radius: 0 10px 10px 0;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--vsa-text);
   font: inherit;
   font-size: 11px;
-  font-weight: 750;
+  font-weight: 700;
+  padding: 0 6px;
   cursor: pointer;
+}
+#videosearch-ai-panel .vsa-tx-askhint {
+  margin: 6px 12px 8px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--vsa-faint);
 }
 #videosearch-ai-panel .vsa-set-ask-provider {
   width: 100%;
@@ -2619,6 +2627,25 @@ export const VSA_STYLES = `
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
+}
+#videosearch-ai-panel .vsa-chat-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+#videosearch-ai-panel .vsa-chat-ask {
+  border: 1px solid rgba(62, 207, 142, 0.4);
+  background: rgba(62, 207, 142, 0.16);
+  color: var(--vsa-accent);
+  border-radius: 999px;
+  padding: 6px 11px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 750;
+  cursor: pointer;
+  white-space: nowrap;
 }
 #videosearch-ai-panel .vsa-chat-title {
   display: inline-flex;

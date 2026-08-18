@@ -48,7 +48,7 @@ void main() {
           videoId: 'c',
           videoTitle: 'OS Lecture 3',
           playlists: ['OS'],
-          updatedAt: 300,
+          lastViewedAt: 300,
         ),
       ),
       VaultRow(
@@ -58,7 +58,7 @@ void main() {
           videoId: 'a',
           videoTitle: 'OS Lecture 1',
           playlists: ['OS'],
-          updatedAt: 100,
+          lastViewedAt: 100,
         ),
       ),
       VaultRow(
@@ -68,7 +68,7 @@ void main() {
           videoId: 'b',
           videoTitle: 'OS Lecture 2',
           playlists: ['OS'],
-          updatedAt: 999999,
+          lastViewedAt: 999999,
         ),
       ),
     ];

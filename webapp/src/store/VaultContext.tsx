@@ -16,6 +16,7 @@ import {
   deleteHighlight as apiDeleteHighlight,
   deleteScreenshot as apiDeleteScreenshot,
   saveVideoBio as apiSaveBio,
+  recordVideoView as apiRecordView,
 } from "../api/vault";
 import {
   allNotes,
@@ -76,6 +77,8 @@ type VaultCtx = {
     videoId: string,
     opts: { bioText: string; bioMarkdown?: string }
   ) => Promise<{ sourceCount: number }>;
+  /** Stamp lastViewedAt when the user actually watches. */
+  recordView: (videoId: string) => void;
 };
 
 const Ctx = createContext<VaultCtx | null>(null);
@@ -322,6 +325,28 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [session, rows, refresh]
   );
 
+  const recordView = useCallback(
+    (videoId: string) => {
+      if (!session || !videoId) return;
+      const now = Date.now();
+      setRows((prev) => {
+        const next = prev.map((r) => {
+          if (r.video_id !== videoId) return r;
+          const prevView = r.payload?.lastViewedAt || 0;
+          if (prevView && now - prevView < 2 * 60 * 1000) return r;
+          return {
+            ...r,
+            payload: { ...r.payload, lastViewedAt: now },
+          };
+        });
+        writeCache(session.user?.userId, next);
+        return next;
+      });
+      void apiRecordView(session, videoId);
+    },
+    [session]
+  );
+
   const saveBioFn = useCallback(
     async (
       videoId: string,
@@ -385,6 +410,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       deleteMark: deleteMarkFn,
       deleteShot: deleteShotFn,
       saveBio: saveBioFn,
+      recordView,
     };
   }, [
     rows,
@@ -397,6 +423,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     deleteMarkFn,
     deleteShotFn,
     saveBioFn,
+    recordView,
   ]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

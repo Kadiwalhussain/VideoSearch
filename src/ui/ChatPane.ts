@@ -88,7 +88,7 @@ export class ChatPane {
       this.listEl.innerHTML = `
         <div class="vsa-chat-empty">
           <strong>Ask the video</strong>
-          <p>Uses local semantic search + AI over captions. Answers include clickable timestamps.</p>
+          <p>Uses local search over captions. Or tap <b>Ask ChatGPT</b> above — the full transcript is copied and pasted into ChatGPT, Claude, Gemini, Grok, or Perplexity.</p>
         </div>`;
       this.root.querySelector(".vsa-chat-suggest")?.removeAttribute("hidden");
       return;

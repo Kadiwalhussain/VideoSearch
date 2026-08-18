@@ -419,7 +419,8 @@ class AppState extends ChangeNotifier {
       final p = r.payload;
       return VaultRow(
         videoId: r.videoId,
-        updatedAt: DateTime.now().toIso8601String(),
+        updatedAt: r.updatedAt,
+        createdAt: r.createdAt,
         payload: VaultPayload(
           videoId: p.videoId,
           videoTitle: p.videoTitle,
@@ -437,11 +438,63 @@ class AppState extends ChangeNotifier {
           watchLater: lib.watchLater,
           watchLaterAt: lib.watchLaterAt,
           playlists: lib.playlists,
-          updatedAt: DateTime.now().millisecondsSinceEpoch,
+          updatedAt: p.updatedAt,
+          lastViewedAt: p.lastViewedAt,
+          createdAt: p.createdAt,
         ),
       );
     }).toList();
     notifyListeners();
+  }
+
+  DateTime? _lastViewStamp;
+  String? _lastViewId;
+
+  /// Stamp lastViewedAt when the user actually plays the video.
+  Future<void> recordView(String videoId) async {
+    final s = session;
+    if (s == null || videoId.isEmpty) return;
+    final now = DateTime.now();
+    if (_lastViewId == videoId &&
+        _lastViewStamp != null &&
+        now.difference(_lastViewStamp!).inMinutes < 2) {
+      return;
+    }
+    _lastViewId = videoId;
+    _lastViewStamp = now;
+    final ms = now.millisecondsSinceEpoch;
+    rows = rows.map((r) {
+      if (r.videoId != videoId) return r;
+      final p = r.payload;
+      return VaultRow(
+        videoId: r.videoId,
+        updatedAt: r.updatedAt,
+        createdAt: r.createdAt,
+        payload: VaultPayload(
+          videoId: p.videoId,
+          videoTitle: p.videoTitle,
+          videoUrl: p.videoUrl,
+          channelTitle: p.channelTitle,
+          channelUrl: p.channelUrl,
+          highlights: p.highlights,
+          screenshots: p.screenshots,
+          sourceLinks: p.sourceLinks,
+          bioText: p.bioText,
+          bioMarkdown: p.bioMarkdown,
+          bioSyncedAt: p.bioSyncedAt,
+          saved: p.saved,
+          savedAt: p.savedAt,
+          watchLater: p.watchLater,
+          watchLaterAt: p.watchLaterAt,
+          playlists: p.playlists,
+          updatedAt: p.updatedAt,
+          lastViewedAt: ms,
+          createdAt: p.createdAt,
+        ),
+      );
+    }).toList();
+    notifyListeners();
+    await api.recordView(s, videoId);
   }
 
   Future<void> toggleWatchLater(String videoId) async {
@@ -553,6 +606,7 @@ class AppState extends ChangeNotifier {
         return VaultRow(
           videoId: r.videoId,
           updatedAt: r.updatedAt,
+          createdAt: r.createdAt,
           payload: VaultPayload(
             videoId: p.videoId,
             videoTitle: p.videoTitle,
@@ -572,6 +626,8 @@ class AppState extends ChangeNotifier {
             watchLaterAt: p.watchLaterAt,
             playlists: p.playlists,
             updatedAt: p.updatedAt,
+            lastViewedAt: p.lastViewedAt,
+            createdAt: p.createdAt,
           ),
         );
       }).toList();
@@ -593,6 +649,7 @@ class AppState extends ChangeNotifier {
         return VaultRow(
           videoId: r.videoId,
           updatedAt: r.updatedAt,
+          createdAt: r.createdAt,
           payload: VaultPayload(
             videoId: p.videoId,
             videoTitle: p.videoTitle,
@@ -611,6 +668,8 @@ class AppState extends ChangeNotifier {
             watchLaterAt: p.watchLaterAt,
             playlists: p.playlists,
             updatedAt: p.updatedAt,
+            lastViewedAt: p.lastViewedAt,
+            createdAt: p.createdAt,
           ),
         );
       }).toList();

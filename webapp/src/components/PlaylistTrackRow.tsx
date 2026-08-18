@@ -6,7 +6,7 @@ import {
   StickyNote,
   Trash2,
 } from "lucide-react";
-import { relTime, rowActivityMs, ytThumb, ytWatchUrl } from "../lib/format";
+import { activityLabel, ytThumb, ytWatchUrl } from "../lib/format";
 import type { VaultRow } from "../types";
 import { useVault } from "../store/VaultContext";
 import { useDialog } from "../store/DialogContext";
@@ -42,13 +42,13 @@ export function PlaylistTrackRow({
   const title = displayTitle(row);
   const marks = (p.highlights || []).length;
   const shots = (p.screenshots || []).length;
-  const activity = rowActivityMs(row);
+  const activity = activityLabel(row);
 
   const meta: string[] = [];
   if (p.channelTitle) meta.push(p.channelTitle);
   if (marks) meta.push(`${marks} mark${marks === 1 ? "" : "s"}`);
   if (shots) meta.push(`${shots} shot${shots === 1 ? "" : "s"}`);
-  if (activity != null) meta.push(relTime(activity));
+  if (activity !== "—") meta.push(activity);
 
   const remove = async () => {
     setBusy(true);

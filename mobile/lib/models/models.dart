@@ -166,6 +166,8 @@ class VaultPayload {
   final int? watchLaterAt;
   final List<String> playlists;
   final int? updatedAt;
+  final int? lastViewedAt;
+  final int? createdAt;
 
   VaultPayload({
     required this.videoId,
@@ -185,6 +187,8 @@ class VaultPayload {
     this.watchLaterAt,
     this.playlists = const [],
     this.updatedAt,
+    this.lastViewedAt,
+    this.createdAt,
   });
 
   factory VaultPayload.fromJson(Map<String, dynamic> j) => VaultPayload(
@@ -216,6 +220,8 @@ class VaultPayload {
             .map((e) => e.toString())
             .toList(),
         updatedAt: (j['updatedAt'] as num?)?.toInt(),
+        lastViewedAt: (j['lastViewedAt'] as num?)?.toInt(),
+        createdAt: (j['createdAt'] as num?)?.toInt(),
       );
 
   String get displayTitle {
@@ -236,11 +242,13 @@ class VaultPayload {
 class VaultRow {
   final String videoId;
   final String updatedAt;
+  final String? createdAt;
   final VaultPayload payload;
 
   VaultRow({
     required this.videoId,
     required this.updatedAt,
+    this.createdAt,
     required this.payload,
   });
 
@@ -257,23 +265,31 @@ class VaultRow {
           '',
       updatedAt:
           j['updated_at']?.toString() ?? j['updatedAt']?.toString() ?? '',
+      createdAt: j['created_at']?.toString() ?? j['createdAt']?.toString(),
       payload: VaultPayload.fromJson(raw),
     );
   }
 
+  /// User-facing activity. Vault sync `updatedAt` is ignored so bio/playlist
+  /// imports do not make unwatched videos look “seen now”.
   int get activityMs {
     final candidates = <int>[];
-    final u = DateTime.tryParse(updatedAt)?.millisecondsSinceEpoch;
-    if (u != null) candidates.add(u);
-    if (payload.updatedAt != null) candidates.add(payload.updatedAt!);
-    if (payload.savedAt != null) candidates.add(payload.savedAt!);
-    if (payload.watchLaterAt != null) candidates.add(payload.watchLaterAt!);
+    void add(int? n) {
+      if (n != null && n > 0) candidates.add(n);
+    }
+
+    add(payload.lastViewedAt);
+    add(payload.savedAt);
+    add(payload.watchLaterAt);
     for (final h in payload.highlights) {
-      if (h.createdAt != null) candidates.add(h.createdAt!);
+      add(h.createdAt);
     }
     for (final s in payload.screenshots) {
-      if (s.createdAt != null) candidates.add(s.createdAt!);
+      add(s.createdAt);
     }
+    add(payload.createdAt);
+    final added = DateTime.tryParse(createdAt ?? '')?.millisecondsSinceEpoch;
+    add(added);
     if (candidates.isEmpty) return 0;
     return candidates.reduce((a, b) => a > b ? a : b);
   }

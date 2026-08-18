@@ -677,6 +677,9 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
       updatedAt: new Date(),
     };
 
+    const viewedAt = nextLastViewedAt(existing, req.body || {});
+    if (viewedAt) setDoc.lastViewedAt = viewedAt;
+
     // Full bio — only overwrite when client sends a non-empty string (or explicit empty with flag)
     if (typeof bioText === "string") {
       setDoc.bioText = String(bioText).slice(0, 100_000);
@@ -826,7 +829,8 @@ function sourcesForRow(r) {
     bioSourceBackfill.add(String(r._id));
     VaultVideo.updateOne(
       { _id: r._id },
-      { $set: { sourceLinks: merged } }
+      { $set: { sourceLinks: merged } },
+      { timestamps: false }
     ).catch(() => {});
   }
   return merged
@@ -834,14 +838,21 @@ function sourcesForRow(r) {
     .map(serializeSource);
 }
 
+function dateMs(v) {
+  if (!v) return null;
+  const n = v instanceof Date ? v.getTime() : new Date(v).getTime();
+  return Number.isFinite(n) ? n : null;
+}
+
 function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
-  const updatedMs = r.updatedAt ? new Date(r.updatedAt).getTime() : Date.now();
+  const updatedMs = dateMs(r.updatedAt) ?? Date.now();
+  const createdMs = dateMs(r.createdAt);
+  const viewedMs = dateMs(r.lastViewedAt);
   return {
     video_id: r.videoId,
     // Always ISO string so clients parse consistently
-    updated_at: Number.isFinite(updatedMs)
-      ? new Date(updatedMs).toISOString()
-      : new Date().toISOString(),
+    updated_at: new Date(updatedMs).toISOString(),
+    created_at: createdMs ? new Date(createdMs).toISOString() : undefined,
     payload: {
       videoId: r.videoId,
       videoTitle: r.videoTitle,
@@ -865,9 +876,34 @@ function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
         ? new Date(r.watchLaterAt).getTime()
         : null,
       playlists: Array.isArray(r.playlists) ? r.playlists : [],
-      updatedAt: Number.isFinite(updatedMs) ? updatedMs : Date.now(),
+      updatedAt: updatedMs,
+      lastViewedAt: viewedMs,
+      createdAt: createdMs,
     },
   };
+}
+
+function parseViewedAt(raw) {
+  if (raw == null || raw === "" || raw === false) return null;
+  if (raw === true) return new Date();
+  const n = typeof raw === "number" ? raw : new Date(raw).getTime();
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return new Date(n < 1e12 ? n * 1000 : n);
+}
+
+/** Stamp lastViewedAt only on a real watch, throttled so syncs don't spam. */
+function nextLastViewedAt(existing, body) {
+  const watched =
+    body?.watched === true ||
+    body?.watched === "true" ||
+    body?.lastViewedAt != null;
+  if (!watched) return null;
+  const incoming = parseViewedAt(body.lastViewedAt) || new Date();
+  const prev = existing?.lastViewedAt
+    ? new Date(existing.lastViewedAt).getTime()
+    : 0;
+  if (prev && incoming.getTime() - prev < 2 * 60 * 1000) return null;
+  return incoming;
 }
 
 /**
@@ -1014,6 +1050,49 @@ app.get("/api/vault/shot/:videoId/:shotId", async (req, res) => {
  *   playlist?: string
  * }
  */
+app.post("/api/vault/view", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const videoId = String(req.body?.videoId || "").trim();
+    if (!videoId) {
+      return res.status(400).json({ ok: false, message: "videoId required" });
+    }
+    const existing = await VaultVideo.findOne({ userId, videoId }).lean();
+    if (!existing) {
+      return res.json({ ok: true, skipped: true, message: "Video not in vault" });
+    }
+    const viewedAt = nextLastViewedAt(existing, {
+      watched: true,
+      lastViewedAt: req.body?.lastViewedAt,
+    });
+    if (!viewedAt) {
+      return res.json({
+        ok: true,
+        skipped: true,
+        lastViewedAt: existing.lastViewedAt
+          ? new Date(existing.lastViewedAt).getTime()
+          : null,
+      });
+    }
+    await VaultVideo.updateOne(
+      { userId, videoId },
+      { $set: { lastViewedAt: viewedAt } },
+      { timestamps: false }
+    );
+    res.json({
+      ok: true,
+      videoId,
+      lastViewedAt: viewedAt.getTime(),
+    });
+  } catch (err) {
+    console.error("view error", err);
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "View update failed",
+    });
+  }
+});
+
 app.post("/api/vault/library", authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -1312,12 +1391,12 @@ app.post("/api/vault/playlist/import", authMiddleware, async (req, res) => {
       const $set = {
         userId,
         videoId,
-        updatedAt: now,
         videoUrl: existing?.videoUrl || videoUrl,
         playlists,
         saved: true,
         savedAt: existing?.savedAt || now,
       };
+      if (!existing) $set.updatedAt = now;
 
       // Don't wipe good titles/channels
       const bareTitle =
@@ -1346,7 +1425,12 @@ app.post("/api/vault/playlist/import", authMiddleware, async (req, res) => {
             watchLaterAt: null,
           },
         },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+          timestamps: !existing,
+        }
       );
 
       if (existing) updated += 1;

@@ -63,41 +63,117 @@ export function relTime(ts?: string | number | Date | null): string {
   });
 }
 
-/**
- * Best activity timestamp for a vault row:
- * max of updated_at, mark times, shot times, library flags.
- */
-export function rowActivityMs(row: {
+export type ActivityKind =
+  | "watched"
+  | "marked"
+  | "captured"
+  | "saved"
+  | "queued"
+  | "added";
+
+export type ActivityInfo = { kind: ActivityKind; ms: number };
+
+type ActivityRow = {
   updated_at?: string | number | Date | null;
+  created_at?: string | number | Date | null;
   payload?: {
     updatedAt?: number | null;
+    createdAt?: number | null;
+    lastViewedAt?: number | null;
     savedAt?: number | null;
     watchLaterAt?: number | null;
     highlights?: Array<{ createdAt?: number; updatedAt?: number }>;
     screenshots?: Array<{ createdAt?: number }>;
   };
-}): number | null {
+};
+
+function maxCreated(list?: Array<{ createdAt?: number }>): number | null {
+  let max: number | null = null;
+  for (const item of list || []) {
+    const n = toMs(item.createdAt);
+    if (n == null) continue;
+    if (max == null || n > max) max = n;
+  }
+  return max;
+}
+
+/**
+ * User-facing activity — never vault sync / bio / playlist-import `updatedAt`.
+ * Those used to make unwatched videos look “seen just now”.
+ */
+export function rowActivityInfo(row: ActivityRow): ActivityInfo | null {
+  const p = row.payload;
+  const events: ActivityInfo[] = [];
+  const push = (kind: ActivityKind, v?: unknown) => {
+    const n = toMs(v as string | number | Date | null);
+    if (n != null) events.push({ kind, ms: n });
+  };
+
+  push("watched", p?.lastViewedAt);
+  push("marked", maxCreated(p?.highlights));
+  push("captured", maxCreated(p?.screenshots));
+
+  const engagement = events.filter(
+    (e) => e.kind === "watched" || e.kind === "marked" || e.kind === "captured"
+  );
+  if (engagement.length) {
+    return engagement.reduce((a, b) => (a.ms >= b.ms ? a : b));
+  }
+
+  push("saved", p?.savedAt);
+  push("queued", p?.watchLaterAt);
+  const library = events.filter((e) => e.kind === "saved" || e.kind === "queued");
+  if (library.length) {
+    return library.reduce((a, b) => (a.ms >= b.ms ? a : b));
+  }
+
+  push("added", p?.createdAt);
+  push("added", row.created_at);
+  const added = events.filter((e) => e.kind === "added");
+  if (added.length) {
+    return added.reduce((a, b) => (a.ms >= b.ms ? a : b));
+  }
+  return null;
+}
+
+/** Latest real user activity (watch / mark / shot / save / first add). */
+export function rowActivityMs(row: ActivityRow): number | null {
+  return rowActivityInfo(row)?.ms ?? null;
+}
+
+/** When the user actually watched or captured — not playlist import or vault sync. */
+export function rowSeenMs(row: ActivityRow): number | null {
+  const p = row.payload;
   const candidates: number[] = [];
   const push = (v: unknown) => {
     const n = toMs(v as string | number | Date | null);
     if (n != null) candidates.push(n);
   };
-  push(row.updated_at);
-  const p = row.payload;
-  if (p) {
-    push(p.updatedAt);
-    push(p.savedAt);
-    push(p.watchLaterAt);
-    for (const h of p.highlights || []) {
-      push(h.updatedAt);
-      push(h.createdAt);
-    }
-    for (const s of p.screenshots || []) {
-      push(s.createdAt);
-    }
-  }
+  push(p?.lastViewedAt);
+  for (const h of p?.highlights || []) push(h.createdAt);
+  for (const s of p?.screenshots || []) push(s.createdAt);
   if (!candidates.length) return null;
   return Math.max(...candidates);
+}
+
+export function activityLabel(row: ActivityRow): string {
+  const info = rowActivityInfo(row);
+  if (!info) return "—";
+  const t = relTime(info.ms);
+  switch (info.kind) {
+    case "watched":
+      return `Watched ${t}`;
+    case "marked":
+      return `Marked ${t}`;
+    case "captured":
+      return `Captured ${t}`;
+    case "saved":
+      return `Saved ${t}`;
+    case "queued":
+      return `Queued ${t}`;
+    case "added":
+      return `Added ${t}`;
+  }
 }
 
 export function initials(name?: string, email?: string): string {

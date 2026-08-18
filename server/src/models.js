@@ -82,6 +82,8 @@ export const VaultVideo = mongoose.model(
       watchLaterAt: { type: Date, default: null },
       /** Named playlists this video belongs to */
       playlists: { type: [String], default: [] },
+      /** Last time the user actually watched this video */
+      lastViewedAt: { type: Date, default: null },
       updatedAt: { type: Date, default: Date.now },
     },
     { timestamps: true }

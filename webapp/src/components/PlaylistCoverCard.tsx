@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { ListVideo, Play } from "lucide-react";
-import { relTime, rowActivityMs, ytThumb } from "../lib/format";
+import { activityLabel, ytThumb } from "../lib/format";
 import type { PlaylistGroup } from "../types";
 
 function looksLikeVideoId(s: string): boolean {
@@ -30,8 +30,7 @@ export function PlaylistCoverCard({ group }: { group: PlaylistGroup }) {
     shots += (r.payload?.screenshots || []).length;
   }
 
-  const activity =
-    cover != null ? rowActivityMs(cover) : null;
+  const activity = cover != null ? activityLabel(cover) : "—";
   const leadTitle = cover ? titleOf(cover) : "Empty playlist";
 
   return (
@@ -71,7 +70,7 @@ export function PlaylistCoverCard({ group }: { group: PlaylistGroup }) {
           {count} video{count === 1 ? "" : "s"}
           {marks > 0 ? ` · ${marks} marks` : ""}
           {shots > 0 ? ` · ${shots} shots` : ""}
-          {activity != null ? ` · ${relTime(activity)}` : ""}
+          {activity !== "—" ? ` · ${activity}` : ""}
         </p>
         {cover ? (
           <p className="pl-cover-lead" title={leadTitle}>

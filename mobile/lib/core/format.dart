@@ -1,3 +1,5 @@
+import '../models/models.dart';
+
 String formatTime(num sec) {
   final s = sec.floor().clamp(0, 999999);
   final h = s ~/ 3600;
@@ -7,6 +9,40 @@ String formatTime(num sec) {
     return '$h:${m.toString().padLeft(2, '0')}:${r.toString().padLeft(2, '0')}';
   }
   return '$m:${r.toString().padLeft(2, '0')}';
+}
+
+String activityLabel(VaultRow row) {
+  final p = row.payload;
+  final viewed = p.lastViewedAt ?? 0;
+  var mark = 0;
+  for (final h in p.highlights) {
+    final t = h.createdAt ?? 0;
+    if (t > mark) mark = t;
+  }
+  var shot = 0;
+  for (final s in p.screenshots) {
+    final t = s.createdAt ?? 0;
+    if (t > shot) shot = t;
+  }
+  final engagement = [viewed, mark, shot].reduce((a, b) => a > b ? a : b);
+  if (engagement > 0) {
+    if (engagement == viewed && viewed >= mark && viewed >= shot) {
+      return 'Watched ${relTime(viewed)}';
+    }
+    if (mark >= shot) return 'Marked ${relTime(mark)}';
+    return 'Captured ${relTime(shot)}';
+  }
+  final saved = p.savedAt ?? 0;
+  final queued = p.watchLaterAt ?? 0;
+  if (saved > 0 || queued > 0) {
+    if (saved >= queued) return 'Saved ${relTime(saved)}';
+    return 'Queued ${relTime(queued)}';
+  }
+  final added = p.createdAt ??
+      DateTime.tryParse(row.createdAt ?? '')?.millisecondsSinceEpoch ??
+      0;
+  if (added > 0) return 'Added ${relTime(added)}';
+  return '—';
 }
 
 String relTime(int? ms) {

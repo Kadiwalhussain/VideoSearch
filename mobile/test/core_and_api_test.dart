@@ -116,7 +116,7 @@ void main() {
             payload: VaultPayload(
               videoId: id,
               videoTitle: id,
-              updatedAt: when.millisecondsSinceEpoch,
+              lastViewedAt: when.millisecondsSinceEpoch,
             ),
           );
       final list = sortByActivityNewest([
@@ -239,6 +239,23 @@ void main() {
       expect(r.videoId, 'v2');
       expect(r.payload.highlights.length, 1);
       expect(r.payload.screenshots.length, 1);
+    });
+
+    test('activityMs ignores vault updatedAt so sync is not a watch', () {
+      final syncedNow = DateTime.now().millisecondsSinceEpoch;
+      final addedLastWeek =
+          DateTime.now().subtract(const Duration(days: 7)).millisecondsSinceEpoch;
+      final r = VaultRow(
+        videoId: 'old',
+        updatedAt: DateTime.now().toIso8601String(),
+        payload: VaultPayload(
+          videoId: 'old',
+          updatedAt: syncedNow,
+          createdAt: addedLastWeek,
+        ),
+      );
+      expect(r.activityMs, addedLastWeek);
+      expect(activityLabel(r).startsWith('Added'), isTrue);
     });
 
     test('VaultRow.fromJson maps snake_case', () {

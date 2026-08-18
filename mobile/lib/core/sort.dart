@@ -32,22 +32,26 @@ int? episodeIndex(String title) {
 /// Earliest known timestamp for a vault row (when it first showed up).
 int firstSeenMs(VaultRow r) {
   final candidates = <int>[];
-  final u = DateTime.tryParse(r.updatedAt)?.millisecondsSinceEpoch;
-  if (u != null && u > 0) candidates.add(u);
-  if (r.payload.updatedAt != null && r.payload.updatedAt! > 0) {
-    candidates.add(r.payload.updatedAt!);
+  void add(int? n) {
+    if (n != null && n > 0) candidates.add(n);
   }
-  if (r.payload.savedAt != null && r.payload.savedAt! > 0) {
-    candidates.add(r.payload.savedAt!);
-  }
-  if (r.payload.watchLaterAt != null && r.payload.watchLaterAt! > 0) {
-    candidates.add(r.payload.watchLaterAt!);
-  }
+
+  add(r.payload.createdAt);
+  final added = DateTime.tryParse(r.createdAt ?? '')?.millisecondsSinceEpoch;
+  add(added);
+  add(r.payload.lastViewedAt);
+  add(r.payload.savedAt);
+  add(r.payload.watchLaterAt);
   for (final h in r.payload.highlights) {
-    if (h.createdAt != null && h.createdAt! > 0) candidates.add(h.createdAt!);
+    add(h.createdAt);
   }
   for (final s in r.payload.screenshots) {
-    if (s.createdAt != null && s.createdAt! > 0) candidates.add(s.createdAt!);
+    add(s.createdAt);
+  }
+  // Last resort for older rows that only stored vault update time
+  if (candidates.isEmpty) {
+    add(r.payload.updatedAt);
+    add(DateTime.tryParse(r.updatedAt)?.millisecondsSinceEpoch);
   }
   if (candidates.isEmpty) return 0;
   return candidates.reduce((a, b) => a < b ? a : b);

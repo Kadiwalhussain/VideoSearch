@@ -64,8 +64,12 @@ export interface VaultPayload {
   watchLater?: boolean;
   watchLaterAt?: number | null;
   playlists?: string[];
-  /** Server activity time (ms epoch) */
+  /** Server activity time (ms epoch) — vault mutation, not a watch */
   updatedAt?: number | null;
+  /** Last time the user actually watched this video (ms epoch) */
+  lastViewedAt?: number | null;
+  /** When the video first entered the vault (ms epoch) */
+  createdAt?: number | null;
 }
 
 export interface ChannelStat {
@@ -84,6 +88,8 @@ export interface ChannelStat {
 export interface VaultRow {
   video_id: string;
   updated_at: string;
+  /** When the video first entered the vault */
+  created_at?: string;
   payload: VaultPayload;
 }
 

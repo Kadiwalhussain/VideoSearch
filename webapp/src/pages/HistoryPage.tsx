@@ -13,10 +13,8 @@ export function HistoryPage() {
   const list = useMemo(
     () =>
       [...rows].sort((a, b) => {
-        const ta =
-          rowActivityMs(a) ?? (new Date(a.updated_at).getTime() || 0);
-        const tb =
-          rowActivityMs(b) ?? (new Date(b.updated_at).getTime() || 0);
+        const ta = rowActivityMs(a) || 0;
+        const tb = rowActivityMs(b) || 0;
         return tb - ta;
       }),
     [rows]
@@ -29,8 +27,8 @@ export function HistoryPage() {
           <History size={22} /> History
         </h1>
         <p className="view-sub">
-          All vault videos by latest activity · {list.length} total · use trash
-          to delete a video and its marks
+          All vault videos by last watch, mark, or add · {list.length} total ·
+          vault sync does not move a video to “now”
         </p>
       </header>
       {loading && !list.length ? (

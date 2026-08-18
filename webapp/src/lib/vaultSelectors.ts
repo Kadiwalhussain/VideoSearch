@@ -6,6 +6,7 @@ import type {
   VaultRow,
   VaultStats,
 } from "../types";
+import { rowActivityMs } from "./format";
 
 export function vaultStats(rows: VaultRow[]): VaultStats {
   let marks = 0;
@@ -52,11 +53,9 @@ export function savedRows(rows: VaultRow[]): VaultRow[] {
 /** Sort playlist videos so the cover / “first” item is most recently active. */
 function sortPlaylistRows(list: VaultRow[]): VaultRow[] {
   return [...list].sort((a, b) => {
-    const ta = new Date(a.updated_at || 0).getTime() || 0;
-    const tb = new Date(b.updated_at || 0).getTime() || 0;
-    const pa = a.payload?.updatedAt || 0;
-    const pb = b.payload?.updatedAt || 0;
-    return Math.max(tb, pb) - Math.max(ta, pa);
+    const ta = rowActivityMs(a) || 0;
+    const tb = rowActivityMs(b) || 0;
+    return tb - ta;
   });
 }
 
@@ -88,11 +87,7 @@ export function playlistGroups(rows: VaultRow[]): PlaylistGroup[] {
 function gTopMs(list: VaultRow[]): number {
   let max = 0;
   for (const r of list) {
-    const t =
-      Math.max(
-        new Date(r.updated_at || 0).getTime() || 0,
-        r.payload?.updatedAt || 0
-      ) || 0;
+    const t = rowActivityMs(r) || 0;
     if (t > max) max = t;
   }
   return max;
@@ -217,10 +212,7 @@ export function searchVault(rows: VaultRow[], q: string): SearchHit[] {
 
 export function recentRows(rows: VaultRow[], n = 8): VaultRow[] {
   return [...rows]
-    .sort(
-      (a, b) =>
-        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-    )
+    .sort((a, b) => (rowActivityMs(b) || 0) - (rowActivityMs(a) || 0))
     .slice(0, n);
 }
 

@@ -18,6 +18,7 @@ export class LiveTranscript {
   private filter = "";
   private onSeek: (t: number) => void;
   private onAskExternal: ((segments: RawCaptionSegment[]) => void) | null = null;
+  private onAskProviderChange: ((id: string) => void) | null = null;
   private raf = 0;
   private bound = false;
   private videoEl: HTMLVideoElement | null = null;
@@ -38,20 +39,31 @@ export class LiveTranscript {
               <span class="vsa-tx-sub">Tap a line to jump · auto-scroll with video</span>
             </div>
           </div>
-          <div class="vsa-tx-actions">
-            <button type="button" class="vsa-tx-copy" data-tx-copy disabled title="Copy full transcript">
-              ${iconHtml("copy", 13)}
-              <span data-tx-copy-label>Copy</span>
-            </button>
-            <button type="button" class="vsa-tx-ask" data-tx-ask disabled title="Open ChatGPT with this transcript">
+          <label class="vsa-tx-follow">
+            <input type="checkbox" class="vsa-follow-check" checked />
+            <span>Follow</span>
+          </label>
+        </div>
+        <div class="vsa-tx-bar">
+          <button type="button" class="vsa-tx-copy" data-tx-copy disabled title="Copy the full transcript">
+            ${iconHtml("copy", 14)}
+            <span data-tx-copy-label>Copy transcript</span>
+          </button>
+          <div class="vsa-tx-askrow">
+            <button type="button" class="vsa-tx-ask" data-tx-ask disabled title="Copy transcript and open ChatGPT">
+              ${iconHtml("sparkles", 14)}
               <span data-tx-ask-label>Ask ChatGPT</span>
             </button>
-            <label class="vsa-tx-follow">
-              <input type="checkbox" class="vsa-follow-check" checked />
-              <span>Follow</span>
-            </label>
+            <select class="vsa-tx-model" data-tx-model title="Choose AI model" aria-label="Ask in">
+              <option value="chatgpt">ChatGPT</option>
+              <option value="claude">Claude</option>
+              <option value="gemini">Gemini</option>
+              <option value="grok">Grok</option>
+              <option value="perplexity">Perplexity</option>
+            </select>
           </div>
         </div>
+        <p class="vsa-tx-askhint" data-tx-hint>Copies every caption, opens the model, and pastes it so you can ask anything.</p>
         <div class="vsa-tx-progress" aria-hidden="true">
           <i class="vsa-tx-progress-fill"></i>
         </div>
@@ -101,7 +113,18 @@ export class LiveTranscript {
       e.preventDefault();
       e.stopPropagation();
       if (!this.segments.length) return;
+      this.setHint("Opening… transcript copied");
       this.onAskExternal?.(this.segments);
+    });
+
+    const modelSel = this.root.querySelector(
+      "[data-tx-model]"
+    ) as HTMLSelectElement | null;
+    modelSel?.addEventListener("change", () => {
+      const id = modelSel.value;
+      const name = modelSel.selectedOptions[0]?.textContent || "ChatGPT";
+      this.setAskLabel(name);
+      this.onAskProviderChange?.(id);
     });
 
     // Manual scroll → pause auto-follow until they re-enable or click a line
@@ -190,6 +213,25 @@ export class LiveTranscript {
     this.onAskExternal = fn;
   }
 
+  setAskProviderHandler(fn: (id: string) => void): void {
+    this.onAskProviderChange = fn;
+  }
+
+  setAskProvider(id: string): void {
+    const sel = this.root.querySelector(
+      "[data-tx-model]"
+    ) as HTMLSelectElement | null;
+    if (!sel) return;
+    if ([...sel.options].some((o) => o.value === id)) sel.value = id;
+    const name = sel.selectedOptions[0]?.textContent || "ChatGPT";
+    this.setAskLabel(name);
+  }
+
+  setHint(text: string): void {
+    const el = this.root.querySelector("[data-tx-hint]") as HTMLElement | null;
+    if (el) el.textContent = text;
+  }
+
   getSegments(): RawCaptionSegment[] {
     return this.segments;
   }
@@ -235,14 +277,16 @@ export class LiveTranscript {
       }
       if (label) label.textContent = "Copied";
       btn?.classList.add("is-ok");
+      this.setHint("Full transcript copied. Paste anywhere with ⌘V.");
       window.setTimeout(() => {
-        if (label) label.textContent = "Copy";
+        if (label) label.textContent = "Copy transcript";
         btn?.classList.remove("is-ok");
       }, 1600);
     } catch {
       if (label) label.textContent = "Failed";
+      this.setHint("Could not copy — select the lines and copy manually.");
       window.setTimeout(() => {
-        if (label) label.textContent = "Copy";
+        if (label) label.textContent = "Copy transcript";
       }, 1600);
     }
   }

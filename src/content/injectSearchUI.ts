@@ -605,6 +605,7 @@ async function flushSyncToVault(
     }
 
     panel.setVaultSyncMessage("Saving…");
+    const { pageMatchesVideo } = await import("../youtube/collectSources");
     const result = await syncVideoToCloud({
       videoId,
       videoTitle: title,
@@ -613,6 +614,7 @@ async function flushSyncToVault(
       highlights,
       screenshots,
       sourceLinks,
+      watched: pageMatchesVideo(videoId),
     });
     const warn = Boolean(result.offlineQueued) || !result.ok;
     panel.setVaultSyncMessage(
@@ -857,6 +859,7 @@ async function syncVaultCloud(
       sessionSegments.get(videoId)
     );
     const channel = channelFromPage();
+    const { pageMatchesVideo } = await import("../youtube/collectSources");
     const result = await syncVideoToCloud({
       videoId,
       videoTitle: videoTitleFromPage(videoId),
@@ -865,6 +868,7 @@ async function syncVaultCloud(
       highlights,
       screenshots,
       sourceLinks: sourceLinks.length ? sourceLinks : undefined,
+      watched: pageMatchesVideo(videoId),
     });
     panel.setVaultSyncMessage(result.message, !result.ok);
     // Refresh shot badges after sync (cloud URLs may update)
@@ -1047,6 +1051,7 @@ async function saveDescriptionLinksToVault(
       videoId,
       sessionSegments.get(videoId)
     );
+    const { pageMatchesVideo } = await import("../youtube/collectSources");
     const result = await syncVideoToCloud({
       videoId,
       videoTitle: videoTitleFromPage(videoId),
@@ -1057,6 +1062,7 @@ async function saveDescriptionLinksToVault(
       sourceLinks: sourceLinks.length ? sourceLinks : bio.links,
       bioText: bio.text,
       bioMarkdown: bio.markdown,
+      watched: pageMatchesVideo(videoId),
     });
 
     if (result.ok) {

@@ -11,8 +11,7 @@ import { useVault } from "../store/VaultContext";
 import { EmptyState } from "../components/EmptyState";
 import { PlaylistTrackRow } from "../components/PlaylistTrackRow";
 import {
-  relTime,
-  rowActivityMs,
+  activityLabel,
   ytThumb,
   ytWatchUrl,
 } from "../lib/format";
@@ -105,8 +104,8 @@ export function PlaylistDetailPage() {
                 {rows.length} video{rows.length === 1 ? "" : "s"}
                 {marks > 0 ? ` · ${marks} marks` : ""}
                 {shots > 0 ? ` · ${shots} shots` : ""}
-                {rowActivityMs(lead) != null
-                  ? ` · updated ${relTime(rowActivityMs(lead))}`
+                {activityLabel(lead) !== "—"
+                  ? ` · ${activityLabel(lead)}`
                   : ""}
               </p>
 

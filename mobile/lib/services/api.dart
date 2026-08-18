@@ -334,6 +334,22 @@ class VaultApi {
     return LibraryState();
   }
 
+  Future<void> recordView(Session s, String videoId) async {
+    if (videoId.isEmpty) return;
+    try {
+      await _json(
+        'POST',
+        s.url,
+        '/api/vault/view',
+        token: s.token,
+        authRequired: true,
+        body: {'videoId': videoId},
+      );
+    } catch (_) {
+      // View tracking is best-effort
+    }
+  }
+
   Future<void> deleteVideo(Session s, String videoId) async {
     await _json(
       'DELETE',

@@ -315,7 +315,7 @@ export function AnalyticsPage() {
           </h1>
           <p className="view-sub">
             Live intelligence from your vault — channels you engage with, marks,
-            shots, and notes from the extension.
+            shots, and real watches. Vault sync is not counted as a view.
           </p>
         </div>
         <span className="ana-pill">
@@ -455,8 +455,8 @@ export function AnalyticsPage() {
         </div>
         <p className="ana-insight" style={{ marginTop: 0 }}>
           Built from your vault videos’ real YouTube channel names. Focus time
-          is estimated from mark/shot positions on each video (when you
-          actually annotated — original timestamps).
+          is estimated from mark/shot positions (when you actually annotated).
+          Playlist imports and bio syncs are not watches.
         </p>
 
         {topChannels.length ? (

@@ -181,7 +181,7 @@ class VideoTile extends StatelessWidget {
                         ),
                       const SizedBox(height: 3),
                       Text(
-                        relTime(row.activityMs),
+                        activityLabel(row),
                         style: TextStyle(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w600,
@@ -382,7 +382,7 @@ class VideoListRow extends StatelessWidget {
         '${p.markCount} mark${p.markCount == 1 ? '' : 's'}',
       if (p.shotCount > 0)
         '${p.shotCount} shot${p.shotCount == 1 ? '' : 's'}',
-      timeLabel ?? relTime(row.activityMs),
+      timeLabel ?? activityLabel(row),
     ];
 
     return Padding(

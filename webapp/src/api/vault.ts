@@ -84,6 +84,23 @@ export async function repairTitles(
   };
 }
 
+/** Record that the signed-in user actually watched this video. */
+export async function recordVideoView(
+  session: Session,
+  videoId: string
+): Promise<void> {
+  if (!videoId) return;
+  try {
+    await apiFetch(session.url, "/api/vault/view", {
+      method: "POST",
+      token: session.token,
+      body: JSON.stringify({ videoId }),
+    });
+  } catch {
+    /* view tracking is best-effort */
+  }
+}
+
 /** Remove a whole video (marks + shots + library flags) from the vault. */
 export async function deleteVideo(
   session: Session,

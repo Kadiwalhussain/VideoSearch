@@ -46,7 +46,7 @@ export type AnalyticsModel = {
   watchLaterShare: number;
 };
 
-/** Estimate engaged minutes on a video from mark/shot timeline span. */
+/** Estimate engaged minutes from mark/shot timeline span. Unwatched = 0. */
 function engagedMinutes(row: VaultRow): number {
   const times: number[] = [];
   for (const h of row.payload?.highlights || []) {
@@ -57,11 +57,12 @@ function engagedMinutes(row: VaultRow): number {
   }
   if (times.length >= 2) {
     const span = Math.max(...times) - Math.min(...times);
-    // At least 2 min when you interact twice; cap crazy spans
     return Math.min(180, Math.max(2, Math.round(span / 60) + 1));
   }
   if (times.length === 1) return 4;
-  return 2; // video in vault with no annotations yet
+  // A real watch with no marks/shots still counts a little; vault-only does not
+  if (row.payload?.lastViewedAt) return 2;
+  return 0;
 }
 
 export function buildChannelStats(rows: VaultRow[]): ChannelStat[] {
@@ -112,7 +113,7 @@ export function buildChannelStats(rows: VaultRow[]): ChannelStat[] {
     .map((g) => ({
       ...g,
       // Score: minutes matter most, then marks/shots (where you actively engage)
-      score: g.minutes * 3 + g.marks * 2 + g.shots * 3 + g.notes + g.videos,
+      score: g.minutes * 3 + g.marks * 2 + g.shots * 3 + g.notes,
     }))
     .sort((a, b) => b.score - a.score || b.minutes - a.minutes);
 }
@@ -143,49 +144,40 @@ export function buildAnalytics(
   const videos = [0, 0, 0, 0, 0, 0, 0];
   const videosSeenDay = new Set<string>();
 
-  // Prefer original mark/shot createdAt (true capture times), not last vault update
+  // Only real capture / watch times — never vault updated_at (sync, bio, playlist)
   for (const r of rows) {
     const hl = r.payload?.highlights || [];
     const ss = r.payload?.screenshots || [];
     let videoAttributed = false;
 
+    const touchVideo = (i: number) => {
+      if (videoAttributed) return;
+      const key = `${r.video_id}:${i}`;
+      if (videosSeenDay.has(key)) return;
+      videosSeenDay.add(key);
+      videos[i] += 1;
+      videoAttributed = true;
+    };
+
     for (const h of hl) {
-      const i =
-        eventDayIndex(h.createdAt) ??
-        eventDayIndex(h.updatedAt) ??
-        eventDayIndex(r.updated_at);
+      const i = eventDayIndex(h.createdAt);
       if (i == null) continue;
       marks[i] += 1;
       activity[i] += 1;
-      if (!videoAttributed) {
-        const key = `${r.video_id}:${i}`;
-        if (!videosSeenDay.has(key)) {
-          videosSeenDay.add(key);
-          videos[i] += 1;
-          videoAttributed = true;
-        }
-      }
+      touchVideo(i);
     }
 
     for (const s of ss) {
-      const i =
-        eventDayIndex(s.createdAt) ?? eventDayIndex(r.updated_at);
+      const i = eventDayIndex(s.createdAt);
       if (i == null) continue;
       shots[i] += 1;
       activity[i] += 1;
-      if (!videoAttributed) {
-        const key = `${r.video_id}:${i}`;
-        if (!videosSeenDay.has(key)) {
-          videosSeenDay.add(key);
-          videos[i] += 1;
-          videoAttributed = true;
-        }
-      }
+      touchVideo(i);
     }
 
-    // Video only (no marks/shots) — count on vault update day
-    if (!hl.length && !ss.length) {
-      const i = eventDayIndex(r.updated_at);
+    // Video-only: count a watch only when the user actually viewed it
+    if (!videoAttributed) {
+      const i = eventDayIndex(r.payload?.lastViewedAt);
       if (i != null) {
         videos[i] += 1;
         activity[i] += 1;
@@ -330,10 +322,17 @@ function buildLast14(rows: VaultRow[]): { labels: string[]; values: number[] } {
 
   for (const r of rows) {
     for (const h of r.payload?.highlights || []) {
-      bump(h.createdAt || h.updatedAt, 1);
+      bump(h.createdAt, 1);
     }
     for (const s of r.payload?.screenshots || []) {
       bump(s.createdAt, 1);
+    }
+    // Real watch without a mark/shot still counts as a day of activity
+    if (
+      !(r.payload?.highlights || []).some((h) => h.createdAt) &&
+      !(r.payload?.screenshots || []).some((s) => s.createdAt)
+    ) {
+      bump(r.payload?.lastViewedAt, 1);
     }
   }
 

@@ -28,3 +28,6 @@ mobile/ios/.symlinks/
 mobile/ios/Flutter/Flutter.podspec
 mobile/ios/Flutter/ephemeral/
 **/xcuserdata/
+
+# Local interview notes — do not publish
+INTERVIEW_STORY.md

@@ -19,8 +19,8 @@ import { useSession } from "../store/SessionContext";
 import { useDialog } from "../store/DialogContext";
 import {
   formatTime,
+  activityLabel,
   relTime,
-  rowActivityMs,
   ytThumb,
   ytWatchUrl,
 } from "../lib/format";
@@ -100,6 +100,7 @@ export function VideoDetailPage() {
     deleteShot,
     saveBio,
     loading,
+    recordView,
   } = useVault();
   const { session } = useSession();
   const { confirm, toast } = useDialog();
@@ -286,7 +287,7 @@ export function VideoDetailPage() {
             ) : null}
             <h1>{p.videoTitle || videoId}</h1>
             <p className="view-sub">
-              Updated {relTime(rowActivityMs(row) ?? row.updated_at)} ·{" "}
+              {activityLabel(row)} ·{" "}
               {marks.length} marks · {shots.length} shots
               {sources.length ? ` · ${sources.length} sources` : ""}
               {hasBio ? " · bio" : ""}
@@ -297,6 +298,7 @@ export function VideoDetailPage() {
                 href={ytWatchUrl(videoId, p.videoUrl)}
                 target="_blank"
                 rel="noreferrer"
+                onClick={() => recordView(videoId)}
               >
                 <ExternalLink size={14} /> Watch
               </a>
