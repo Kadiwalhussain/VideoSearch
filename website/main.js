@@ -159,21 +159,33 @@ function initLiveDemo() {
   const sourcesEl = root.querySelector('[data-demo-list="sources"]');
   const nTopics = root.querySelector('[data-demo-n="topics"]');
   const bioEl = root.querySelector("[data-demo-bio]");
-  const phoneClock = root.querySelector("[data-demo-phone-clock]");
-  const phoneFeed = root.querySelector("[data-demo-phone-feed]");
   const nMarks = root.querySelector('[data-demo-n="marks"]');
   const nShots = root.querySelector('[data-demo-n="shots"]');
   const nSources = root.querySelector('[data-demo-n="sources"]');
+  const appRoot = document.querySelector("[data-app-preview]");
+  const appMarks = appRoot?.querySelector("[data-app-marks]");
+  const appShots = appRoot?.querySelector("[data-app-shots]");
+  const appSources = appRoot?.querySelector("[data-app-sources]");
+  const appCounts = appRoot?.querySelector("[data-app-counts]");
 
   const durationGuess = 1260;
   let duration = durationGuess;
   let player = null;
+  let phonePlayer = null;
 
   function seek(t) {
     if (player && typeof player.seekTo === "function") {
       player.seekTo(t, true);
       if (typeof player.playVideo === "function") player.playVideo();
     }
+  }
+
+  function seekPhone(t) {
+    if (phonePlayer && typeof phonePlayer.seekTo === "function") {
+      phonePlayer.seekTo(t, true);
+      if (typeof phonePlayer.playVideo === "function") phonePlayer.playVideo();
+    }
+    syncPhone(t);
   }
 
   events.forEach((e, i) => {
@@ -215,7 +227,7 @@ function initLiveDemo() {
     e._i = i;
   });
 
-  fillPhone();
+  fillApp();
   sync(0);
   if (window.lucide) window.lucide.createIcons({ attrs: { "stroke-width": 2.2 } });
 
@@ -227,28 +239,76 @@ function initLiveDemo() {
     return c;
   }
 
-  function fillPhone() {
-    if (!phoneFeed) return;
-    phoneFeed.innerHTML = "";
-    events
-      .filter((e) => e.kind === "mark" || e.kind === "topic")
-      .sort((a, b) => a.t - b.t)
-      .forEach((row) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "live-phone-row";
-        b.dataset.t = String(row.t);
-        b.innerHTML = `<em>${fmt(row.t)}</em><span>${row.note}</span>`;
-        b.addEventListener("click", () => seek(row.t));
-        phoneFeed.appendChild(b);
-      });
+  function fillApp() {
+    if (appMarks) {
+      appMarks.innerHTML = "";
+      events
+        .filter((e) => e.kind === "mark")
+        .sort((a, b) => a.t - b.t)
+        .forEach((row) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "app-mark";
+          b.dataset.t = String(row.t);
+          b.innerHTML = `<em>${fmt(row.t)}</em><span>${row.note}</span>`;
+          b.addEventListener("click", () => seekPhone(row.t));
+          appMarks.appendChild(b);
+        });
+    }
+    if (appShots) {
+      appShots.innerHTML = "";
+      events
+        .filter((e) => e.kind === "shot")
+        .sort((a, b) => a.t - b.t)
+        .forEach((row) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "app-shot";
+          b.dataset.t = String(row.t);
+          b.innerHTML = `<img src="${row.img}" alt="" /><em>${fmt(row.t)}</em>`;
+          b.addEventListener("click", () => seekPhone(row.t));
+          appShots.appendChild(b);
+        });
+    }
+    if (appSources) {
+      appSources.innerHTML = "";
+      events
+        .filter((e) => e.kind === "source")
+        .forEach((row) => {
+          const a = document.createElement("a");
+          a.className = "app-source";
+          a.href = row.url;
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.innerHTML = `<em>${row.kindLabel}</em><span>${row.label}<small>${row.from}</small></span>`;
+          appSources.appendChild(a);
+        });
+    }
+    const c = counts();
+    if (appCounts) {
+      appCounts.textContent = `${c.mark} marks · ${c.shot} shots · ${c.source} sources`;
+    }
+  }
+
+  function setAppTab(id) {
+    appRoot?.querySelectorAll("[data-app-tab]").forEach((b) => {
+      b.classList.toggle("is-on", b.getAttribute("data-app-tab") === id);
+    });
+    appRoot?.querySelectorAll("[data-app-pane]").forEach((p) => {
+      p.classList.toggle("is-on", p.getAttribute("data-app-pane") === id);
+    });
+  }
+
+  function syncPhone(t) {
+    document.querySelectorAll("[data-app-clock]").forEach((el) => {
+      el.textContent = fmt(t);
+    });
+    appRoot?.querySelectorAll("[data-t]").forEach((btn) => {
+      btn.classList.toggle("is-now", Math.abs(t - Number(btn.dataset.t)) < 12);
+    });
   }
 
   function sync(t) {
-    if (phoneClock) phoneClock.textContent = fmt(t);
-    phoneFeed?.querySelectorAll("[data-t]").forEach((btn) => {
-      btn.classList.toggle("is-now", Math.abs(t - Number(btn.dataset.t)) < 12);
-    });
     events.forEach((e) => {
       e.el?.classList.add("is-on");
       e.el?.classList.toggle("is-now", Math.abs(t - e.t) < 12);
@@ -276,9 +336,62 @@ function initLiveDemo() {
     });
   });
 
-  root.querySelector("[data-demo-phone-play]")?.addEventListener("click", () => {
-    if (player && typeof player.playVideo === "function") player.playVideo();
+  appRoot?.querySelectorAll("[data-app-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => setAppTab(btn.getAttribute("data-app-tab")));
   });
+
+  function startPhonePlayer() {
+    if (phonePlayer) return;
+    if (!window.YT || !window.YT.Player || !document.getElementById("yt-app")) return;
+    const box = appRoot?.querySelector(".app-player-frame");
+    const w = Math.max(200, Math.round(box?.clientWidth || 300));
+    const h = Math.max(112, Math.round(box?.clientHeight || w * 9 / 16));
+    phonePlayer = new window.YT.Player("yt-app", {
+      videoId: VIDEO_ID,
+      width: w,
+      height: h,
+      host: "https://www.youtube-nocookie.com",
+      playerVars: {
+        autoplay: 1,
+        mute: 1,
+        controls: 1,
+        rel: 0,
+        modestbranding: 1,
+        playsinline: 1,
+        loop: 1,
+        playlist: VIDEO_ID,
+        start: 128,
+        origin: window.location.origin,
+      },
+      events: {
+        onReady: (ev) => {
+          ev.target.mute();
+          ev.target.playVideo();
+          if (typeof ev.target.setSize === "function") ev.target.setSize(w, h);
+          window.setInterval(() => {
+            try {
+              syncPhone(ev.target.getCurrentTime() || 0);
+            } catch (_) {}
+          }, 400);
+        },
+        onStateChange: (ev) => {
+          if (ev.data === window.YT.PlayerState.ENDED) {
+            ev.target.seekTo(128, true);
+            ev.target.playVideo();
+          }
+        },
+      },
+    });
+    if (box && typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => {
+        if (!phonePlayer || typeof phonePlayer.setSize !== "function") return;
+        const nw = Math.max(200, Math.round(box.clientWidth));
+        const nh = Math.max(112, Math.round(box.clientHeight || nw * 9 / 16));
+        phonePlayer.setSize(nw, nh);
+      });
+      ro.observe(box);
+    }
+  }
 
   let fakeT = 40;
   let fakeTimer = 0;
@@ -288,6 +401,7 @@ function initLiveDemo() {
       fakeT += 1;
       if (fakeT > 400) fakeT = 40;
       sync(fakeT);
+      syncPhone(fakeT + 80);
     }, 1000);
   }
 
@@ -340,6 +454,7 @@ function initLiveDemo() {
           fitPlayer();
           ev.target.mute();
           ev.target.playVideo();
+          startPhonePlayer();
           window.setInterval(() => {
             try {
               sync(ev.target.getCurrentTime() || 0);

@@ -59,6 +59,7 @@ export interface SyncResult {
   ok: boolean;
   message: string;
   uploadedScreenshots?: number;
+  sourceLinkCount?: number;
   /** True when data is safe on-device and queued for later cloud upload */
   offlineQueued?: boolean;
   pendingCount?: number;
@@ -74,8 +75,24 @@ function authHeaders(token: string): HeadersInit {
 export async function syncVideoToCloud(opts: {
   videoId: string;
   videoTitle?: string;
+  channelTitle?: string;
+  channelUrl?: string;
   highlights: VideoHighlight[];
   screenshots: VideoScreenshot[];
+  /** Description / bio source links (Drive, PPT, docs…) */
+  sourceLinks?: Array<{
+    id: string;
+    url: string;
+    label?: string;
+    kind?: string;
+    source?: string;
+    createdAt?: number;
+    startTime?: number;
+  }>;
+  /** Full YouTube description/bio (plain text) */
+  bioText?: string;
+  /** Full bio with hyperlinks as markdown [label](url) */
+  bioMarkdown?: string;
   /** When true, do not re-enqueue on failure (used by offline queue flusher) */
   skipOfflineEnqueue?: boolean;
 }): Promise<SyncResult> {
@@ -109,11 +126,27 @@ export async function syncVideoToCloud(opts: {
         body: JSON.stringify({
           videoId: opts.videoId,
           videoTitle: opts.videoTitle,
+          channelTitle: opts.channelTitle,
+          channelUrl: opts.channelUrl,
           videoUrl: `https://www.youtube.com/watch?v=${opts.videoId}`,
           highlights: opts.highlights,
+          sourceLinks: opts.sourceLinks || [],
+          ...(typeof opts.bioText === "string"
+            ? { bioText: opts.bioText }
+            : {}),
+          ...(typeof opts.bioMarkdown === "string"
+            ? { bioMarkdown: opts.bioMarkdown }
+            : {}),
           // Skip base64 for shots already uploaded (huge payload = hang)
           screenshots: opts.screenshots.map((s) => {
-            const alreadySynced = Boolean(s.cloudUrl || s.syncedAt);
+            const cloud = s.cloudUrl || "";
+            const storedInObjectStore =
+              cloud.length > 0 &&
+              !cloud.startsWith("account:") &&
+              !cloud.startsWith("blob:") &&
+              !cloud.includes("/api/vault/shot/");
+            // Re-upload JPEG until it lives in R2 / a real media URL.
+            // /api/vault/shot is only a proxy — if Mongo lost dataUrl, resend.
             return {
               id: s.id,
               videoTime: s.videoTime,
@@ -121,8 +154,8 @@ export async function syncVideoToCloud(opts: {
               width: s.width,
               height: s.height,
               createdAt: s.createdAt,
-              dataUrl: alreadySynced ? undefined : s.dataUrl,
-              imageUrl: s.cloudUrl || undefined,
+              dataUrl: storedInObjectStore ? undefined : s.dataUrl,
+              imageUrl: storedInObjectStore ? s.cloudUrl : undefined,
             };
           }),
         }),
@@ -134,6 +167,7 @@ export async function syncVideoToCloud(opts: {
       ok?: boolean;
       message?: string;
       uploadedToR2?: number;
+      sourceLinkCount?: number;
     };
 
     if (!res.ok || data.ok === false) {
@@ -163,9 +197,12 @@ export async function syncVideoToCloud(opts: {
     }
 
     const now = Date.now();
+    const base = String(settings.projectUrl || "").replace(/\/$/, "");
     for (const s of opts.screenshots) {
       await updateScreenshot(s.id, {
-        cloudUrl: `account://${settings.userId}/${opts.videoId}/${s.id}`,
+        cloudUrl: base
+          ? `${base}/api/vault/shot/${encodeURIComponent(opts.videoId)}/${encodeURIComponent(s.id)}`
+          : `account://${settings.userId}/${opts.videoId}/${s.id}`,
         syncedAt: now,
       });
     }
@@ -182,6 +219,7 @@ export async function syncVideoToCloud(opts: {
       ok: true,
       message: data.message || "Synced to your account",
       uploadedScreenshots: data.uploadedToR2,
+      sourceLinkCount: data.sourceLinkCount,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Cloud sync failed";
@@ -266,6 +304,7 @@ const autoSyncInFlight = new Map<string, Promise<SyncResult>>();
 export type AutoSyncHandlers = {
   onStatus?: (msg: string, isError?: boolean) => void;
   getTitle?: () => string;
+  getChannel?: () => { channelTitle?: string; channelUrl?: string };
 };
 
 /**
@@ -307,6 +346,7 @@ async function runAutoSync(
         ?.textContent?.trim() ||
       document.title ||
       videoId;
+    const channel = opts.getChannel?.() || {};
 
     // Always load local data first (source of truth on device)
     try {
@@ -330,12 +370,38 @@ async function runAutoSync(
         };
       }
 
+      // Include description links when on a YouTube watch page
+      let sourceLinks:
+        | Array<{
+            id: string;
+            url: string;
+            label?: string;
+            kind?: string;
+            source?: string;
+            createdAt?: number;
+          }>
+        | undefined;
+      try {
+        if (/youtube\.com\/watch/i.test(location.href)) {
+          const { collectPageSources } = await import(
+            "../youtube/collectSources"
+          );
+          const links = collectPageSources(videoId);
+          if (links.length) sourceLinks = links;
+        }
+      } catch {
+        /* optional */
+      }
+
       opts.onStatus?.("Uploading…");
       const result = await syncVideoToCloud({
         videoId,
         videoTitle: title,
+        channelTitle: channel.channelTitle,
+        channelUrl: channel.channelUrl,
         highlights,
         screenshots,
+        sourceLinks,
       });
 
       if (result.ok) {
@@ -700,6 +766,113 @@ async function applyLocalLibraryAction(opts: {
   }
 
   return { saved, savedAt, watchLater, watchLaterAt, playlists };
+}
+
+/**
+ * Import a full YouTube playlist into the vault under playlistName.
+ */
+export async function importPlaylistToCloud(opts: {
+  playlistName: string;
+  playlistId?: string;
+  videos: Array<{
+    videoId: string;
+    videoTitle?: string;
+    channelTitle?: string;
+    channelUrl?: string;
+    videoUrl?: string;
+  }>;
+}): Promise<{
+  ok: boolean;
+  message: string;
+  total?: number;
+  imported?: number;
+  updated?: number;
+  playlistName?: string;
+}> {
+  const settings = await loadCloudSettings();
+  const { applyLibraryFlags } = await import("../storage/libraryStore");
+
+  // Always save locally first so Studio can sync later if offline
+  for (const v of opts.videos) {
+    if (!v.videoId) continue;
+    const prev = await (await import("../storage/libraryStore")).getLibraryEntry(
+      v.videoId
+    );
+    const playlists = [...(prev?.playlists || [])];
+    const name = opts.playlistName.trim();
+    if (
+      name &&
+      !playlists.some((p) => p.toLowerCase() === name.toLowerCase())
+    ) {
+      playlists.push(name);
+    }
+    await applyLibraryFlags(v.videoId, {
+      videoTitle: v.videoTitle,
+      videoUrl:
+        v.videoUrl || `https://www.youtube.com/watch?v=${v.videoId}`,
+      saved: true,
+      savedAt: prev?.savedAt || Date.now(),
+      playlists,
+    });
+  }
+
+  if (!settings.enabled || !settings.apiKey) {
+    return {
+      ok: true,
+      message: `Saved “${opts.playlistName}” on device (${opts.videos.length} videos) · sign in to sync cloud`,
+      total: opts.videos.length,
+      playlistName: opts.playlistName,
+    };
+  }
+
+  try {
+    const { res } = await vaultFetch(
+      "/api/vault/playlist/import",
+      {
+        method: "POST",
+        headers: authHeaders(settings.apiKey),
+        body: JSON.stringify({
+          playlistName: opts.playlistName,
+          playlistId: opts.playlistId,
+          videos: opts.videos.slice(0, 250),
+        }),
+      },
+      settings.projectUrl
+    );
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      message?: string;
+      total?: number;
+      imported?: number;
+      updated?: number;
+      playlistName?: string;
+    };
+    if (!res.ok || data.ok === false) {
+      return {
+        ok: true,
+        message:
+          data.message ||
+          `Saved “${opts.playlistName}” on device · cloud will retry`,
+        total: opts.videos.length,
+        playlistName: opts.playlistName,
+      };
+    }
+    return {
+      ok: true,
+      message: data.message || "Playlist saved",
+      total: data.total,
+      imported: data.imported,
+      updated: data.updated,
+      playlistName: data.playlistName || opts.playlistName,
+    };
+  } catch (err) {
+    return {
+      ok: true,
+      message: `Saved “${opts.playlistName}” on device · vault offline`,
+      total: opts.videos.length,
+      playlistName: opts.playlistName,
+    };
+  }
 }
 
 /** All playlist names the user already has (for picker UI) */

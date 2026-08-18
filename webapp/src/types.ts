@@ -32,12 +32,33 @@ export interface Screenshot {
   hasImage?: boolean;
 }
 
+export interface SourceLink {
+  id: string;
+  url: string;
+  label?: string;
+  kind?: string;
+  source?: string;
+  startTime?: number | null;
+  createdAt?: number | null;
+}
+
 export interface VaultPayload {
   videoId: string;
   videoTitle?: string;
   videoUrl?: string;
+  /** YouTube channel name when known */
+  channelTitle?: string;
+  channelUrl?: string;
   highlights?: Highlight[];
   screenshots?: Screenshot[];
+  /** Description bio links (Drive, PPT, docs, sources) */
+  sourceLinks?: SourceLink[];
+  /** Full YouTube description (plain text) */
+  bioText?: string;
+  /** Full bio with hyperlinks as markdown [label](url) */
+  bioMarkdown?: string;
+  /** ms epoch when bio was last synced/edited */
+  bioSyncedAt?: number | null;
   saved?: boolean;
   savedAt?: number | null;
   watchLater?: boolean;
@@ -45,6 +66,19 @@ export interface VaultPayload {
   playlists?: string[];
   /** Server activity time (ms epoch) */
   updatedAt?: number | null;
+}
+
+export interface ChannelStat {
+  name: string;
+  url?: string;
+  videos: number;
+  marks: number;
+  shots: number;
+  notes: number;
+  /** Rough engaged minutes from mark/shot timeline span */
+  minutes: number;
+  score: number;
+  sampleVideoId?: string;
 }
 
 export interface VaultRow {

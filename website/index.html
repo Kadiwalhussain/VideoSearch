@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,650;1,9..144,500;1,9..144,650&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=day6" />
+  <link rel="stylesheet" href="./styles.css?v=day8" />
 </head>
 <body>
   <div class="bg-orbs" aria-hidden="true">
@@ -45,6 +45,7 @@
         <a href="#platforms">Platforms</a>
         <a href="#features">Features</a>
         <a href="#demo">Demo</a>
+        <a href="#app">App</a>
         <a href="#how">How</a>
         <a href="#install">Install</a>
         <a class="btn btn-ghost btn-icon" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener">
@@ -314,10 +315,6 @@
                   <i data-lucide="link-2" class="ico"></i>
                   Sources <em data-demo-n="sources">0</em>
                 </button>
-                <button type="button" data-demo-tab="phone">
-                  <svg class="ico brand" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-android"/></svg>
-                  Apps
-                </button>
               </div>
 
               <div class="live-pane" data-demo-pane="topics">
@@ -337,30 +334,88 @@
                 </div>
                 <div class="live-list" data-demo-list="sources"></div>
               </div>
-              <div class="live-pane live-pane-phone" data-demo-pane="phone">
-                <div class="live-phone">
-                  <div class="live-phone-glass">
-                    <div class="live-phone-status">
-                      <span class="live-phone-clock-mini" data-demo-phone-clock>0:00</span>
-                      <span class="live-phone-carrier">VideoSearch</span>
-                      <span class="live-phone-os" aria-hidden="true">
-                        <svg class="ico brand" width="10" height="10" viewBox="0 0 24 24"><use href="#si-android"/></svg>
-                        <svg class="ico brand" width="10" height="10" viewBox="0 0 24 24"><use href="#si-apple"/></svg>
-                      </span>
-                    </div>
-                    <button type="button" class="live-phone-screen" data-demo-phone-play aria-label="Play in-app">
-                      <img src="https://i.ytimg.com/vi/IHZwWFHWa-w/hqdefault.jpg" alt="" />
-                      <span class="live-phone-play"><i data-lucide="play"></i></span>
-                    </button>
-                    <div class="live-phone-meta">
-                      <strong>Gradient descent</strong>
-                      <small>3Blue1Brown</small>
-                    </div>
-                    <div class="live-phone-feed" data-demo-phone-feed></div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="app">
+      <div class="wrap">
+        <div class="section-head center reveal" data-reveal>
+          <div class="kicker">Android &amp; iPhone</div>
+          <h2>The same lecture, in the app.</h2>
+          <p>The phone plays on its own. Marks, shots, bio, and sources — the same vault as Studio.</p>
+        </div>
+
+        <div class="app-stage reveal" data-reveal data-app-preview>
+          <div class="app-copy">
+            <ul class="app-points">
+              <li>
+                <i data-lucide="play" class="ico"></i>
+                <span>Its own in-app player. Independent of the demo above.</span>
+              </li>
+              <li>
+                <i data-lucide="bookmark" class="ico"></i>
+                <span>Marks you saved as notes.</span>
+              </li>
+              <li>
+                <i data-lucide="camera" class="ico"></i>
+                <span>Shots you took of the slide. Bio and sources stay with the video.</span>
+              </li>
+              <li>
+                <span class="app-os">
+                  <svg class="ico brand" width="14" height="14" viewBox="0 0 24 24"><use href="#si-android"/></svg>
+                  <svg class="ico brand" width="14" height="14" viewBox="0 0 24 24"><use href="#si-apple"/></svg>
+                </span>
+                <span>One vault on both phones.</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="app-device">
+            <div class="app-phone">
+              <div class="app-phone-screen">
+                <div class="app-status">
+                  <span data-app-clock>0:00</span>
+                  <b>VideoSearch</b>
+                  <span class="app-os" aria-hidden="true">
+                    <svg class="ico brand" width="10" height="10" viewBox="0 0 24 24"><use href="#si-android"/></svg>
+                    <svg class="ico brand" width="10" height="10" viewBox="0 0 24 24"><use href="#si-apple"/></svg>
+                  </span>
+                </div>
+                <div class="app-topbar">
+                  <i data-lucide="chevron-left" class="ico"></i>
+                  <strong>Gradient descent</strong>
+                  <i data-lucide="share-2" class="ico"></i>
+                </div>
+                <div class="app-player">
+                  <div class="app-player-frame">
+                    <div id="yt-app"></div>
                   </div>
                 </div>
+                <div class="app-meta">
+                  <small>3Blue1Brown</small>
+                  <span data-app-counts>11 marks · 5 shots · 6 sources</span>
+                </div>
+                <div class="app-tabs" role="tablist">
+                  <button type="button" class="is-on" data-app-tab="marks">Marks</button>
+                  <button type="button" data-app-tab="shots">Shots</button>
+                  <button type="button" data-app-tab="bio">Bio</button>
+                  <button type="button" data-app-tab="sources">Sources</button>
+                </div>
+                <div class="app-pane is-on" data-app-pane="marks" data-app-marks></div>
+                <div class="app-pane" data-app-pane="shots" data-app-shots></div>
+                <div class="app-pane" data-app-pane="bio">
+                  <div class="app-bio">
+                    <strong>Description</strong>
+                    <p>Gradient descent, how neural networks learn — 3Blue1Brown. The visual lesson on cost, slope, and walking downhill.</p>
+                    <p>Links in this bio become Sources automatically — lesson page, Manim, Patreon, and the full neural-networks series.</p>
+                  </div>
+                </div>
+                <div class="app-pane" data-app-pane="sources" data-app-sources></div>
               </div>
-            </aside>
+            </div>
           </div>
         </div>
       </div>
@@ -694,6 +749,7 @@
         </a>
         <a href="#features">Features</a>
         <a href="#platforms">Platforms</a>
+        <a href="#app">App</a>
         <a href="#install">Install</a>
         <a href="#privacy">Privacy</a>
       </div>
@@ -701,6 +757,6 @@
   </footer>
 
   <script src="https://unpkg.com/lucide@0.544.0/dist/umd/lucide.min.js"></script>
-  <script src="./main.js?v=day6"></script>
+  <script src="./main.js?v=day8"></script>
 </body>
 </html>

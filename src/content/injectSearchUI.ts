@@ -35,6 +35,8 @@ const sessionHighlights = new Map<string, VideoHighlight[]>();
 const sessionScreenshots = new Map<string, VideoScreenshot[]>();
 const commentJobs = new Map<string, Promise<void>>();
 const indexingJobs = new Map<string, Promise<VideoIndex | null>>();
+/** Avoid re-importing the same YouTube playlist in one tab session */
+const importedYtPlaylists = new Set<string>();
 let chatBusy = false;
 let timelineReady = false;
 
@@ -511,6 +513,33 @@ function videoTitleFromPage(videoId: string): string {
   return videoId;
 }
 
+/** Channel name + URL from the watch page owner renderer. */
+function channelFromPage(): { channelTitle?: string; channelUrl?: string } {
+  const link =
+    (document.querySelector(
+      "ytd-video-owner-renderer ytd-channel-name a"
+    ) as HTMLAnchorElement | null) ||
+    (document.querySelector(
+      "#owner #channel-name a"
+    ) as HTMLAnchorElement | null) ||
+    (document.querySelector(
+      "ytd-channel-name a"
+    ) as HTMLAnchorElement | null);
+
+  const name =
+    link?.textContent?.trim() ||
+    document
+      .querySelector("ytd-video-owner-renderer ytd-channel-name")
+      ?.textContent?.trim() ||
+    "";
+  const href = link?.href?.trim() || "";
+  if (!name) return {};
+  return {
+    channelTitle: name.replace(/\s+/g, " ").trim(),
+    channelUrl: href || undefined,
+  };
+}
+
 function cleanYouTubeTitle(raw: string, videoId: string): string | null {
   let t = raw.replace(/\s+/g, " ").trim();
   // "Title - YouTube" / "Title • YouTube"
@@ -533,6 +562,7 @@ function queueAutoSync(
     scheduleAutoSync(videoId, {
       delayMs,
       getTitle: () => videoTitleFromPage(videoId),
+      getChannel: () => channelFromPage(),
       onStatus: (msg, isError) => panel.setVaultSyncMessage(msg, isError),
     });
   });
@@ -545,18 +575,44 @@ async function flushSyncToVault(
 ): Promise<void> {
   try {
     const title = videoTitleFromPage(videoId);
+    const channel = channelFromPage();
     const { loadHighlights } = await import("../storage/highlightsStore");
     const { loadScreenshots } = await import("../storage/screenshotStore");
     const { syncVideoToCloud } = await import("../cloud/cloudSync");
     const highlights = await loadHighlights(videoId);
     const screenshots = await loadScreenshots(videoId);
 
+    let sourceLinks:
+      | Array<{
+          id: string;
+          url: string;
+          label?: string;
+          kind?: string;
+          source?: string;
+          createdAt?: number;
+          startTime?: number;
+        }>
+      | undefined;
+    try {
+      const { collectPageSources } = await import("../youtube/collectSources");
+      const links = collectPageSources(
+        videoId,
+        sessionSegments.get(videoId)
+      );
+      if (links.length) sourceLinks = links;
+    } catch {
+      /* optional */
+    }
+
     panel.setVaultSyncMessage("Saving…");
     const result = await syncVideoToCloud({
       videoId,
       videoTitle: title,
+      channelTitle: channel.channelTitle,
+      channelUrl: channel.channelUrl,
       highlights,
       screenshots,
+      sourceLinks,
     });
     const warn = Boolean(result.offlineQueued) || !result.ok;
     panel.setVaultSyncMessage(
@@ -779,13 +835,22 @@ async function syncVaultCloud(
     const { syncVideoToCloud } = await import("../cloud/cloudSync");
     const { loadHighlights } = await import("../storage/highlightsStore");
     const { loadScreenshots } = await import("../storage/screenshotStore");
+    const { collectPageSources } = await import("../youtube/collectSources");
     const highlights = await loadHighlights(videoId);
     const screenshots = await loadScreenshots(videoId);
+    const sourceLinks = collectPageSources(
+      videoId,
+      sessionSegments.get(videoId)
+    );
+    const channel = channelFromPage();
     const result = await syncVideoToCloud({
       videoId,
       videoTitle: videoTitleFromPage(videoId),
+      channelTitle: channel.channelTitle,
+      channelUrl: channel.channelUrl,
       highlights,
       screenshots,
+      sourceLinks: sourceLinks.length ? sourceLinks : undefined,
     });
     panel.setVaultSyncMessage(result.message, !result.ok);
     // Refresh shot badges after sync (cloud URLs may update)
@@ -795,6 +860,220 @@ async function syncVaultCloud(
   } catch (err) {
     panel.setVaultSyncMessage(
       err instanceof Error ? err.message : "Sync failed",
+      true
+    );
+  }
+}
+
+/**
+ * Mount top-right Sync bio control on the YouTube description.
+ * Sync only (no copy) — with animated progress state.
+ */
+async function maybeScanDescriptionLinks(
+  videoId: string,
+  panel: SearchPanel,
+  attempt = 0
+): Promise<void> {
+  try {
+    const {
+      extractFullBio,
+      mountBioSyncBar,
+      removeDescriptionLinksChip,
+    } = await import("../youtube/descriptionLinks");
+    const bio = extractFullBio();
+    const { collectPageSources } = await import("../youtube/collectSources");
+    const all = collectPageSources(videoId, sessionSegments.get(videoId));
+    if (!bio.text.trim() && !bio.markdown.trim() && !all.length) {
+      panel.setDescriptionLinksAvailable(false);
+      removeDescriptionLinksChip();
+      if (attempt < 5) {
+        window.setTimeout(() => {
+          if (activeVideoId === videoId) {
+            void maybeScanDescriptionLinks(videoId, panel, attempt + 1);
+          }
+        }, 1400 + attempt * 700);
+      }
+      return;
+    }
+
+    const previews = (all.length ? all : bio.links).map((l) => ({
+      label: l.label,
+      kind: l.source === "cc" ? `CC · ${l.kind}` : l.kind,
+      url: l.url,
+    }));
+    panel.setDescriptionLinksAvailable(
+      true,
+      Math.max(previews.length, 1),
+      previews
+    );
+
+    mountBioSyncBar({
+      charCount: bio.charCount,
+      linkCount: all.length || bio.links.length,
+      onSync: () => {
+        void saveDescriptionLinksToVault(videoId, panel);
+      },
+    });
+  } catch (err) {
+    console.warn(LOG, "bio scan failed", err);
+  }
+}
+
+/**
+ * Sync complete description/bio into the vault (text + hyperlinks + sources).
+ * User can edit later in Studio → Bio. No clipboard copy.
+ */
+async function saveDescriptionLinksToVault(
+  videoId: string,
+  panel: SearchPanel
+): Promise<void> {
+  try {
+    const { extractFullBio, setBioSyncBarStatus } = await import(
+      "../youtube/descriptionLinks"
+    );
+    const bio = extractFullBio();
+    if (!bio.text.trim() && !bio.markdown.trim()) {
+      panel.setVaultSyncMessage(
+        "Description is empty — open “Show more” and try again",
+        true
+      );
+      setBioSyncBarStatus("error", "Empty");
+      return;
+    }
+
+    panel.setDescriptionLinksAvailable(
+      true,
+      Math.max(bio.links.length, 1),
+      bio.links.map((l) => ({ label: l.label, kind: l.kind, url: l.url }))
+    );
+    // Animated syncing state on the bio button
+    setBioSyncBarStatus("saving", "Syncing…");
+    panel.setVaultSyncMessage(
+      `Syncing bio · ${bio.charCount.toLocaleString()} chars` +
+        (bio.links.length ? ` · ${bio.links.length} resources` : "") +
+        "…"
+    );
+
+    const { loadHighlights } = await import("../storage/highlightsStore");
+    const { loadScreenshots } = await import("../storage/screenshotStore");
+    const { syncVideoToCloud } = await import("../cloud/cloudSync");
+    const highlights = await loadHighlights(videoId);
+    const screenshots = await loadScreenshots(videoId);
+    const channel = channelFromPage();
+    const { collectPageSources } = await import("../youtube/collectSources");
+    const sourceLinks = collectPageSources(
+      videoId,
+      sessionSegments.get(videoId)
+    );
+    const result = await syncVideoToCloud({
+      videoId,
+      videoTitle: videoTitleFromPage(videoId),
+      channelTitle: channel.channelTitle,
+      channelUrl: channel.channelUrl,
+      highlights,
+      screenshots,
+      sourceLinks: sourceLinks.length ? sourceLinks : bio.links,
+      bioText: bio.text,
+      bioMarkdown: bio.markdown,
+    });
+
+    if (result.ok) {
+      const n =
+        typeof result.sourceLinkCount === "number"
+          ? result.sourceLinkCount
+          : bio.links.length;
+      const msg = result.offlineQueued
+        ? `Bio saved on device · will sync when online`
+        : n > 0
+          ? `Bio synced · ${n} source${n === 1 ? "" : "s"} added`
+          : `Bio synced · open Studio to edit`;
+      panel.setVaultSyncMessage(msg, Boolean(result.offlineQueued));
+      setBioSyncBarStatus("ok", "Synced");
+    } else {
+      panel.setVaultSyncMessage(result.message || "Failed to sync bio", true);
+      setBioSyncBarStatus("error", "Failed");
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Failed to sync bio";
+    panel.setVaultSyncMessage(msg, true);
+    try {
+      const { setBioSyncBarStatus } = await import(
+        "../youtube/descriptionLinks"
+      );
+      setBioSyncBarStatus("error", "Failed");
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * When user is in a YouTube playlist (watch?list= or /playlist),
+ * import all visible playlist videos into the vault under that playlist name.
+ */
+async function maybeImportYoutubePlaylist(
+  panel?: SearchPanel | null,
+  force = false
+): Promise<void> {
+  try {
+    const { captureCurrentPlaylist, isPlaylistPage } = await import(
+      "../youtube/playlistCapture"
+    );
+    if (!isPlaylistPage()) return;
+
+    const cap = captureCurrentPlaylist();
+    if (!cap || cap.videos.length === 0) {
+      panel?.setYoutubePlaylistAvailable(false);
+      // DOM may still be loading — retry once shortly
+      if (!force) {
+        window.setTimeout(() => {
+          void maybeImportYoutubePlaylist(panel, true);
+        }, 1800);
+      }
+      return;
+    }
+
+    panel?.setYoutubePlaylistAvailable(true, cap.playlistName);
+
+    const key = `${cap.playlistId}::${cap.playlistName}`.toLowerCase();
+    if (!force && importedYtPlaylists.has(key)) return;
+    importedYtPlaylists.add(key);
+
+    panel?.setVaultSyncMessage(
+      `Saving playlist “${cap.playlistName}” (${cap.videos.length} videos)…`
+    );
+
+    const { importPlaylistToCloud } = await import("../cloud/cloudSync");
+    const result = await importPlaylistToCloud({
+      playlistName: cap.playlistName,
+      playlistId: cap.playlistId,
+      videos: cap.videos.map((v) => ({
+        videoId: v.videoId,
+        videoTitle: v.videoTitle,
+        channelTitle: v.channelTitle,
+        videoUrl: `https://www.youtube.com/watch?v=${v.videoId}&list=${encodeURIComponent(cap.playlistId)}`,
+      })),
+    });
+
+    panel?.setVaultSyncMessage(result.message, !result.ok);
+    console.info(
+      LOG,
+      "Playlist import",
+      cap.playlistName,
+      cap.videos.length,
+      result.message
+    );
+
+    // Also attach current video to the same playlist explicitly
+    const cur = extractVideoId();
+    if (cur && panel) {
+      void runLibraryAction(cur, panel, "add_playlist", cap.playlistName);
+      void loadPlaylistsForPanel(panel);
+    }
+  } catch (err) {
+    console.warn(LOG, "playlist import failed", err);
+    panel?.setVaultSyncMessage(
+      err instanceof Error ? err.message : "Playlist save failed",
       true
     );
   }
@@ -874,6 +1153,15 @@ async function indexVideo(
       sessionIndex.set(videoId, index);
       sessionSegments.set(videoId, segments);
       panel.setTranscript(segments);
+      try {
+        const { extractSourcesFromCaptions, rememberCcSources } = await import(
+          "../youtube/ccSources"
+        );
+        rememberCcSources(videoId, extractSourcesFromCaptions(segments));
+        void maybeScanDescriptionLinks(videoId, panel);
+      } catch {
+        /* sources are optional */
+      }
 
       // Unlock Search / Live ASAP — topics can finish in the background
       const cachedTopics = !force ? sessionTopics.get(videoId) : undefined;
@@ -1214,6 +1502,14 @@ function mountPanel(videoId: string): void {
         // Login / signup succeeded → push every local mark to Studio vault
         void pushAllMarksToVault(panel);
       },
+      onSaveYoutubePlaylist: () => {
+        // Force re-import even if auto-import already ran
+        importedYtPlaylists.clear();
+        void maybeImportYoutubePlaylist(panel, true);
+      },
+      onSaveDescriptionLinks: () => {
+        void saveDescriptionLinksToVault(videoId, panel);
+      },
       onHighlightSeek: (t) => seekTo(t),
       onHighlightNote: (id, note) => {
         void (async () => {
@@ -1383,6 +1679,14 @@ function mountPanel(videoId: string): void {
     console.info(LOG, "Panel MOUNTED for", videoId);
 
     void indexVideo(videoId, panel);
+    // If this watch is part of a YT playlist, save the whole list into vault
+    window.setTimeout(() => {
+      void maybeImportYoutubePlaylist(panel);
+    }, 1200);
+    // Description Drive/PPT/source links → Save sources chip (bio + Notes)
+    window.setTimeout(() => {
+      void maybeScanDescriptionLinks(videoId, panel);
+    }, 1600);
   } catch (err) {
     console.error(LOG, "mountPanel crashed:", err);
     mountEmergencyPill(
@@ -1397,6 +1701,9 @@ function removePanel(force = false): void {
   document.getElementById(ROOT_ID)?.remove();
   activePanel = null;
   activeVideoId = null;
+  void import("../youtube/descriptionLinks")
+    .then((m) => m.removeDescriptionLinksChip())
+    .catch(() => undefined);
 }
 
 function injectOrUpdate(): void {
@@ -1455,6 +1762,9 @@ function startWatchers(): void {
 
   window.addEventListener("yt-navigate-finish", () => {
     window.setTimeout(injectOrUpdate, 200);
+    window.setTimeout(() => {
+      void maybeImportYoutubePlaylist(activePanel);
+    }, 1500);
   });
   window.addEventListener("popstate", onNavigate);
 
