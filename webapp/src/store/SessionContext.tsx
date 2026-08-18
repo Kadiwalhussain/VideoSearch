@@ -23,7 +23,12 @@ type SessionCtx = {
   setApiUrl: (u: string) => void;
   login: (
     mode: AuthMode,
-    opts: { email: string; password: string; displayName?: string }
+    opts: {
+      email: string;
+      password: string;
+      displayName?: string;
+      code?: string;
+    }
   ) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
@@ -61,7 +66,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (
       mode: AuthMode,
-      opts: { email: string; password: string; displayName?: string }
+      opts: {
+        email: string;
+        password: string;
+        displayName?: string;
+        code?: string;
+      }
     ) => {
       const s = await vaultAuth(mode, { ...opts, projectUrl: apiUrl });
       setSession(s);

@@ -13,8 +13,15 @@ class Validators {
   static String? password(String? v, {bool forRegister = false}) {
     final s = v ?? '';
     if (s.isEmpty) return 'Password is required';
-    if (s.length < 6) return 'Password must be at least 6 characters';
+    if (s.length < 6) return 'Password is required';
     if (s.length > 128) return 'Password is too long';
+    if (forRegister && s.length < 10) {
+      return 'Password must be at least 10 characters';
+    }
+    if (forRegister &&
+        (!RegExp(r'[A-Za-z]').hasMatch(s) || !RegExp(r'[0-9]').hasMatch(s))) {
+      return 'Password needs letters and a number';
+    }
     if (forRegister && s.trim() != s) {
       return 'Password cannot start or end with spaces';
     }

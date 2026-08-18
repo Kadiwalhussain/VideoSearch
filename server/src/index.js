@@ -19,12 +19,29 @@ import {
 import crypto from "crypto";
 import {
   authMiddleware,
+  changePassword,
   loginUser,
   publicUser,
   registerUser,
-  resetPassword,
-  verifyToken,
+  requestPasswordReset,
+  resetPasswordWithCode,
+  userIdFromToken,
 } from "./auth.js";
+import {
+  aiRateLimit,
+  apiRateLimit,
+  assertJwtSecret,
+  authRateLimit,
+  clientError,
+  corsOrigin,
+  IS_PROD,
+  MAX_SHOT_BYTES,
+  MAX_SYNC_SHOTS,
+  requireVideoId,
+  safeShotId,
+  securityHeaders,
+  shareRateLimit,
+} from "./security.js";
 import {
   checkR2,
   dataUrlToBuffer,
@@ -87,18 +104,34 @@ function apiBaseFromReq(req) {
   return PUBLIC_API_BASE;
 }
 
+assertJwtSecret();
+
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+app.disable("x-powered-by");
+app.use(
+  cors({
+    origin: corsOrigin,
+    credentials: true,
+    allowedHeaders: ["Authorization", "Content-Type", "X-Requested-With"],
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    maxAge: 600,
+  })
+);
 // Chrome Private Network Access (HTTPS page → localhost): allow preflight
 app.use((req, res, next) => {
   if (req.headers["access-control-request-private-network"] === "true") {
     res.setHeader("Access-Control-Allow-Private-Network", "true");
   }
-  res.setHeader("Access-Control-Allow-Private-Network", "true");
   next();
 });
-app.use(express.json({ limit: "25mb" }));
-app.use(morgan("dev"));
+app.use(securityHeaders);
+app.use(express.json({ limit: "12mb" }));
+app.use(
+  morgan(IS_PROD ? "combined" : "dev", {
+    skip: (req) => req.path === "/health",
+  })
+);
+app.use("/api", apiRateLimit());
 
 // Full vault UI — React SPA (vite build → webapp/dist)
 app.use(
@@ -134,7 +167,7 @@ async function healthPayload() {
     mongo: mongoose.connection.readyState === 1 ? "connected" : "down",
     r2: r2.ok
       ? { ok: true, bucket: r2.bucket }
-      : { ok: false, message: r2.message || "not configured" },
+      : { ok: false, message: IS_PROD ? "not configured" : r2.message || "not configured" },
     backup: {
       filone: fil.ok
         ? { ok: true, bucket: fil.bucket }
@@ -208,7 +241,9 @@ app.get("/", async (_req, res) => {
 
 // ─── Auth ───────────────────────────────────────────────────────────
 
-app.post("/api/auth/register", async (req, res) => {
+const authLimit = authRateLimit();
+
+app.post("/api/auth/register", authLimit, async (req, res) => {
   try {
     const out = await registerUser({
       email: req.body?.email,
@@ -217,14 +252,12 @@ app.post("/api/auth/register", async (req, res) => {
     });
     res.status(201).json({ ok: true, ...out });
   } catch (err) {
-    res.status(err.status || 500).json({
-      ok: false,
-      message: err instanceof Error ? err.message : "Register failed",
-    });
+    const { status, message } = clientError(err, "Register failed");
+    res.status(status).json({ ok: false, message });
   }
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", authLimit, async (req, res) => {
   try {
     const out = await loginUser({
       email: req.body?.email,
@@ -232,44 +265,61 @@ app.post("/api/auth/login", async (req, res) => {
     });
     res.json({ ok: true, ...out });
   } catch (err) {
-    res.status(err.status || 500).json({
-      ok: false,
-      message: err instanceof Error ? err.message : "Login failed",
-    });
+    const { status, message } = clientError(err, "Login failed");
+    res.status(status).json({ ok: false, message });
   }
 });
 
-/** Reset password (MVP / local — sets a new password for an existing email) */
-app.post("/api/auth/reset-password", async (req, res) => {
+/** Step 1: issue a one-time code (printed on the vault terminal only). */
+app.post("/api/auth/forgot-password", authLimit, async (req, res) => {
   try {
-    const out = await resetPassword({
+    const out = await requestPasswordReset({ email: req.body?.email });
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    const { status, message } = clientError(err, "Could not start reset");
+    res.status(status).json({ ok: false, message });
+  }
+});
+
+/** Step 2: email + console code + new password. Old unauthenticated reset is gone. */
+app.post("/api/auth/reset-password", authLimit, async (req, res) => {
+  try {
+    const out = await resetPasswordWithCode({
       email: req.body?.email,
+      code: req.body?.code || req.body?.token,
       password: req.body?.password,
     });
     res.json({ ok: true, ...out });
   } catch (err) {
-    res.status(err.status || 500).json({
-      ok: false,
-      message: err instanceof Error ? err.message : "Reset failed",
+    const { status, message } = clientError(err, "Reset failed");
+    res.status(status).json({ ok: false, message });
+  }
+});
+
+app.post("/api/auth/change-password", authMiddleware, async (req, res) => {
+  try {
+    const out = await changePassword({
+      userId: req.user.userId,
+      currentPassword: req.body?.currentPassword,
+      newPassword: req.body?.newPassword || req.body?.password,
     });
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    const { status, message } = clientError(err, "Could not change password");
+    res.status(status).json({ ok: false, message });
   }
 });
 
 app.get("/api/auth/me", authMiddleware, async (req, res) => {
   try {
-    if (req.authMode === "service") {
-      return res.json({ ok: true, user: req.user });
-    }
     const user = await User.findOne({ userId: req.user.userId });
     if (!user) {
-      return res.status(404).json({ ok: false, message: "User not found" });
+      return res.status(401).json({ ok: false, message: "Invalid or expired token" });
     }
     res.json({ ok: true, user: publicUser(user) });
   } catch (err) {
-    res.status(500).json({
-      ok: false,
-      message: err instanceof Error ? err.message : "Me failed",
-    });
+    const { status, message } = clientError(err, "Session check failed");
+    res.status(status).json({ ok: false, message });
   }
 });
 
@@ -313,8 +363,11 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
   const list = [];
   const base = (apiBase || PUBLIC_API_BASE).replace(/\/$/, "");
 
-  for (const raw of screenshots) {
-    if (!raw?.id) continue;
+  const incoming = screenshots.slice(0, MAX_SYNC_SHOTS);
+  for (const raw of incoming) {
+    const shotId = safeShotId(raw?.id);
+    if (!shotId) continue;
+    raw.id = shotId;
     const prev = prevById.get(raw.id);
     let imageUrl = raw.imageUrl || prev?.imageUrl || "";
     let r2Key = raw.r2Key || prev?.r2Key || "";
@@ -332,6 +385,11 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
         buffer = dataUrlToBuffer(dataUrl);
       } catch (err) {
         console.warn("[vault-api] bad shot dataUrl", raw.id, err?.message);
+      }
+
+      if (buffer && buffer.length > MAX_SHOT_BYTES) {
+        console.warn("[vault-api] shot too large", raw.id, buffer.length);
+        buffer = null;
       }
 
       if (buffer && buffer.length > 32) {
@@ -420,8 +478,29 @@ function isLocalImagePointer(url) {
 }
 
 function isHttpImageUrl(url) {
-  const s = String(url || "");
-  return s.startsWith("http://") || s.startsWith("https://");
+  try {
+    const u = new URL(String(url || ""));
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isSafeRedirectUrl(url) {
+  if (!isHttpImageUrl(url)) return false;
+  try {
+    const u = new URL(url);
+    if (u.username || u.password) return false;
+    const host = u.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1") return true;
+    if (/\.r2\.dev$/.test(host) || /\.r2\.cloudflarestorage\.com$/.test(host)) {
+      return true;
+    }
+    if (/\.ytimg\.com$/.test(host) || host === "i.ytimg.com") return true;
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 function mapScreenshotOut(
@@ -576,6 +655,11 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
 
     if (!videoId || typeof videoId !== "string") {
       return res.status(400).json({ ok: false, message: "videoId required" });
+    }
+    try {
+      requireVideoId(videoId);
+    } catch (e) {
+      return res.status(400).json({ ok: false, message: e.message });
     }
 
     const existing = await VaultVideo.findOne({ userId, videoId }).lean();
@@ -923,28 +1007,22 @@ app.get("/api/vault/shot/:videoId/:shotId", async (req, res) => {
     if (!token) {
       return res.status(401).json({ ok: false, message: "Auth required" });
     }
-    let userId;
-    try {
-      if (process.env.VSA_API_KEY && token === process.env.VSA_API_KEY) {
-        userId = String(req.query.userId || "");
-      } else {
-        // JWT payload uses `sub` (same as authMiddleware)
-        const payload = verifyToken(token);
-        userId = payload.sub || payload.userId || "";
-      }
-    } catch {
-      return res.status(401).json({ ok: false, message: "Invalid token" });
-    }
+    const userId = await userIdFromToken(token);
     if (!userId) {
-      return res.status(401).json({ ok: false, message: "Auth required" });
+      return res.status(401).json({ ok: false, message: "Invalid token" });
     }
 
     const videoId = String(req.params.videoId || "");
-    const shotId = String(req.params.shotId || "");
+    const shotId = safeShotId(req.params.shotId);
     if (!videoId || !shotId) {
       return res
         .status(400)
         .json({ ok: false, message: "videoId and shotId required" });
+    }
+    try {
+      requireVideoId(videoId);
+    } catch (e) {
+      return res.status(400).json({ ok: false, message: e.message });
     }
 
     // Load only matching screenshot (includes dataUrl for this one shot)
@@ -1022,7 +1100,10 @@ app.get("/api/vault/shot/:videoId/:shotId", async (req, res) => {
     }
 
     // Real HTTP image only — never redirect to account:// (extension-local pointer)
-    if (isHttpImageUrl(shot.imageUrl) && !String(shot.imageUrl).includes("/api/media/")) {
+    if (
+      isSafeRedirectUrl(shot.imageUrl) &&
+      !String(shot.imageUrl).includes("/api/media/")
+    ) {
       return res.redirect(302, shot.imageUrl);
     }
 
@@ -1056,6 +1137,11 @@ app.post("/api/vault/view", authMiddleware, async (req, res) => {
     const videoId = String(req.body?.videoId || "").trim();
     if (!videoId) {
       return res.status(400).json({ ok: false, message: "videoId required" });
+    }
+    try {
+      requireVideoId(videoId);
+    } catch (e) {
+      return res.status(400).json({ ok: false, message: e.message });
     }
     const existing = await VaultVideo.findOne({ userId, videoId }).lean();
     if (!existing) {
@@ -1106,6 +1192,11 @@ app.post("/api/vault/library", authMiddleware, async (req, res) => {
 
     if (!videoId || typeof videoId !== "string") {
       return res.status(400).json({ ok: false, message: "videoId required" });
+    }
+    try {
+      requireVideoId(videoId);
+    } catch (e) {
+      return res.status(400).json({ ok: false, message: e.message });
     }
     if (!action || typeof action !== "string") {
       return res.status(400).json({ ok: false, message: "action required" });
@@ -1534,28 +1625,24 @@ app.get("/api/library/playlists", authMiddleware, async (req, res) => {
 
 app.get("/api/vault/:videoId", authMiddleware, async (req, res) => {
   try {
+    const videoId = requireVideoId(req.params.videoId);
     const userId = req.user.userId;
     const r = await VaultVideo.findOne({
       userId,
-      videoId: req.params.videoId,
+      videoId,
     }).lean();
     if (!r) return res.status(404).json({ ok: false, message: "Not found" });
     res.json({ ok: true, ...mapVaultRow(r, true, apiBaseFromReq(req)) });
   } catch (err) {
-    res.status(500).json({
-      ok: false,
-      message: err instanceof Error ? err.message : "Get failed",
-    });
+    const { status, message } = clientError(err, "Get failed");
+    res.status(status).json({ ok: false, message });
   }
 });
 
 /** Delete entire video from vault (history / library / all marks & shots). */
 app.delete("/api/vault/:videoId", authMiddleware, async (req, res) => {
   try {
-    const videoId = String(req.params.videoId || "");
-    if (!videoId) {
-      return res.status(400).json({ ok: false, message: "videoId required" });
-    }
+    const videoId = requireVideoId(req.params.videoId);
     const result = await VaultVideo.deleteOne({
       userId: req.user.userId,
       videoId,
@@ -1698,7 +1785,7 @@ app.get("/api/ai/status", authMiddleware, (req, res) => {
  * Authenticated chat completions proxy.
  * Body: { messages, temperature?, max_tokens?, model? }
  */
-app.post("/api/ai/chat", authMiddleware, async (req, res) => {
+app.post("/api/ai/chat", authMiddleware, aiRateLimit(), async (req, res) => {
   try {
     const { messages, temperature, max_tokens, model } = req.body || {};
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -1776,13 +1863,10 @@ app.post("/api/ai/chat", authMiddleware, async (req, res) => {
  * POST /api/vault/:videoId/share
  * Body optional: { expiresInDays?: number }
  */
-app.post("/api/vault/:videoId/share", authMiddleware, async (req, res) => {
+app.post("/api/vault/:videoId/share", authMiddleware, shareRateLimit(), async (req, res) => {
   try {
     const userId = req.user.userId;
-    const videoId = String(req.params.videoId || "");
-    if (!videoId) {
-      return res.status(400).json({ ok: false, message: "videoId required" });
-    }
+    const videoId = requireVideoId(req.params.videoId);
 
     const doc = await VaultVideo.findOne({ userId, videoId }).lean();
     if (!doc) {
@@ -1812,9 +1896,9 @@ app.post("/api/vault/:videoId/share", authMiddleware, async (req, res) => {
         ? new Date(Date.now() + days * 86400_000)
         : null;
 
-    const token = crypto.randomBytes(18).toString("hex");
+    const token = crypto.randomBytes(24).toString("hex");
     const sharedBy =
-      req.user.displayName || req.user.email || "VideoSearch user";
+      req.user.displayName || "VideoSearch user";
 
     await SharedCard.create({
       token,
@@ -1907,7 +1991,7 @@ app.get("/api/share/:token", async (req, res) => {
  * Body: { query: string }
  * Returns natural-language answer + structured citations.
  */
-app.post("/api/vault/ai-search", authMiddleware, async (req, res) => {
+app.post("/api/vault/ai-search", authMiddleware, aiRateLimit(), async (req, res) => {
   try {
     const query = String(req.body?.query || "").trim();
     if (!query || query.length < 2) {
@@ -2028,44 +2112,38 @@ Max 8 citations. time is seconds on the video (0 if whole video).`;
   }
 });
 
-// Media: JWT query token OR public proxy
+// Media: JWT only. Object key must belong to that user (users/<userId>/…).
 app.get("/api/media/*", async (req, res) => {
   try {
     const h = req.headers.authorization || "";
     const bearer = h.startsWith("Bearer ") ? h.slice(7) : "";
     const qToken = String(req.query.token || req.query.key || "");
     const token = bearer || qToken;
-    const open = process.env.R2_PUBLIC_PROXY === "1";
-
-    if (!open) {
-      if (!token) {
-        return res.status(401).json({ ok: false, message: "Auth required" });
-      }
-      try {
-        if (token !== process.env.VSA_API_KEY) verifyToken(token);
-      } catch {
-        return res.status(401).json({ ok: false, message: "Invalid token" });
-      }
+    const userId = await userIdFromToken(token);
+    if (!userId) {
+      return res.status(401).json({ ok: false, message: "Auth required" });
     }
 
     const key = decodeURIComponent(req.params[0] || "");
-    if (!key || key.includes("..")) {
+    if (!key || key.includes("..") || key.includes("\\") || key.startsWith("/")) {
       return res.status(400).json({ ok: false, message: "Invalid key" });
+    }
+    const prefix = `users/${userId}/`;
+    if (!key.startsWith(prefix)) {
+      return res.status(404).json({ ok: false, message: "Not found" });
     }
 
     const out = await getObjectStream(key);
     res.setHeader("Content-Type", out.ContentType || "image/jpeg");
     res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     if (out.Body?.transformToByteArray) {
       const bytes = await out.Body.transformToByteArray();
       return res.end(Buffer.from(bytes));
     }
     res.status(500).json({ ok: false, message: "Cannot read body" });
-  } catch (err) {
-    res.status(404).json({
-      ok: false,
-      message: err instanceof Error ? err.message : "Not found",
-    });
+  } catch {
+    res.status(404).json({ ok: false, message: "Not found" });
   }
 });
 
@@ -2111,6 +2189,12 @@ async function connectMongo() {
 
   throw lastErr || new Error("Could not connect to MongoDB");
 }
+
+app.use((err, _req, res, _next) => {
+  console.error("[vault-api] unhandled", err);
+  const { status, message } = clientError(err, "Server error");
+  res.status(status).json({ ok: false, message });
+});
 
 async function main() {
   await connectMongo();

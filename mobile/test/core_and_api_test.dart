@@ -40,6 +40,8 @@ void main() {
     test('password', () {
       expect(Validators.password('12345'), isNotNull);
       expect(Validators.password('123456'), isNull);
+      expect(Validators.password('short1', forRegister: true), isNotNull);
+      expect(Validators.password('goodPass12', forRegister: true), isNull);
     });
 
     test('apiBase', () {

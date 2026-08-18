@@ -194,7 +194,15 @@ export async function vaultAuth(
     throw new Error("Enter a valid email address");
   }
   if (!opts.password || opts.password.length < 6) {
-    throw new Error("Password must be at least 6 characters");
+    throw new Error("Password is required");
+  }
+  if (mode === "register") {
+    if (opts.password.length < 10) {
+      throw new Error("Password must be at least 10 characters");
+    }
+    if (!/[A-Za-z]/.test(opts.password) || !/[0-9]/.test(opts.password)) {
+      throw new Error("Password needs letters and a number");
+    }
   }
 
   const path =

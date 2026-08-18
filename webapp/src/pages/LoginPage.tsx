@@ -5,7 +5,7 @@ import { Ambient } from "../components/Ambient";
 import { SessionLoader } from "../components/SessionLoader";
 import { useSession } from "../store/SessionContext";
 import { useTheme } from "../store/ThemeContext";
-import type { AuthMode } from "../api/auth";
+import { requestPasswordReset, type AuthMode } from "../api/auth";
 
 export function LoginPage() {
   const { session, loading, login, apiUrl, setApiUrl } = useSession();
@@ -13,6 +13,7 @@ export function LoginPage() {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [status, setStatus] = useState("");
   const [err, setErr] = useState(false);
@@ -41,7 +42,7 @@ export function LoginPage() {
     );
     setErr(false);
     try {
-      await login(mode, { email, password, displayName });
+      await login(mode, { email, password, displayName, code });
       setStatus("");
     } catch (ex) {
       setErr(true);
@@ -140,7 +141,7 @@ export function LoginPage() {
               {mode === "register"
                 ? "Create your vault account"
                 : mode === "reset"
-                  ? "Set a new password for an existing email"
+                  ? "Send a code (vault terminal), then set a new password"
                   : "Enter your credentials to open the vault"}
             </p>
             {mode === "register" ? (
@@ -164,15 +165,33 @@ export function LoginPage() {
                 required
               />
             </label>
+            {mode === "reset" ? (
+              <label className="field">
+                <span>Reset code</span>
+                <input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="From the vault server terminal"
+                  autoComplete="one-time-code"
+                  required
+                />
+              </label>
+            ) : null}
             <label className="field">
-              <span>Password</span>
+              <span>{mode === "reset" ? "New password" : "Password"}</span>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Min. 6 characters"
+                placeholder={
+                  mode === "login"
+                    ? "Your password"
+                    : "10+ characters, letters and a number"
+                }
                 autoComplete={
-                  mode === "register" ? "new-password" : "current-password"
+                  mode === "register" || mode === "reset"
+                    ? "new-password"
+                    : "current-password"
                 }
                 required
               />
@@ -186,11 +205,34 @@ export function LoginPage() {
                 placeholder="http://127.0.0.1:8787"
               />
             </label>
+            {mode === "reset" ? (
+              <button
+                type="button"
+                className="btn-notes"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setErr(false);
+                  setStatus("Sending reset code…");
+                  try {
+                    const msg = await requestPasswordReset(email, apiUrl);
+                    setStatus(msg);
+                  } catch (ex) {
+                    setErr(true);
+                    setStatus(ex instanceof Error ? ex.message : "Reset failed");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Send reset code
+              </button>
+            ) : null}
             <button type="submit" className="btn-glow" disabled={busy}>
               {mode === "register"
                 ? "Create account"
                 : mode === "reset"
-                  ? "Reset password"
+                  ? "Set new password"
                   : "Log in"}
             </button>
             <p className={`status${err ? " err" : ""}`} role="status">

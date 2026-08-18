@@ -163,6 +163,13 @@ export const User = mongoose.model(
       passwordHash: { type: String, required: true },
       displayName: { type: String, default: "" },
       lastSeenAt: { type: Date, default: Date.now },
+      /** Bump on password change / reset to invalidate older JWTs */
+      tokenVersion: { type: Number, default: 0 },
+      passwordReset: {
+        hash: String,
+        expiresAt: Date,
+        attempts: { type: Number, default: 0 },
+      },
       videoCount: { type: Number, default: 0 },
       highlightCount: { type: Number, default: 0 },
       screenshotCount: { type: Number, default: 0 },

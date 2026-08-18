@@ -305,7 +305,7 @@ export class SearchPanel {
                 </label>
                 <label class="vsa-field"><span>Password</span>
                   <div class="vsa-pass-row">
-                    <input type="password" class="vsa-cloud-pass" placeholder="Min. 6 characters" autocomplete="current-password" required minlength="6" />
+                    <input type="password" class="vsa-cloud-pass" placeholder="Password" autocomplete="current-password" required minlength="6" />
                     <button type="button" class="vsa-pass-toggle" data-pass-toggle title="Show password"></button>
                   </div>
                 </label>
