@@ -1,68 +1,66 @@
-# VideoSearch AI
+<p align="center">
+  <img src="./website/assets/logo.png" width="88" height="88" alt="VideoSearch AI" />
+</p>
 
-Search what was **said**, keep the **frame**, play it **in-app**.
-
-Chrome extension · Studio web app · Android & iPhone · one signed-in vault
+<h1 align="center">VideoSearch AI</h1>
 
 <p align="center">
-  <a href="https://videosearchai.netlify.app/"><strong>Official product website</strong></a>
-  · <a href="./website/index.html">source</a>
+  <strong>Search what was said. Keep the frame. Play it in-app.</strong>
+</p>
+
+<p align="center">
+  Chrome · Studio · Android · iPhone · one vault
+</p>
+
+<p align="center">
+  <a href="https://videosearchai.netlify.app/"><strong>videosearchai.netlify.app</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/Kadiwalhussain/VideoSearch">GitHub</a>
+</p>
+
+<p align="center">
+  <img alt="Chrome MV3" src="https://img.shields.io/badge/Chrome-MV3-4285F4?style=flat-square" />
+  <img alt="Flutter" src="https://img.shields.io/badge/Android%20%2B%20iOS-Flutter-02569B?style=flat-square" />
+  <img alt="Local first" src="https://img.shields.io/badge/Search-on--device-0B7A58?style=flat-square" />
+</p>
+
+<p align="center">
+  <img src="./website/assets/product-hero.jpg" alt="VideoSearch on YouTube — search a lecture and jump to the second" width="920" />
 </p>
 
 ---
 
-## What it is
+YouTube only searches titles. The answer is usually **spoken**.
 
-Long YouTube videos hide the sentence you need. VideoSearch indexes **captions on the machine**, lets you search by meaning, and keeps a vault of **your** marks, shots, bio, and sources across Chrome, Studio, and phone.
+VideoSearch indexes captions **in the browser**, jumps to the moment, and keeps a signed-in vault of **your** notes and slide shots — on Chrome, Studio, and the phone.
 
-| Surface | Role |
-|---------|------|
-| **Chrome extension** | Lives on the YouTube page. Search, topics, marks, shots, sync bio, extract sources |
-| **Studio** (`server` + `webapp`) | Library, playlists, bio editor, sources, share cards, analytics |
-| **Flutter app** (`mobile/`) | Same account. In-app official YouTube player. Marks/shots seek here |
-| **Website** | [videosearchai.netlify.app](https://videosearchai.netlify.app/) — static product site + live demo |
+| | |
+|---|---|
+| **Find** | Type a concept. Ranked timestamps. Topics from captions first. |
+| **Keep** | You write marks. You take shots of the slide. The system does not invent them. |
+| **Source** | Links from the bio **and** from speech — sites, apps, coupons, promos. |
+| **Rewatch** | Official YouTube player inside Android and iPhone. A mark seeks. You stay. |
 
----
-
-## Features
-
-| Feature | Who creates it | Where |
-|---------|----------------|--------|
-| Semantic search + topics | System (from CC) | Extension |
-| Ask / Chat RAG | System (CC + optional LLM) | Extension, Studio AI search |
-| **Marks** | **You** — notes at a timestamp | Extension → vault → phone |
-| **Shots** | **You** — screenshots of the slide | Extension → vault → phone |
-| **Sources from bio** | System (description + pinned comment) | Sync bio |
-| **Sources from CC** | System (spoken sites, apps, coupons, promos) | After captions index |
-| In-app player | Official YouTube IFrame | Android + iPhone |
-| Playlists / share / analytics | You + Studio | Studio + phone |
-
-Marks and shots are never auto-written. Sources **are** extracted: from the description **and** from what the instructor says. Details: [docs/SOURCES.md](./docs/SOURCES.md).
+Official site: **[https://videosearchai.netlify.app/](https://videosearchai.netlify.app/)**
 
 ---
 
-## Repo layout
+## The system
 
-```text
-videosearch/
-├── src/                 Chrome extension (TypeScript)
-│   ├── youtube/         Bio + CC source extraction
-│   ├── transcript/      Captions
-│   ├── ui/              On-page panel
-│   └── cloud/           Vault sync
-├── webapp/              Studio (Vite + React) — served at /app
-├── server/              Vault API (Express + MongoDB + R2 / Fil One)
-├── mobile/              Flutter (Android + iOS)
-├── website/             Static product site
-├── docs/                Hosting + sources
-└── dist/                Extension build output (not committed)
-```
+| Surface | What you use it for |
+|---------|---------------------|
+| **Chrome** | On the YouTube page. Search, topics, mark, shot, sync bio, sources. |
+| **Studio** | Library, playlists, bio, sources, share cards, analytics. |
+| **Android & iPhone** | Same login. In-app player. Latest videos on top. |
+| **Website** | [videosearchai.netlify.app](https://videosearchai.netlify.app/) — live demo, no backend. |
+
+One account. Marks, shots, bio, and sources sync. The caption index stays on the machine.
 
 ---
 
-## Quick start
+## Install
 
-### 1. Chrome extension
+### Chrome
 
 ```bash
 git clone https://github.com/Kadiwalhussain/VideoSearch.git
@@ -71,73 +69,76 @@ npm install
 npm run build
 ```
 
-1. `chrome://extensions` → Developer mode → **Load unpacked** → select **`dist/`**
-2. Open a captioned `youtube.com/watch` page
-3. Wait for **Ready**, then search or **Sync bio**
+1. `chrome://extensions` → Developer mode → **Load unpacked** → `dist/`
+2. Open a captioned YouTube video
+3. Sign in. Mark, Shot, Sync bio. Search needs no API key.
 
 ```bash
-npm run dev    # CRX hot reload
+npm run dev
 ```
 
-### 2. Vault + Studio
+### Studio + vault
 
 ```bash
-cp server/.env.example server/.env   # set MONGODB_URI + JWT_SECRET
-cd server && npm install && HOST=0.0.0.0 PORT=8787 node src/index.js
+cp server/.env.example server/.env   # MONGODB_URI, JWT_SECRET
+cd server && npm install
+HOST=0.0.0.0 PORT=8787 node src/index.js
 ```
 
-Studio: `http://127.0.0.1:8787/app/`  
-Same email/password as the extension (sign in from the panel) and the phone.
+Open `http://127.0.0.1:8787/app/` — same email as the extension.
 
-### 3. Mobile
+### Android & iPhone
 
 ```bash
-cd mobile && flutter pub get
-# Physical phone: set vault URL to http://<LAN-IP>:8787 in More
+cd mobile
+flutter pub get
 flutter run
 ```
 
-See [mobile/README.md](./mobile/README.md). Wireless Xcode **Play** on new iOS can fail to attach; install the app and tap the icon instead.
+On a physical phone, set the vault to `http://<your-LAN-IP>:8787` in **More**.  
+iOS wireless Xcode Play can fail to attach — install the app and tap the icon. USB: `./tool/run_on_phone.sh`
 
-### 4. Product website
+### Website (already live)
+
+**[https://videosearchai.netlify.app/](https://videosearchai.netlify.app/)**
 
 ```bash
 npx --yes serve website -l 5180
 ```
 
-**Live:** [https://videosearchai.netlify.app/](https://videosearchai.netlify.app/)  
-Other hosts: [docs/HOSTING.md](./docs/HOSTING.md).
+Other hosts: [docs/HOSTING.md](./docs/HOSTING.md)
 
 ---
 
-## How search works
+## How it works
 
 ```text
-YouTube captions → chunk → MiniLM (in browser) → IndexedDB
-                         → semantic search / topics / Ask
-                         → CC source extraction (sites, coupons, apps)
-Description DOM      → bio text + bio sources
-Your Mark / Shot     → vault (Mongo + optional R2 / Fil One)
+YouTube captions  →  chunks  →  MiniLM in the browser  →  IndexedDB
+                         ↘  topics, search, Ask
+                         ↘  sources spoken in CC (sites, coupons, apps)
+
+Description / bio  →  full text + links  →  vault Sources
+
+You tap Mark / Shot  →  vault  →  Studio + phone
 ```
 
-Embeddings stay in the browser. The vault stores only what you sync: marks, shots, bio, sources, playlists.
+Details: [docs/SOURCES.md](./docs/SOURCES.md)
 
 ---
 
 ## Optional AI
 
-In the extension **Settings**, paste an OpenAI-compatible key (Groq / Mistral / xAI). Used for richer topics, Ask, and Chat. Search itself does not need a key.
-
-Vault `server/.env` can set `LLM_*` for Studio AI search.
+Settings in the extension: any OpenAI-compatible key (Groq, Mistral, xAI).  
+Used for richer topics, Ask, and Chat. **Search itself is local.**
 
 ---
 
 ## Privacy
 
-1. Caption index and search run locally in Chrome.
-2. Vault is **opt-in** (sign in). It holds marks, shots, bio, sources — not the embedding index.
-3. Shot images can go to R2 and/or Fil One if those keys are set; otherwise they stay on the API host.
-4. LLM calls send short caption excerpts only when you enable a key.
+- Caption index never leaves Chrome.
+- Vault is opt-in. It stores marks, shots, bio, sources — not embeddings.
+- Shots can copy to R2 / Fil One if you set those keys.
+- LLM calls send short excerpts only when you add a key.
 
 ---
 
@@ -150,22 +151,25 @@ node --experimental-strip-types --test src/youtube/ccSources.test.ts
 cd mobile && flutter test
 ```
 
-Manual extension checks: [TESTING.md](./TESTING.md).
+Manual extension pass: [TESTING.md](./TESTING.md)
 
 ---
 
-## Tech
+## Repo
 
-| Layer | Stack |
-|-------|--------|
-| Extension | Chrome MV3, TypeScript, Vite + CRXJS, MiniLM WASM |
-| Studio | React, Vite |
-| Vault | Node, Express, MongoDB, Cloudflare R2, Fil One S3 |
-| Mobile | Flutter, official YouTube IFrame |
-| Website | Static HTML/CSS/JS |
+```text
+src/        Chrome extension
+webapp/     Studio (served at /app)
+server/     Vault API
+mobile/     Flutter
+website/    Product site → videosearchai.netlify.app
+docs/       Hosting + sources
+```
 
 ---
 
-## License
-
-See the repository.
+<p align="center">
+  <a href="https://videosearchai.netlify.app/">Product site</a>
+  ·
+  <a href="https://github.com/Kadiwalhussain/VideoSearch">Source</a>
+</p>

@@ -725,6 +725,8 @@ section {
     var(--bg-elev);
   padding: 36px;
   box-shadow: var(--shadow);
+  overflow: hidden;
+  min-width: 0;
 }
 
 .install-grid {
@@ -732,6 +734,11 @@ section {
   grid-template-columns: 1.15fr 0.85fr;
   gap: 36px;
   align-items: start;
+  min-width: 0;
+}
+
+.install-grid > * {
+  min-width: 0;
 }
 
 .install-title {
@@ -759,8 +766,9 @@ section {
 
 .install-steps li {
   display: grid;
-  grid-template-columns: 34px 1fr;
+  grid-template-columns: 34px minmax(0, 1fr);
   gap: 12px;
+  min-width: 0;
 }
 
 .install-steps .n {
@@ -788,7 +796,9 @@ section {
 }
 
 .code-block {
-  margin-top: 10px;
+  display: block;
+  box-sizing: border-box;
+  margin: 10px 0 0;
   padding: 14px 16px;
   border-radius: 12px;
   background: #1c211e;
@@ -798,6 +808,11 @@ section {
   color: #d7efe4;
   line-height: 1.75;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .code-block .c {
@@ -1149,7 +1164,69 @@ section {
   }
 
   .install-box {
-    padding: 22px;
+    padding: 18px 16px 20px;
+    border-radius: 18px;
+  }
+
+  .install-lead {
+    max-width: none;
+  }
+
+  .install-tabs {
+    margin: 14px 0 16px;
+  }
+
+  .install-tabs button {
+    flex: 1 1 auto;
+    text-align: center;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .install-grid {
+    gap: 18px;
+  }
+
+  .install-steps {
+    margin-top: 4px;
+    gap: 14px;
+  }
+
+  .install-steps li {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .install-steps .n {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    font-size: 11px;
+  }
+
+  .code-block {
+    font-size: 11px;
+    padding: 12px;
+    line-height: 1.65;
+  }
+
+  .store-card {
+    padding: 16px;
+  }
+
+  .store-logo {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+  }
+
+  .store-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .store-stats div {
+    padding: 8px 4px;
   }
 
   .hero-cta .btn {
@@ -1569,6 +1646,7 @@ section {
 
 .install-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin: 16px 0 18px;
 }

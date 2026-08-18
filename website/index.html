@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,650;1,9..144,500;1,9..144,650&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=day8" />
+  <link rel="stylesheet" href="./styles.css?v=day9" />
 </head>
 <body>
   <div class="bg-orbs" aria-hidden="true">
@@ -531,11 +531,11 @@
                   <div>
                     <strong>Clone &amp; build</strong>
                     <span>Produce the <code>dist/</code> folder from the repo.</span>
-                    <div class="code-block">
-                      <span class="c"># terminal</span><br />
-                      git clone https://github.com/Kadiwalhussain/VideoSearch.git<br />
-                      cd VideoSearch && npm install && npm run build
-                    </div>
+                    <pre class="code-block"><span class="c"># terminal</span>
+git clone https://github.com/Kadiwalhussain/VideoSearch.git
+cd VideoSearch
+npm install
+npm run build</pre>
                   </div>
                 </li>
                 <li>
@@ -585,10 +585,9 @@
                   <div>
                     <strong>Start the vault</strong>
                     <span>Same Wi‑Fi as your phone. Studio is served from the vault.</span>
-                    <div class="code-block">
-                      cd server && npm run start<br />
-                      <span class="c"># open http://127.0.0.1:8787/app/</span>
-                    </div>
+                    <pre class="code-block">cd server
+npm run start
+<span class="c"># http://127.0.0.1:8787/app/</span></pre>
                   </div>
                 </li>
                 <li>
@@ -623,11 +622,10 @@
                   <div>
                     <strong>Build the Flutter app</strong>
                     <span>One codebase for Android and iPhone. USB for iOS 26 wireless debug.</span>
-                    <div class="code-block">
-                      cd mobile<br />
-                      flutter run <span class="c"># Android device or emulator</span><br />
-                      ./tool/run_on_phone.sh <span class="c"># iPhone over USB</span>
-                    </div>
+                    <pre class="code-block">cd mobile
+flutter run
+<span class="c"># iPhone over USB:</span>
+./tool/run_on_phone.sh</pre>
                   </div>
                 </li>
                 <li>
