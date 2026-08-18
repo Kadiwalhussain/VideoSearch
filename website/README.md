@@ -1,40 +1,49 @@
-# VideoSearch AI — Official product website
+# VideoSearch AI — product website
 
-Premium marketing landing page for the **VideoSearch AI** Chrome extension.
+Static site only. No backend, no build step.
 
-## Preview locally
+**Live URL (after the one-time Pages setup below):**
+
+https://kadiwalhussain.github.io/VideoSearch/
+
+## Local preview
 
 ```bash
-# from repo root
-npx --yes serve website -p 5173
-# open http://localhost:5173
+npx --yes serve website -l 5180
+# http://localhost:5180
 ```
 
-Or open `website/index.html` directly in a browser.
+## Host for free — GitHub Pages
 
-## Deploy (GitHub Pages)
+This repo already deploys `website/` with `.github/workflows/deploy-website.yml`.
 
-1. Repo **Settings → Pages**
-2. Source: **Deploy from a branch**
-3. Branch: `main` · Folder: `/website`  
-   (or use `/docs` if you move this folder to `docs/`)
+Do this once in the GitHub repo:
 
-Custom domain optional. After deploy, the site is typically:
+1. Open **Settings → Pages**
+2. **Build and deployment → Source** = **GitHub Actions**
+3. Push `website/` (and the workflow) to `main`
 
-`https://<user>.github.io/VideoSearch/`
+The Action publishes only the UI folder. Every later push to `website/` updates the site.
 
-If using project Pages, asset paths already use relative `./` links so they work under a subpath.
+Do **not** pick “Deploy from a branch” + folder `/website`. GitHub only allows `/` or `/docs` for branch deploys, so that path 404s.
 
-## Contents
+## Other free hosts (same folder)
+
+All of these work with the raw `website/` folder — no npm build:
+
+| Host | How |
+|------|-----|
+| [Cloudflare Pages](https://pages.cloudflare.com) | Create project → connect this repo → **Root directory** `website` → deploy |
+| [Netlify](https://app.netlify.com/drop) | Drag the `website` folder onto Netlify Drop, or set publish directory to `website` |
+| [Vercel](https://vercel.com) | Import repo → **Root Directory** `website` → Framework: Other |
+
+Custom domain is optional on all of them.
+
+## What’s in this folder
 
 | File | Role |
 |------|------|
-| `index.html` | Full landing page |
-| `styles.css` | Brand system (mint glass, Sora / IBM Plex Mono) |
-| `assets/` | Icons + product imagery |
-
-## Brand
-
-- Background: ink `#06080b`
-- Accent: mint `#2dd4a8` / cyan `#22b8cf`
-- Product UI mock mirrors the floating extension pill
+| `index.html` | Landing page + live YouTube demo |
+| `styles.css` | Daylight studio theme |
+| `main.js` | Reveals + demo player |
+| `assets/` | Logo and product images |

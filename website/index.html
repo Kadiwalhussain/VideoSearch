@@ -1,21 +1,21 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="day">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>VideoSearch AI — Search what was said, not just what was titled</title>
-  <meta name="description" content="Chrome extension for YouTube. Local semantic search, Chat-with-Video RAG, topics, live transcript, and comment mood." />
-  <meta name="theme-color" content="#05070a" />
+  <title>VideoSearch AI — YouTube, searchable. Chrome, Studio, Android &amp; iPhone.</title>
+  <meta name="description" content="Extract topics from captions first, then marks. Shots and sources come from the transcript and the bio. Watch in-app on Android and iPhone." />
+  <meta name="theme-color" content="#F3EFE6" />
   <meta property="og:title" content="VideoSearch AI" />
-  <meta property="og:description" content="Search what was said on YouTube — not just what was titled." />
+  <meta property="og:description" content="Topics from CC, then marks. Shots and sources from transcript + bio. Chrome, Studio, Android, iPhone." />
   <meta property="og:type" content="website" />
   <meta property="og:image" content="./assets/product-hero.jpg" />
   <link rel="icon" type="image/png" href="./assets/logo.png" />
   <link rel="apple-touch-icon" href="./assets/logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,650;1,9..144,500;1,9..144,650&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css?v=day6" />
 </head>
 <body>
   <div class="bg-orbs" aria-hidden="true">
@@ -23,23 +23,15 @@
     <span class="orb orb-b"></span>
     <span class="orb orb-c"></span>
   </div>
+  <div class="grain" aria-hidden="true"></div>
 
-  <!-- SVG icon sprite -->
+  <!-- Official brand marks (Simple Icons) + Lucide UI icons -->
   <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
-    <symbol id="i-github" viewBox="0 0 24 24">
-      <path fill="currentColor" d="M12 .5C5.73.5.5 5.74.5 12.02c0 5.1 3.29 9.43 7.86 10.96.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.53-1.34-1.3-1.7-1.3-1.7-1.06-.73.08-.72.08-.72 1.17.08 1.79 1.2 1.79 1.2 1.04 1.78 2.73 1.27 3.4.97.11-.75.41-1.27.74-1.56-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11.1 11.1 0 0 1 2.9-.39c.98 0 1.97.13 2.9.39 2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.75.11 3.04.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.25 5.7.42.36.79 1.08.79 2.18 0 1.57-.01 2.84-.01 3.23 0 .31.21.68.8.56A10.52 10.52 0 0 0 23.5 12C23.5 5.74 18.27.5 12 .5z"/>
-    </symbol>
-    <symbol id="i-chrome" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.6"/>
-      <circle cx="12" cy="12" r="3.2" fill="currentColor"/>
-      <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M12 2.2v5.2M19.3 16.2l-4.5-2.6M4.7 16.2l4.5-2.6"/>
-      <path fill="currentColor" opacity="0.9" d="M12 2.2a9.8 9.8 0 0 1 8.4 4.8H12V2.2z"/>
-      <path fill="currentColor" opacity="0.55" d="M20.4 7A9.8 9.8 0 0 1 14.8 20l-2.8-4.9 8.4-8.1z"/>
-      <path fill="currentColor" opacity="0.35" d="M9.2 15.1 6.4 20A9.8 9.8 0 0 1 3.6 7h8.4L9.2 15.1z"/>
-    </symbol>
-    <symbol id="i-youtube" viewBox="0 0 24 24">
-      <path fill="currentColor" d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.5 31.5 0 0 0 0 12a31.5 31.5 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.5 31.5 0 0 0 24 12a31.5 31.5 0 0 0-.5-5.8zM9.75 15.5v-7l6.5 3.5-6.5 3.5z"/>
-    </symbol>
+    <symbol id="si-github" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></symbol>
+    <symbol id="si-youtube" viewBox="0 0 24 24"><path fill="currentColor" d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186 31.247 31.247 0 0 0 0 12a31.247 31.247 0 0 0 .502 5.814 3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136A31.247 31.247 0 0 0 24 12a31.247 31.247 0 0 0-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></symbol>
+    <symbol id="si-chrome" viewBox="0 0 24 24"><path fill="currentColor" d="M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342.275l3.954 6.849a5.45 5.45 0 0 1-2.51 7.394A5.45 5.45 0 0 1 12 17.455a5.44 5.44 0 0 1-2.165-.447l-3.954 6.849A12 12 0 0 0 12 24c6.627 0 12-5.373 12-12 0-1.54-.29-3.011-.818-4.365zM12 8.182a3.818 3.818 0 1 0 0 7.636 3.818 3.818 0 0 0 0-7.636z"/></symbol>
+    <symbol id="si-android" viewBox="0 0 24 24"><path fill="currentColor" d="M17.523 15.3414c-.5511 0-.9993-.4486-.9993-.9997s.4483-.9993.9993-.9993c.5511 0 .9993.4483.9993.9993.0001.5511-.4482.9997-.9993.9997m-11.046 0c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.5511 0 .9993.4483.9993.9993 0 .5511-.4483.9997-.9993.9997m11.4045-6.02l1.9973-3.4592a.416.416 0 00-.1521-.5676.416.416 0 00-.5676.1521l-2.0223 3.503C15.5902 8.2439 13.8533 7.8508 12 7.8508s-3.5902.3931-5.1367 1.0989L4.841 5.4467a.4161.4161 0 00-.5677-.1521.4157.4157 0 00-.1521.5676l1.9973 3.4592C2.6889 11.186.3432 14.6589 0 18.761h24c-.3435-4.1021-2.6892-7.575-6.1185-9.4396"/></symbol>
+    <symbol id="si-apple" viewBox="0 0 24 24"><path fill="currentColor" d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></symbol>
   </svg>
 
   <header class="nav">
@@ -48,200 +40,436 @@
         <img class="brand-logo" src="./assets/logo.png" alt="" width="40" height="40" />
         <span class="brand-text">VideoSearch<em>AI</em></span>
       </a>
-      <button class="nav-toggle" type="button" aria-label="Open menu" id="navToggle">☰</button>
+      <button class="nav-toggle" type="button" aria-label="Open menu" id="navToggle"><i data-lucide="menu"></i></button>
       <nav class="nav-links" id="navLinks">
+        <a href="#platforms">Platforms</a>
         <a href="#features">Features</a>
-        <a href="#how">How it works</a>
+        <a href="#demo">Demo</a>
+        <a href="#how">How</a>
         <a href="#install">Install</a>
-        <a href="#faq">FAQ</a>
         <a class="btn btn-ghost btn-icon" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener">
-          <svg class="ico" width="18" height="18"><use href="#i-github"/></svg>
+          <svg class="ico brand" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-github"/></svg>
           GitHub
         </a>
         <a class="btn btn-primary btn-icon" href="#install">
-          <svg class="ico" width="18" height="18"><use href="#i-chrome"/></svg>
-          Get extension
+          <svg class="ico brand" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-chrome"/></svg>
+          Get the product
         </a>
       </nav>
     </div>
   </header>
 
   <main id="top">
-    <!-- HERO: copy left + YOUR product screenshot (Image #2) right -->
     <section class="hero" id="product">
       <div class="wrap hero-grid">
         <div class="hero-copy">
-          <div class="eyebrow reveal" data-reveal>
-            <span class="dot"></span>
-            Chrome extension · Local-first
-          </div>
+          <p class="eyebrow reveal" data-reveal>
+            <span>
+              <svg class="ico brand" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-chrome"/></svg>
+              Chrome
+            </span>
+            <span>
+              <i data-lucide="monitor" class="ico"></i>
+              Studio
+            </span>
+            <span>
+              <svg class="ico brand" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-android"/></svg>
+              Android
+            </span>
+            <span>
+              <svg class="ico brand" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-apple"/></svg>
+              iPhone
+            </span>
+          </p>
           <h1 class="reveal" data-reveal>
-            Search what was <span class="grad">said</span><br />
-            — not just what was titled.
+            Watch YouTube like a <span class="grad">library</span>.
           </h1>
           <p class="hero-lead reveal" data-reveal>
-            Index YouTube captions on your machine. Find moments by meaning,
-            chat with the video, and jump to the exact second.
+            Captions become topics first, then marks. Shots and sources
+            pull from the transcript <em>and</em> the bio — then you
+            watch in-app on Android or iPhone.
           </p>
           <div class="hero-cta reveal" data-reveal>
             <a class="btn btn-primary btn-lg btn-icon" href="#install">
-              <svg class="ico" width="20" height="20"><use href="#i-chrome"/></svg>
+              <svg class="ico brand" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-chrome"/></svg>
               Install for Chrome
             </a>
-            <a class="btn btn-ghost btn-lg btn-icon" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener">
-              <svg class="ico" width="20" height="20"><use href="#i-github"/></svg>
-              View on GitHub
+            <a class="btn btn-ghost btn-lg btn-icon" href="#demo">
+              <i data-lucide="play" class="ico"></i>
+              Watch the live demo
             </a>
           </div>
           <div class="hero-meta reveal" data-reveal>
-            <span><strong>Manifest V3</strong> · TypeScript</span>
-            <span><strong>On-device</strong> embeddings</span>
-            <span><strong>Optional</strong> LLM chat</span>
+            <span><strong>Topics first</strong> from CC</span>
+            <span><strong>Then marks</strong></span>
+            <span><strong>Android + iPhone</strong></span>
           </div>
           <div class="trust-inline reveal" data-reveal>
-            <span class="trust-chip"><span>⌕</span> Semantic search</span>
-            <span class="trust-chip"><span>💬</span> Chat RAG</span>
-            <span class="trust-chip"><span>☰</span> Live transcript</span>
-            <span class="trust-chip"><span>☺</span> Comment mood</span>
-            <span class="trust-chip"><span>🔒</span> Local-first</span>
+            <span class="trust-chip"><i data-lucide="library" class="ico"></i> Topics from CC</span>
+            <span class="trust-chip"><i data-lucide="bookmark" class="ico"></i> Marks next</span>
+            <span class="trust-chip"><i data-lucide="camera" class="ico"></i> Shots from CC</span>
+            <span class="trust-chip"><i data-lucide="link-2" class="ico"></i> Sources · CC + bio</span>
+            <span class="trust-chip"><svg class="ico brand" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-android"/></svg> Android</span>
+            <span class="trust-chip"><svg class="ico brand" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-apple"/></svg> iPhone</span>
           </div>
         </div>
 
         <div class="hero-visual reveal" data-reveal>
-          <figure class="product-shot">
-            <!-- Exact product image you provided (YouTube + search results panel) -->
+          <figure class="product-shot tilt">
             <img
-              src="./assets/product-hero.jpg?v=3"
-              alt="VideoSearch AI on YouTube — search gradient descent with timestamped results and play buttons"
+              src="./assets/product-hero.jpg?v=4"
+              alt="VideoSearch AI on YouTube — search a lecture and jump to the exact second"
               width="1672"
               height="941"
               fetchpriority="high"
               decoding="async"
             />
+            <div class="float-chip chip-a"><i data-lucide="bookmark" class="ico"></i> Mark 18:42</div>
+            <div class="float-chip chip-b"><i data-lucide="camera" class="ico"></i> Shot saved</div>
+            <div class="float-chip chip-c"><i data-lucide="link-2" class="ico"></i> 6 sources</div>
           </figure>
         </div>
       </div>
     </section>
 
-    <!-- FEATURES -->
-    <section id="features">
+    <div class="marquee-wrap" aria-hidden="true">
+      <div class="marquee">
+        <div class="marquee-track">
+          <span>Topics from CC</span><span>Then marks</span><span>Shots from transcript</span><span>Sources from CC + bio</span><span>Android</span><span>iPhone</span><span>Studio</span><span>In-app player</span><span>Semantic search</span><span>Chat RAG</span><span>Playlists</span>
+          <span>Topics from CC</span><span>Then marks</span><span>Shots from transcript</span><span>Sources from CC + bio</span><span>Android</span><span>iPhone</span><span>Studio</span><span>In-app player</span><span>Semantic search</span><span>Chat RAG</span><span>Playlists</span>
+        </div>
+      </div>
+    </div>
+
+    <section id="platforms">
       <div class="wrap">
         <div class="section-head center reveal" data-reveal>
-          <div class="kicker">Product</div>
-          <h2>Built for long videos</h2>
-          <p>Lectures, podcasts, interviews — where the answer is spoken, not written in the title.</p>
+          <div class="kicker">The system</div>
+          <h2>One vault. Three ways in.</h2>
+          <p>Capture on YouTube. Organize in Studio. Rewatch on Android or iPhone — same vault.</p>
         </div>
-        <div class="features-grid">
-          <article class="feature-card reveal" data-reveal>
-            <div class="feature-icon">⌕</div>
-            <h3>Semantic search</h3>
-            <p>Natural language → ranked moments. MiniLM embeddings match meaning, not just keywords.</p>
-            <span class="tag">Offline after index</span>
+        <div class="platform-grid">
+          <article class="platform-card reveal" data-reveal>
+            <div class="platform-ico"><svg class="ico brand" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-chrome"/></svg></div>
+            <h3>Chrome extension</h3>
+            <p>Lives on the YouTube page. Search the spoken words, mark, shoot, sync the bio, and push everything to your vault.</p>
+            <ul>
+              <li>Floating mint pill</li>
+              <li>On-device embeddings</li>
+              <li>Mark · Shot · Sync bio</li>
+            </ul>
           </article>
-          <article class="feature-card reveal" data-reveal>
-            <div class="feature-icon">💬</div>
-            <h3>Chat with Video</h3>
-            <p>Multi-turn RAG over captions. Answers with clickable timestamps you can jump to.</p>
-            <span class="tag">Groq / OpenAI-compatible</span>
+          <article class="platform-card reveal" data-reveal>
+            <div class="platform-ico"><i data-lucide="monitor" class="ico"></i></div>
+            <h3>Studio</h3>
+            <p>The web desk for your vault. Library, playlists, marks, shots, bios, sources, share cards, analytics.</p>
+            <ul>
+              <li>Newest videos on top</li>
+              <li>Edit bio · see sources</li>
+              <li>Share a video card</li>
+            </ul>
           </article>
-          <article class="feature-card reveal" data-reveal>
-            <div class="feature-icon">◈</div>
-            <h3>Topics & chapters</h3>
-            <p>Official chapters first, then smart topics — land on the right section instantly.</p>
-            <span class="tag">Long lectures</span>
-          </article>
-          <article class="feature-card reveal" data-reveal>
-            <div class="feature-icon">☰</div>
-            <h3>Live transcript</h3>
-            <p>Full captions synced to playback. Click any line to seek. Follow mode stays with you.</p>
-            <span class="tag">On-device</span>
-          </article>
-          <article class="feature-card reveal" data-reveal>
-            <div class="feature-icon">☺</div>
-            <h3>Comment mood</h3>
-            <p>See what viewers praise or criticize — good / mixed / bad, themes, sample comments.</p>
-            <span class="tag">On-device ML</span>
-          </article>
-          <article class="feature-card reveal" data-reveal>
-            <div class="feature-icon">⚡</div>
-            <h3>Floating UI</h3>
-            <p>Compact mint pill on the video. Expand for Search, Chat, Topics, Live, Mood, Settings.</p>
-            <span class="tag">Non-intrusive</span>
+          <article class="platform-card reveal" data-reveal>
+            <div class="platform-ico platform-ico-pair">
+              <svg class="ico brand" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-android"/></svg>
+              <svg class="ico brand" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-apple"/></svg>
+            </div>
+            <h3>Android &amp; iPhone</h3>
+            <p>The same Flutter app on both. Tap a mark or shot and the in-app player jumps to that second — you stay in VideoSearch.</p>
+            <ul>
+              <li>Official in-app player</li>
+              <li>Topics first, then marks</li>
+              <li>Newest videos on top</li>
+            </ul>
           </article>
         </div>
       </div>
     </section>
 
-    <!-- HOW -->
+    <section id="features">
+      <div class="wrap">
+        <div class="section-head center reveal" data-reveal>
+          <div class="kicker">Everything we built</div>
+          <h2>The full instrument panel</h2>
+          <p>Not just search. A complete way to study, archive, and rewatch long videos.</p>
+        </div>
+        <div class="features-grid features-grid-wide">
+          <article class="feature-card feature-card-hero reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="sparkles" class="ico"></i></div>
+            <h3>Extract from CC + bio</h3>
+            <p>Best feature: captions become topics first, then marks. Shots and sources are mined from the transcript <em>and</em> the description.</p>
+            <span class="tag">Default flow</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="search" class="ico"></i></div>
+            <h3>Semantic search</h3>
+            <p>Ask in plain language. MiniLM embeddings rank the spoken moment, not the title.</p>
+            <span class="tag">On-device</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="message-square" class="ico"></i></div>
+            <h3>Chat with video</h3>
+            <p>Multi-turn RAG over captions. Answers come back with jumpable timestamps.</p>
+            <span class="tag">Optional LLM</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="library" class="ico"></i></div>
+            <h3>Topics from captions</h3>
+            <p>Closed captions are scanned first. Chapters and spoken sections become a map before anything else.</p>
+            <span class="tag">Step 1 · CC</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="captions" class="ico"></i></div>
+            <h3>Live transcript</h3>
+            <p>Full captions follow playback. Click any line to seek.</p>
+            <span class="tag">Synced</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="smile" class="ico"></i></div>
+            <h3>Comment mood</h3>
+            <p>On-device read of what viewers praise or hate — themes, samples, score.</p>
+            <span class="tag">On-device ML</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="bookmark" class="ico"></i></div>
+            <h3>Then marks</h3>
+            <p>After topics, key spoken lines become marks — the default view so you immediately see what mattered.</p>
+            <span class="tag">Step 2 · transcript</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="camera" class="ico"></i></div>
+            <h3>Shots from CC</h3>
+            <p>Visual beats in the transcript become shots. You can still tap Shot yourself. All stored in the vault.</p>
+            <span class="tag">From captions</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="file-text" class="ico"></i></div>
+            <h3>Sync bio</h3>
+            <p>One tap copies the full YouTube description — including the hidden “Show more” text.</p>
+            <span class="tag">Studio-editable</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="link-2" class="ico"></i></div>
+            <h3>Sources · CC + bio</h3>
+            <p>Links spoken in captions and links written in the description — Drive, PPT, GitHub, courses — land in Sources.</p>
+            <span class="tag">Transcript + bio</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="list-video" class="ico"></i></div>
+            <h3>Playlists</h3>
+            <p>Build lists from any video. Latest on top. Cover is the newest lecture you touched.</p>
+            <span class="tag">Watch later + saved</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="play" class="ico"></i></div>
+            <h3>In-app player</h3>
+            <p>Watch on Android or iPhone without bouncing to YouTube. Marks and shots seek the player.</p>
+            <span class="tag">Android + iOS</span>
+          </article>
+          <article class="feature-card reveal" data-reveal>
+            <div class="feature-icon"><i data-lucide="share-2" class="ico"></i></div>
+            <h3>Share + analytics</h3>
+            <p>Public share cards for a video. Studio analytics on marks, shots, and channels.</p>
+            <span class="tag">Studio</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="demo">
+      <div class="wrap">
+        <div class="section-head center reveal" data-reveal>
+          <div class="kicker">Live on this page</div>
+          <h2>Topics from captions. Then marks.</h2>
+          <p>
+            The whole lecture is already extracted on this page — no backend.
+            <strong>Topics from captions</strong>, then <strong>marks by default</strong>.
+            Shots and sources from the full transcript and the bio. Tap any card to jump.
+          </p>
+        </div>
+
+        <div class="live-demo reveal" data-reveal data-live-demo>
+          <div class="live-stage">
+            <div class="live-player">
+              <div class="live-player-frame">
+                <div id="yt-demo"></div>
+              </div>
+            </div>
+
+            <aside class="live-side">
+              <div class="live-side-tabs" role="tablist">
+                <button type="button" data-demo-tab="topics">
+                  <i data-lucide="library" class="ico"></i>
+                  Topics <em data-demo-n="topics">0</em>
+                </button>
+                <button type="button" class="is-on" data-demo-tab="marks">
+                  <i data-lucide="bookmark" class="ico"></i>
+                  Marks <em data-demo-n="marks">0</em>
+                </button>
+                <button type="button" data-demo-tab="shots">
+                  <i data-lucide="camera" class="ico"></i>
+                  Shots <em data-demo-n="shots">0</em>
+                </button>
+                <button type="button" data-demo-tab="sources">
+                  <i data-lucide="link-2" class="ico"></i>
+                  Sources <em data-demo-n="sources">0</em>
+                </button>
+                <button type="button" data-demo-tab="phone">
+                  <svg class="ico brand" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-android"/></svg>
+                  Apps
+                </button>
+              </div>
+
+              <div class="live-pane" data-demo-pane="topics">
+                <div class="live-list" data-demo-list="topics"></div>
+              </div>
+              <div class="live-pane is-on" data-demo-pane="marks">
+                <p class="live-hint">You save these — notes at a timestamp. The system does not write them.</p>
+                <div class="live-list" data-demo-list="marks"></div>
+              </div>
+              <div class="live-pane" data-demo-pane="shots">
+                <p class="live-hint">You take these — screenshots of the slide or frame. The system does not capture them.</p>
+                <div class="live-shots" data-demo-list="shots"></div>
+              </div>
+              <div class="live-pane" data-demo-pane="sources">
+                <div class="live-bio" data-demo-bio>
+                  Gradient descent, how neural networks learn — 3Blue1Brown.
+                </div>
+                <div class="live-list" data-demo-list="sources"></div>
+              </div>
+              <div class="live-pane live-pane-phone" data-demo-pane="phone">
+                <div class="live-phone">
+                  <div class="live-phone-glass">
+                    <div class="live-phone-status">
+                      <span class="live-phone-clock-mini" data-demo-phone-clock>0:00</span>
+                      <span class="live-phone-carrier">VideoSearch</span>
+                      <span class="live-phone-os" aria-hidden="true">
+                        <svg class="ico brand" width="10" height="10" viewBox="0 0 24 24"><use href="#si-android"/></svg>
+                        <svg class="ico brand" width="10" height="10" viewBox="0 0 24 24"><use href="#si-apple"/></svg>
+                      </span>
+                    </div>
+                    <button type="button" class="live-phone-screen" data-demo-phone-play aria-label="Play in-app">
+                      <img src="https://i.ytimg.com/vi/IHZwWFHWa-w/hqdefault.jpg" alt="" />
+                      <span class="live-phone-play"><i data-lucide="play"></i></span>
+                    </button>
+                    <div class="live-phone-meta">
+                      <strong>Gradient descent</strong>
+                      <small>3Blue1Brown</small>
+                    </div>
+                    <div class="live-phone-feed" data-demo-phone-feed></div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="stats-band">
+      <div class="wrap stats-row">
+        <div class="stat reveal" data-reveal>
+          <b data-count="3">0</b>
+          <span>Platforms</span>
+        </div>
+        <div class="stat reveal" data-reveal>
+          <b data-count="12">0</b>
+          <span>Product surfaces</span>
+        </div>
+        <div class="stat reveal" data-reveal>
+          <b>0</b>
+          <span>Leave-to-YouTube</span>
+        </div>
+        <div class="stat reveal" data-reveal>
+          <b>1</b>
+          <span>Signed-in vault</span>
+        </div>
+      </div>
+    </section>
+
     <section id="how">
       <div class="wrap">
         <div class="section-head reveal" data-reveal>
           <div class="kicker">Pipeline</div>
-          <h2>How it works</h2>
-          <p>Local-first from captions to answers — no VideoSearch account.</p>
+          <h2>How a lecture becomes yours</h2>
+          <p>Captions first. Then marks. Then Android or iPhone — one signed-in account.</p>
         </div>
-        <div class="steps">
+        <div class="steps steps-6">
           <div class="step reveal" data-reveal>
-            <h3>Captions</h3>
-            <p>Native timedtext via YouTube Innertube (manual preferred over ASR).</p>
+            <h3>Index CC</h3>
+            <p>Closed captions land on-device. MiniLM embeds every spoken line.</p>
           </div>
           <div class="step reveal" data-reveal>
-            <h3>Chunk & embed</h3>
-            <p>Sentence-aware windows + MiniLM in WASM, stored in IndexedDB.</p>
+            <h3>Topics first</h3>
+            <p>The transcript is clustered into chapters before anything else.</p>
           </div>
           <div class="step reveal" data-reveal>
-            <h3>Search & chat</h3>
-            <p>Hybrid retrieve for moments; RAG context for Chat answers.</p>
+            <h3>Then marks</h3>
+            <p>Key spoken lines become marks — the default view you open next.</p>
           </div>
           <div class="step reveal" data-reveal>
-            <h3>Jump</h3>
-            <p>Reliable player seek from times, topics, sources, or live lines.</p>
+            <h3>CC + bio</h3>
+            <p>Shots from caption beats. Sources from spoken URLs and the description.</p>
+          </div>
+          <div class="step reveal" data-reveal>
+            <h3>Organize</h3>
+            <p>Studio lists newest first. Playlists, saved, later, share cards.</p>
+          </div>
+          <div class="step reveal" data-reveal>
+            <h3>Rewatch</h3>
+            <p>Open Android or iPhone. Play in-app. Tap a mark — the player seeks.</p>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- COMPARE -->
     <section>
       <div class="wrap">
         <div class="section-head center reveal" data-reveal>
           <div class="kicker">Why VideoSearch</div>
-          <h2>Stop scrubbing. Start asking.</h2>
+          <h2>Stop scrubbing. Start keeping.</h2>
         </div>
         <div class="compare">
           <div class="compare-card bad reveal" data-reveal>
             <h3>Without</h3>
             <ul>
-              <li><span class="mark">×</span> Scrub the timeline hoping to find a phrase</li>
-              <li><span class="mark">×</span> Search only titles &amp; tags</li>
-              <li><span class="mark">×</span> Re-watch whole chapters for one concept</li>
-              <li><span class="mark">×</span> No grounded Q&amp;A with timestamps</li>
+              <li><span class="mark">×</span> Scrub a 2-hour lecture for one sentence</li>
+              <li><span class="mark">×</span> Lose Drive / PPT links buried in the bio</li>
+              <li><span class="mark">×</span> Screenshots trapped in camera roll</li>
+              <li><span class="mark">×</span> Tap a note — thrown into YouTube ads</li>
+              <li><span class="mark">×</span> Phone library is a pile of cinema cards</li>
             </ul>
           </div>
           <div class="compare-card good reveal" data-reveal>
             <h3>With VideoSearch AI</h3>
             <ul>
-              <li><span class="mark">✓</span> Type a concept → ranked moments</li>
-              <li><span class="mark">✓</span> Search what was actually spoken</li>
-              <li><span class="mark">✓</span> Topic chips land on the right section</li>
-              <li><span class="mark">✓</span> Chat RAG with clickable citations</li>
+              <li><span class="mark">✓</span> Type the concept → ranked spoken moments</li>
+              <li><span class="mark">✓</span> Topics from CC, then marks by default</li>
+              <li><span class="mark">✓</span> Shots &amp; sources from transcript + bio</li>
+              <li><span class="mark">✓</span> Shots live in the vault, by video &amp; time</li>
+              <li><span class="mark">✓</span> In-app player. Mark seeks. You stay.</li>
+              <li><span class="mark">✓</span> Latest on top, oldest at the bottom</li>
             </ul>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- INSTALL -->
     <section id="install">
       <div class="wrap">
         <div class="install-box reveal" data-reveal>
-          <div class="install-grid">
+          <div class="kicker">Get started</div>
+          <h2 class="install-title">Install the system</h2>
+          <p class="install-lead">Chrome captures. Studio organizes. Android and iPhone play. Same vault login on all of them.</p>
+
+          <div class="install-tabs" role="tablist">
+            <button type="button" class="is-on" data-install="chrome">Chrome</button>
+            <button type="button" data-install="studio">Studio</button>
+            <button type="button" data-install="phone">Android &amp; iPhone</button>
+          </div>
+
+          <div class="install-grid install-pane is-on" data-install-pane="chrome">
             <div>
-              <div class="kicker">Get started</div>
-              <h2 class="install-title">Install the Chrome extension</h2>
-              <p class="install-lead">
-                Load unpacked from the open-source build. Works with Chrome today.
-              </p>
               <ol class="install-steps">
                 <li>
                   <span class="n">1</span>
@@ -258,99 +486,147 @@
                 <li>
                   <span class="n">2</span>
                   <div>
-                    <strong>Open Chrome extensions</strong>
-                    <span>Go to <code>chrome://extensions</code> → enable <strong>Developer mode</strong>.</span>
+                    <strong>Load unpacked</strong>
+                    <span><code>chrome://extensions</code> → Developer mode → select <code>dist/</code>.</span>
                   </div>
                 </li>
                 <li>
                   <span class="n">3</span>
                   <div>
-                    <strong>Load unpacked</strong>
-                    <span>Select the project’s <code>dist/</code> directory — not the repo root.</span>
-                  </div>
-                </li>
-                <li>
-                  <span class="n">4</span>
-                  <div>
-                    <strong>Open YouTube</strong>
-                    <span>Click the mint pill. Add a Groq key in ⚙ for full Chat RAG.</span>
+                    <strong>Open YouTube &amp; sign in</strong>
+                    <span>Click the mint pill. Mark, Shot, Sync bio. Search never needs a key.</span>
                   </div>
                 </li>
               </ol>
-              <div class="hero-cta install-cta">
-                <a class="btn btn-primary btn-lg btn-icon" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener">
-                  <svg class="ico" width="20" height="20"><use href="#i-github"/></svg>
-                  Open GitHub repo
-                </a>
-                <a class="btn btn-ghost btn-lg btn-icon" href="#top">
-                  <svg class="ico" width="20" height="20"><use href="#i-chrome"/></svg>
-                  Back to top
-                </a>
-              </div>
             </div>
-
             <aside class="store-card">
               <div class="store-top">
                 <img class="store-logo" src="./assets/logo.png" alt="VideoSearch AI" width="64" height="64" />
                 <div>
-                  <h3>VideoSearch AI</h3>
+                  <h3>Chrome extension</h3>
                   <p>
-                    <svg class="ico inline yt-color" width="14" height="14"><use href="#i-youtube"/></svg>
-                    YouTube ·
-                    <svg class="ico inline chrome-color" width="14" height="14"><use href="#i-chrome"/></svg>
-                    Chrome · MV3
+                    <svg class="ico brand inline yt-color" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-youtube"/></svg>
+                    YouTube · MV3
                   </p>
                 </div>
               </div>
               <div class="store-stats">
-                <div><b>v1.1</b><span>Release</span></div>
-                <div><b>Local</b><span>Embed</span></div>
-                <div><b>RAG</b><span>Chat</span></div>
+                <div><b>Search</b><span>Local</span></div>
+                <div><b>Mark</b><span>Vault</span></div>
+                <div><b>Bio</b><span>Sources</span></div>
               </div>
-              <p class="store-blurb">
-                Search · Chat · Topics · Live · Mood. Search never needs an API key.
-              </p>
               <a class="btn btn-primary btn-block btn-icon" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener">
-                <svg class="ico" width="18" height="18"><use href="#i-github"/></svg>
+                <svg class="ico brand" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-github"/></svg>
                 Get it on GitHub
               </a>
-              <div class="store-icons">
-                <span title="Chrome"><svg class="ico chrome-color" width="28" height="28"><use href="#i-chrome"/></svg></span>
-                <span title="YouTube"><svg class="ico yt-color" width="28" height="28"><use href="#i-youtube"/></svg></span>
-                <span title="GitHub"><svg class="ico" width="28" height="28"><use href="#i-github"/></svg></span>
+            </aside>
+          </div>
+
+          <div class="install-grid install-pane" data-install-pane="studio">
+            <div>
+              <ol class="install-steps">
+                <li>
+                  <span class="n">1</span>
+                  <div>
+                    <strong>Start the vault</strong>
+                    <span>Same Wi‑Fi as your phone. Studio is served from the vault.</span>
+                    <div class="code-block">
+                      cd server && npm run start<br />
+                      <span class="c"># open http://127.0.0.1:8787/app/</span>
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <span class="n">2</span>
+                  <div>
+                    <strong>Sign in with the same account</strong>
+                    <span>Library, marks, shots, playlists, bio, sources, share, analytics.</span>
+                  </div>
+                </li>
+              </ol>
+            </div>
+            <aside class="store-card">
+              <div class="store-top">
+                <img class="store-logo" src="./assets/logo.png" alt="" width="64" height="64" />
+                <div>
+                  <h3>Studio</h3>
+                  <p>
+                    <i data-lucide="monitor" class="ico inline"></i>
+                    Web desk
+                  </p>
+                </div>
               </div>
+              <p class="store-blurb">Newest videos on top. Edit the bio. See every extracted source.</p>
+            </aside>
+          </div>
+
+          <div class="install-grid install-pane" data-install-pane="phone">
+            <div>
+              <ol class="install-steps">
+                <li>
+                  <span class="n">1</span>
+                  <div>
+                    <strong>Build the Flutter app</strong>
+                    <span>One codebase for Android and iPhone. USB for iOS 26 wireless debug.</span>
+                    <div class="code-block">
+                      cd mobile<br />
+                      flutter run <span class="c"># Android device or emulator</span><br />
+                      ./tool/run_on_phone.sh <span class="c"># iPhone over USB</span>
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <span class="n">2</span>
+                  <div>
+                    <strong>Point it at your vault</strong>
+                    <span>Same LAN IP, same login. Tap a mark — it plays here, not in YouTube.</span>
+                  </div>
+                </li>
+              </ol>
+            </div>
+            <aside class="store-card">
+              <div class="store-top">
+                <img class="store-logo" src="./assets/logo.png" alt="" width="64" height="64" />
+                <div>
+                  <h3>Android &amp; iPhone</h3>
+                  <p>
+                    <svg class="ico brand inline" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-android"/></svg>
+                    <svg class="ico brand inline" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-apple"/></svg>
+                    Flutter · in-app player
+                  </p>
+                </div>
+              </div>
+              <p class="store-blurb">Same app on both. Topics first, then marks. Latest on top. Official YouTube player inside the app.</p>
             </aside>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- PRIVACY -->
     <section id="privacy">
       <div class="wrap">
         <div class="section-head center reveal" data-reveal>
           <div class="kicker">Privacy</div>
-          <h2>Local-first by design</h2>
-          <p>Transcripts and embeddings stay in the browser. You control optional LLM calls.</p>
+          <h2>Local search. Optional vault.</h2>
+          <p>Indexing stays in the browser. The account vault is only for marks, shots, bios, and sources you choose to sync.</p>
         </div>
         <div class="privacy-grid">
           <div class="privacy-card reveal" data-reveal>
             <h3>On-device index</h3>
-            <p>Captions chunked and embedded with MiniLM in WASM. Indexes live in IndexedDB.</p>
+            <p>Captions and MiniLM embeddings live in IndexedDB. Search works without a key.</p>
           </div>
           <div class="privacy-card reveal" data-reveal>
-            <h3>No product account</h3>
-            <p>No login, no sync server, no analytics backend in the extension pipeline.</p>
+            <h3>Your vault, your login</h3>
+            <p>Marks, shots, bios, and sources sync when you sign in — Chrome, Studio, and phone share it.</p>
           </div>
           <div class="privacy-card reveal" data-reveal>
-            <h3>Optional AI only</h3>
-            <p>Chat and smart topics use your key when enabled. Search works without one.</p>
+            <h3>Official player</h3>
+            <p>In-app watch uses YouTube’s official embed. Ads follow YouTube. We don’t strip them.</p>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- FAQ -->
     <section id="faq">
       <div class="wrap">
         <div class="section-head center reveal" data-reveal>
@@ -359,12 +635,24 @@
         </div>
         <div class="faq">
           <details class="reveal" data-reveal open>
-            <summary>Does it work offline?</summary>
-            <p>After indexing, search, local topics, live transcript, and seeks work offline. Chat needs network for the LLM.</p>
+            <summary>Do I have to leave for YouTube to rewatch a mark?</summary>
+            <p>No. On Android or iPhone, tap a mark or shot — the in-app player seeks. YouTube is only if you choose the open icon.</p>
+          </details>
+          <details class="reveal" data-reveal>
+            <summary>What is extracted automatically?</summary>
+            <p><strong>Topics first</strong> from closed captions, then <strong>marks</strong> from the transcript. Shots come from key CC beats. Sources come from URLs spoken in captions <em>and</em> links in the bio.</p>
+          </details>
+          <details class="reveal" data-reveal>
+            <summary>How do sources get into Studio?</summary>
+            <p>From the transcript and from <strong>Sync bio</strong>. Spoken links plus Drive / PPT / PDF / GitHub in the description all land in Sources.</p>
           </details>
           <details class="reveal" data-reveal>
             <summary>Do I need an API key?</summary>
-            <p>Not for search. For Chat RAG, paste an OpenAI-compatible key in Settings (Groq default endpoint).</p>
+            <p>Not for search, marks, shots, or bio sync. Chat RAG uses an optional OpenAI-compatible key (Groq by default).</p>
+          </details>
+          <details class="reveal" data-reveal>
+            <summary>Is the player ad-free?</summary>
+            <p>It is YouTube’s official in-app player. We keep you inside VideoSearch; we do not bypass YouTube ads.</p>
           </details>
           <details class="reveal" data-reveal>
             <summary>Where is the code?</summary>
@@ -377,15 +665,15 @@
     <div class="wrap">
       <div class="final-cta reveal" data-reveal>
         <img class="final-logo" src="./assets/logo.png" alt="" width="72" height="72" />
-        <h2>Find the moment. Skip the scrub.</h2>
-        <p>Turn every long YouTube video into something you can search, chat with, and navigate by meaning.</p>
+        <h2>Find the moment. Keep the frame. Play it here.</h2>
+        <p>Chrome captures. Studio files it. Android and iPhone play it back — topics first, then marks.</p>
         <div class="hero-cta">
           <a class="btn btn-primary btn-lg btn-icon" href="#install">
-            <svg class="ico" width="20" height="20"><use href="#i-chrome"/></svg>
-            Install for Chrome
+            <svg class="ico brand" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-chrome"/></svg>
+            Get the product
           </a>
           <a class="btn btn-ghost btn-lg btn-icon" href="https://github.com/Kadiwalhussain/VideoSearch" target="_blank" rel="noopener">
-            <svg class="ico" width="20" height="20"><use href="#i-github"/></svg>
+            <svg class="ico brand" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-github"/></svg>
             Star on GitHub
           </a>
         </div>
@@ -402,15 +690,17 @@
       <p>© <span id="year"></span> VideoSearch AI · Search what was said.</p>
       <div class="footer-links">
         <a href="https://github.com/Kadiwalhussain/VideoSearch" aria-label="GitHub">
-          <svg class="ico" width="20" height="20"><use href="#i-github"/></svg>
+          <svg class="ico brand" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><use href="#si-github"/></svg>
         </a>
         <a href="#features">Features</a>
+        <a href="#platforms">Platforms</a>
         <a href="#install">Install</a>
         <a href="#privacy">Privacy</a>
       </div>
     </div>
   </footer>
 
-  <script src="./main.js"></script>
+  <script src="https://unpkg.com/lucide@0.544.0/dist/umd/lucide.min.js"></script>
+  <script src="./main.js?v=day6"></script>
 </body>
 </html>
