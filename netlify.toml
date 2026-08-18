@@ -1,0 +1,7 @@
+[build]
+  base = "website"
+  command = "true"
+  publish = "."
+
+[build.environment]
+  NODE_VERSION = "20"

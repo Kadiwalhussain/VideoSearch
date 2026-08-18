@@ -1,10 +1,6 @@
 # VideoSearch AI — product website
 
-Static site only. No backend, no build step.
-
-**Live URL (after the one-time Pages setup below):**
-
-https://kadiwalhussain.github.io/VideoSearch/
+Static HTML/CSS/JS. No backend. No npm build.
 
 ## Local preview
 
@@ -13,31 +9,38 @@ npx --yes serve website -l 5180
 # http://localhost:5180
 ```
 
-## Host for free — GitHub Pages
+## Host for free — Vercel or Netlify
 
-This repo already deploys `website/` with `.github/workflows/deploy-website.yml`.
+The repo is already set up so **only `website/`** is published. Import the GitHub repo. Do not let the host build the Chrome extension or Studio app.
 
-Do this once in the GitHub repo:
+### Vercel
 
-1. Open **Settings → Pages**
-2. **Build and deployment → Source** = **GitHub Actions**
-3. Push `website/` (and the workflow) to `main`
+1. Open [vercel.com/new](https://vercel.com/new)
+2. Import `Kadiwalhussain/VideoSearch`
+3. Confirm it picked up `vercel.json`:
+   - Framework: **Other**
+   - Install / Build: skipped
+   - Output: `website`
+4. Deploy
 
-The Action publishes only the UI folder. Every later push to `website/` updates the site.
+You get a URL like `https://videosearch-….vercel.app`. Add a custom domain later in **Project → Settings → Domains**.
 
-Do **not** pick “Deploy from a branch” + folder `/website`. GitHub only allows `/` or `/docs` for branch deploys, so that path 404s.
+If the wizard still shows Vite, set **Root Directory** to `website`, Framework to **Other**, and clear Install + Build.
 
-## Other free hosts (same folder)
+### Netlify
 
-All of these work with the raw `website/` folder — no npm build:
+1. Open [app.netlify.com](https://app.netlify.com) → **Add new site → Import an existing project**
+2. Pick `Kadiwalhussain/VideoSearch`
+3. `netlify.toml` already sets base to `website` (no install, no build)
+4. Deploy
 
-| Host | How |
-|------|-----|
-| [Cloudflare Pages](https://pages.cloudflare.com) | Create project → connect this repo → **Root directory** `website` → deploy |
-| [Netlify](https://app.netlify.com/drop) | Drag the `website` folder onto Netlify Drop, or set publish directory to `website` |
-| [Vercel](https://vercel.com) | Import repo → **Root Directory** `website` → Framework: Other |
+You get a URL like `https://….netlify.app`.
 
-Custom domain is optional on all of them.
+**No Git:** drag the `website` folder onto [app.netlify.com/drop](https://app.netlify.com/drop).
+
+### Cloudflare Pages (same idea)
+
+Connect the repo → **Root directory** `website` → Framework **None** → deploy.
 
 ## What’s in this folder
 
