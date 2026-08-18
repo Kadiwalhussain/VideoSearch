@@ -620,6 +620,20 @@ async function flushSyncToVault(
         (result.ok ? "Synced to vault" : "Saved on device"),
       warn
     );
+    try {
+      const { touchCloudSync, touchLocalSave, isBrowserOffline } = await import(
+        "../storage/syncMetaStore"
+      );
+      if (result.ok && !result.offlineQueued) {
+        const t = await touchCloudSync(videoId);
+        panel.setSyncClock({ lastCloudSyncAt: t, offline: isBrowserOffline() });
+      } else {
+        const t = await touchLocalSave(videoId);
+        panel.setSyncClock({ lastLocalSaveAt: t, offline: true });
+      }
+    } catch {
+      /* ignore */
+    }
 
     // If we just came online, flush any other pending videos too
     if (result.ok && !result.offlineQueued) {
@@ -869,24 +883,91 @@ async function syncVaultCloud(
  * Mount top-right Sync bio control on the YouTube description.
  * Sync only (no copy) — with animated progress state.
  */
+async function hydrateLocalVaultUi(
+  videoId: string,
+  panel: SearchPanel
+): Promise<void> {
+  try {
+    const { loadSourceLinks } = await import("../storage/sourceLinksStore");
+    const { loadSyncMeta, isBrowserOffline } = await import(
+      "../storage/syncMetaStore"
+    );
+    const local = await loadSourceLinks(videoId);
+    if (activeVideoId !== videoId) return;
+    if (local.length) {
+      panel.setDescriptionLinksAvailable(
+        true,
+        local.length,
+        local.map((l) => ({
+          label: l.label,
+          kind: l.source === "cc" ? `CC · ${l.kind}` : l.kind,
+          url: l.url,
+        }))
+      );
+    }
+    const meta = await loadSyncMeta(videoId);
+    panel.setSyncClock({
+      lastCloudSyncAt: meta.lastCloudSyncAt,
+      lastLocalSaveAt: meta.lastLocalSaveAt,
+      offline: isBrowserOffline(),
+    });
+  } catch {
+    /* optional */
+  }
+}
+
+async function persistSourcesForVideo(
+  videoId: string,
+  links: Array<{
+    id: string;
+    url: string;
+    label: string;
+    kind: string;
+    source: "description" | "comment" | "cc";
+    createdAt: number;
+    startTime?: number;
+  }>
+): Promise<void> {
+  if (!videoId || !links.length) return;
+  try {
+    const { saveSourceLinks } = await import("../storage/sourceLinksStore");
+    await saveSourceLinks(videoId, links);
+    const { touchLocalSave } = await import("../storage/syncMetaStore");
+    await touchLocalSave(videoId);
+  } catch {
+    /* ignore */
+  }
+}
+
 async function maybeScanDescriptionLinks(
   videoId: string,
   panel: SearchPanel,
   attempt = 0
 ): Promise<void> {
   try {
+    const { pageMatchesVideo, collectPageSources } = await import(
+      "../youtube/collectSources"
+    );
+    if (!pageMatchesVideo(videoId)) {
+      if (attempt < 8) {
+        window.setTimeout(() => {
+          if (activeVideoId === videoId) {
+            void maybeScanDescriptionLinks(videoId, panel, attempt + 1);
+          }
+        }, 700 + attempt * 400);
+      }
+      return;
+    }
+
     const {
       extractFullBio,
       mountBioSyncBar,
       removeDescriptionLinksChip,
     } = await import("../youtube/descriptionLinks");
     const bio = extractFullBio();
-    const { collectPageSources } = await import("../youtube/collectSources");
     const all = collectPageSources(videoId, sessionSegments.get(videoId));
     if (!bio.text.trim() && !bio.markdown.trim() && !all.length) {
-      panel.setDescriptionLinksAvailable(false);
-      removeDescriptionLinksChip();
-      if (attempt < 5) {
+      if (attempt < 6) {
         window.setTimeout(() => {
           if (activeVideoId === videoId) {
             void maybeScanDescriptionLinks(videoId, panel, attempt + 1);
@@ -901,11 +982,12 @@ async function maybeScanDescriptionLinks(
       kind: l.source === "cc" ? `CC · ${l.kind}` : l.kind,
       url: l.url,
     }));
-    panel.setDescriptionLinksAvailable(
-      true,
-      Math.max(previews.length, 1),
-      previews
-    );
+    if (previews.length) {
+      panel.setDescriptionLinksAvailable(true, previews.length, previews);
+      void persistSourcesForVideo(videoId, all.length ? all : bio.links);
+    } else {
+      removeDescriptionLinksChip();
+    }
 
     mountBioSyncBar({
       charCount: bio.charCount,
@@ -989,6 +1071,20 @@ async function saveDescriptionLinksToVault(
           : `Bio synced · open Studio to edit`;
       panel.setVaultSyncMessage(msg, Boolean(result.offlineQueued));
       setBioSyncBarStatus("ok", "Synced");
+      const { touchCloudSync, touchLocalSave, isBrowserOffline } = await import(
+        "../storage/syncMetaStore"
+      );
+      if (result.offlineQueued) {
+        const t = await touchLocalSave(videoId);
+        panel.setSyncClock({ lastLocalSaveAt: t, offline: true });
+      } else {
+        const t = await touchCloudSync(videoId);
+        panel.setSyncClock({
+          lastCloudSyncAt: t,
+          offline: isBrowserOffline(),
+        });
+      }
+      if (sourceLinks.length) void persistSourcesForVideo(videoId, sourceLinks);
     } else {
       panel.setVaultSyncMessage(result.message || "Failed to sync bio", true);
       setBioSyncBarStatus("error", "Failed");
@@ -1423,6 +1519,17 @@ function mountEmergencyPill(videoId: string, reason: string): void {
 let activePanel: SearchPanel | null = null;
 let activeVideoId: string | null = null;
 
+if (typeof window !== "undefined" && !(window as Window & { __vsaNetHook?: boolean }).__vsaNetHook) {
+  (window as Window & { __vsaNetHook?: boolean }).__vsaNetHook = true;
+  const refreshNet = () => {
+    if (activePanel && activeVideoId) {
+      void hydrateLocalVaultUi(activeVideoId, activePanel);
+    }
+  };
+  window.addEventListener("online", refreshNet);
+  window.addEventListener("offline", refreshNet);
+}
+
 function mountPanel(videoId: string): void {
   try {
     const existing = document.getElementById(ROOT_ID);
@@ -1677,6 +1784,9 @@ function mountPanel(videoId: string): void {
 
     panel.setStatus({ kind: "indexing", message: "Preparing…" });
     console.info(LOG, "Panel MOUNTED for", videoId);
+
+    panel.setDescriptionLinksAvailable(false);
+    void hydrateLocalVaultUi(videoId, panel);
 
     void indexVideo(videoId, panel);
     // If this watch is part of a YT playlist, save the whole list into vault

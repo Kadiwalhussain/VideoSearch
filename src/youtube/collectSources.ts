@@ -57,19 +57,41 @@ export function mergeVaultSources(
   return [...map.values()];
 }
 
-/** Bio links + spoken CC sources (cached after index, or from these segments). */
+/** YouTube watch id currently on the page (SPA-safe). */
+export function watchVideoIdFromPage(): string | null {
+  const host = document.querySelector("ytd-watch-flexy");
+  const attr = host?.getAttribute("video-id");
+  if (attr && attr.length >= 8) return attr;
+  try {
+    return new URL(location.href).searchParams.get("v");
+  } catch {
+    return null;
+  }
+}
+
+export function pageMatchesVideo(videoId?: string): boolean {
+  if (!videoId) return false;
+  return watchVideoIdFromPage() === videoId;
+}
+
+/** Bio links + spoken CC sources. Never mixes the previous watch page. */
 export function collectPageSources(
   videoId?: string,
   segments?: RawCaptionSegment[]
 ): SourceLink[] {
+  const pageOk = !videoId || pageMatchesVideo(videoId);
   let bio: SourceLink[] = [];
-  try {
-    bio = extractDescriptionLinks();
-  } catch {
-    /* page may not be ready */
+  if (pageOk) {
+    try {
+      bio = extractDescriptionLinks();
+    } catch {
+      /* page may not be ready */
+    }
   }
   const fromSegs =
-    segments && segments.length ? extractSourcesFromCaptions(segments) : [];
+    pageOk && segments && segments.length
+      ? extractSourcesFromCaptions(segments)
+      : [];
   if (videoId && fromSegs.length) rememberCcSources(videoId, fromSegs);
   const cached = videoId ? rememberedCcSources(videoId) : [];
   return mergeVaultSources(bio, cached, fromSegs);

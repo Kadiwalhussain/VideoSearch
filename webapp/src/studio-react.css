@@ -4285,11 +4285,12 @@
 
 .pl-hero {
   display: grid;
-  grid-template-columns: minmax(220px, 340px) 1fr;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
   gap: 22px;
   padding: 18px;
   margin-top: 8px;
-  align-items: stretch;
+  align-items: start;
+  overflow: hidden;
 }
 
 .pl-hero.is-empty {
@@ -4300,14 +4301,20 @@
 .pl-hero-thumb {
   position: relative;
   display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   border-radius: 14px;
   overflow: hidden;
   aspect-ratio: 16 / 9;
   background: rgba(0, 0, 0, 0.35);
   text-decoration: none;
+  align-self: start;
 }
 
 .pl-hero-thumb img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;

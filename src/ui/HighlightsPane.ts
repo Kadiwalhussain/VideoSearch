@@ -7,6 +7,7 @@ import type { VideoScreenshot } from "../storage/screenshotStore";
 import { formatTimestamp } from "../player/seekTo";
 import { iconHtml } from "./icons";
 import { flashNoteSaved } from "./captureFx";
+import { formatSyncAgo } from "../storage/syncMetaStore";
 
 export type CloudSyncState =
   | "idle"
@@ -70,6 +71,10 @@ export class HighlightsPane {
     playlists: [],
   };
   private knownPlaylists: PlaylistOption[] = [];
+  private lastCloudSyncAt: number | null = null;
+  private lastLocalSaveAt: number | null = null;
+  private offlineMode = false;
+  private syncTick: number | null = null;
 
   constructor(handlers: HighlightsPaneHandlers) {
     this.handlers = handlers;
@@ -547,8 +552,15 @@ export class HighlightsPane {
       this.setCloudState("uploading", "Uploading…");
       return;
     }
+    if (/saved on (this )?device|queued offline|vault offline/i.test(m)) {
+      this.offlineMode = true;
+      this.setCloudState("offline", this.syncLabel());
+      return;
+    }
     if (/saved|synced|uploaded|r2/i.test(m)) {
-      this.setCloudState("ok", "Synced");
+      this.offlineMode = false;
+      if (!this.lastCloudSyncAt) this.lastCloudSyncAt = Date.now();
+      this.setCloudState("ok", this.syncLabel());
       return;
     }
     if (/pending|queue|will sync/i.test(m)) {
@@ -558,15 +570,59 @@ export class HighlightsPane {
     this.cloudTxt.textContent = msg || "Cloud ready";
   }
 
+  setSyncClock(opts: {
+    lastCloudSyncAt?: number | null;
+    lastLocalSaveAt?: number | null;
+    offline?: boolean;
+  }): void {
+    if (opts.lastCloudSyncAt !== undefined) {
+      this.lastCloudSyncAt = opts.lastCloudSyncAt;
+    }
+    if (opts.lastLocalSaveAt !== undefined) {
+      this.lastLocalSaveAt = opts.lastLocalSaveAt;
+    }
+    if (opts.offline !== undefined) this.offlineMode = opts.offline;
+    this.startSyncTicker();
+    const state: CloudSyncState = this.offlineMode
+      ? "offline"
+      : this.lastCloudSyncAt
+        ? "ok"
+        : "idle";
+    this.setCloudState(state, this.syncLabel());
+  }
+
+  private syncLabel(): string {
+    const ago = formatSyncAgo(this.lastCloudSyncAt);
+    if (this.offlineMode) {
+      return ago ? `Offline · last sync ${ago}` : "Offline · saved on this device";
+    }
+    if (this.lastCloudSyncAt) {
+      return ago === "just now" ? "Synced just now" : `Last sync ${ago}`;
+    }
+    if (this.lastLocalSaveAt) {
+      return `Saved here · not synced`;
+    }
+    return "Not synced yet";
+  }
+
+  private startSyncTicker(): void {
+    if (this.syncTick != null) return;
+    this.syncTick = window.setInterval(() => {
+      const st = this.cloudEl.dataset.cloudState;
+      if (st === "uploading" || st === "pending") return;
+      this.cloudTxt.textContent = this.syncLabel();
+    }, 30000);
+  }
+
   setCloudState(state: CloudSyncState, label?: string): void {
     this.cloudEl.dataset.cloudState = state;
     const labels: Record<CloudSyncState, string> = {
-      idle: "Cloud ready",
+      idle: "Not synced yet",
       pending: "Syncing soon…",
       uploading: "Uploading…",
-      ok: "Synced",
+      ok: this.syncLabel(),
       error: "Sync failed",
-      offline: "Sign in to sync",
+      offline: this.syncLabel(),
     };
     this.cloudTxt.textContent = label || labels[state];
     const iconName =

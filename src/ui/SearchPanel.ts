@@ -738,6 +738,14 @@ export class SearchPanel {
     this.highlightsPane.setDescriptionLinksAvailable(on, count, previews);
   }
 
+  setSyncClock(opts: {
+    lastCloudSyncAt?: number | null;
+    lastLocalSaveAt?: number | null;
+    offline?: boolean;
+  }): void {
+    this.highlightsPane.setSyncClock(opts);
+  }
+
   private updateVaultBadge(): void {
     const badge = this.root.querySelector(
       '[data-count="highlights"]'
