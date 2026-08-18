@@ -510,6 +510,19 @@ export const VSA_STYLES = `
   color: var(--vsa-muted);
   line-height: 1.45;
 }
+#videosearch-ai-panel .vsa-empty-transcript strong {
+  display: block;
+  color: var(--vsa-text);
+  font-size: 13px;
+  font-weight: 750;
+  margin-bottom: 8px;
+}
+#videosearch-ai-panel .vsa-empty-transcript p {
+  margin: 0 0 8px;
+}
+#videosearch-ai-panel .vsa-empty-transcript .vsa-retry {
+  margin-top: 4px;
+}
 #videosearch-ai-panel .vsa-time-link {
   display: inline;
   border: none;

@@ -1,8 +1,8 @@
 /**
  * Topic resolution priority:
  *  1. Official YouTube chapters (best — creator-defined)
- *  2. Optional LLM chapter titles (English) to fill gaps on long videos
- *  3. Local section-based extraction
+ *  2. On-device MiniLM topic cuts + caption phrases (no server)
+ *  3. Optional user LLM key only if local coverage is thin
  *
  * Always snap times onto real caption chunks when possible.
  */
@@ -83,9 +83,21 @@ export async function resolveTopics(
     };
   }
 
-  // ── 2) No official chapters → LLM first (quality), then local fallback ─
-  onStatus?.("Finding main topics with AI…");
+  // ── 2) On-device MiniLM + caption phrases (no external server) ─────────
+  onStatus?.("Finding exact topics from the transcript…");
+  const local = extractTopics(chunks)
+    .map((t) => ({ ...t, label: t.label.trim() }))
+    .filter((t) => isGoodUserLabel(t.label));
+  const snapped = snapTopicTimes(local, chunks).filter((t) =>
+    isGoodUserLabel(t.label)
+  );
 
+  if (snapped.length >= Math.min(6, budget)) {
+    return { topics: snapped.slice(0, budget), source: "local" };
+  }
+
+  // ── 3) Optional user API key — only if local coverage is thin ──────────
+  onStatus?.("Improving topic titles…");
   const llm = await extractTopicsWithLlm(
     videoId,
     chunks,
@@ -95,36 +107,18 @@ export async function resolveTopics(
     const cleaned = snapTopicTimes(llm, chunks).filter((t) =>
       isGoodUserLabel(t.label)
     );
-    // Prefer pure LLM titles — do NOT mix price/SKU local junk into good AI chapters
     if (cleaned.length >= 4) {
-      if (cleaned.length < budget) {
-        onStatus?.("Adding coverage topics…");
-        const local = extractTopics(chunks).filter((t) =>
-          isGoodUserLabel(t.label)
-        );
-        const merged = mergeTopics(cleaned, local);
-        const final = snapTopicTimes(merged, chunks).filter((t) =>
-          isGoodUserLabel(t.label)
-        );
-        // If merge re-introduced garbage, fall back to LLM-only
-        if (final.length >= cleaned.length) {
-          return {
-            topics: final.slice(0, budget),
-            source: final.length > cleaned.length ? "mixed" : "llm",
-          };
-        }
-      }
-      return { topics: cleaned.slice(0, budget), source: "llm" };
+      const merged = mergeTopics(cleaned, snapped);
+      const final = snapTopicTimes(merged, chunks).filter((t) =>
+        isGoodUserLabel(t.label)
+      );
+      return {
+        topics: final.slice(0, budget),
+        source: snapped.length ? "mixed" : "llm",
+      };
     }
   }
 
-  onStatus?.("Building topics from transcript…");
-  const local = extractTopics(chunks)
-    .map((t) => ({ ...t, label: t.label.trim() }))
-    .filter((t) => isGoodUserLabel(t.label));
-  const snapped = snapTopicTimes(local, chunks).filter((t) =>
-    isGoodUserLabel(t.label)
-  );
   return {
     topics: snapped.slice(0, budget),
     source: "local",

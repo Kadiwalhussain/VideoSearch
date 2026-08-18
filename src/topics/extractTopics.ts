@@ -9,6 +9,10 @@
 
 import type { EmbeddedChunk, TranscriptChunk } from "../types/schema";
 import { estimateDurationSec, topicBudget } from "./topicBudget";
+import {
+  hasDenseEmbedding,
+  segmentByEmbedding,
+} from "./segmentByEmbedding";
 
 export interface VideoTopic {
   label: string;
@@ -66,8 +70,25 @@ export function extractTopics(
   const durationSec = estimateDurationSec(chunks);
   const budget = topicBudget(chunks.length, durationSec);
 
-  // 1) Section-based distinctive topics (primary)
-  const sectionTopics = topicsFromSections(chunks, budget);
+  // 1) Embedding shifts (MiniLM already on the chunks) — most exact local cuts
+  const dense = chunks.filter(hasDenseEmbedding);
+  let sectionTopics =
+    dense.length >= 6
+      ? topicsFromEmbedSections(dense, budget)
+      : [];
+
+  // 2) Equal-time sections if embedding cuts were too few
+  if (sectionTopics.length < Math.min(6, budget)) {
+    const timed = topicsFromSections(chunks, budget);
+    const used = new Set(sectionTopics.map((t) => normalizeKey(t.label)));
+    for (const t of timed) {
+      const key = normalizeKey(t.label);
+      if (!key || used.has(key) || isNearDuplicate(key, used)) continue;
+      used.add(key);
+      sectionTopics.push(t);
+      if (sectionTopics.length >= budget) break;
+    }
+  }
 
   // 2) Top up with distinctive global phrases if still short
   const used = new Set(sectionTopics.map((t) => normalizeKey(t.label)));
@@ -127,6 +148,76 @@ function topicsFromSections(
   }
 
   return out;
+}
+
+function topicsFromEmbedSections(
+  chunks: EmbeddedChunk[],
+  budget: number
+): VideoTopic[] {
+  const global = wordDocFreq(chunks);
+  const sections = segmentByEmbedding(chunks, budget);
+  const out: VideoTopic[] = [];
+  const used = new Set<string>();
+
+  for (const section of sections) {
+    if (section.members.length === 0) continue;
+    const label =
+      labelFromExactPhrases(section.members, global, chunks.length) ??
+      labelFromDistinctiveWords(section.members, global, chunks.length) ??
+      labelFromBestSentence(section.members);
+    if (!label || !isGoodUserLabel(label)) continue;
+    const key = normalizeKey(label);
+    if (used.has(key) || isNearDuplicate(key, used)) continue;
+    used.add(key);
+    out.push({
+      label,
+      query: label.toLowerCase(),
+      startTime: section.startTime,
+      kind: "section",
+      score: 12 + section.members.length,
+    });
+  }
+  return out;
+}
+
+/**
+ * 2–5 word phrases in caption order — more “exact” than shuffled TF-IDF bags.
+ */
+function labelFromExactPhrases(
+  members: Array<TranscriptChunk | EmbeddedChunk>,
+  globalDf: Map<string, number>,
+  totalChunks: number
+): string | null {
+  const candidates = new Map<string, number>();
+
+  for (const m of members) {
+    const tokens = tokenize(m.text);
+    for (let n = 5; n >= 2; n--) {
+      for (let i = 0; i + n <= tokens.length; i++) {
+        const slice = tokens.slice(i, i + n);
+        if (!slice.every(isContentWord)) continue;
+        if (slice.every((w) => BRAND_NOISE.has(w))) continue;
+        if (new Set(slice).size < Math.min(2, n)) continue;
+        const phrase = slice.join(" ");
+        const idf =
+          slice.reduce((s, w) => {
+            const df = globalDf.get(w) ?? 1;
+            return s + Math.log(1 + totalChunks / df);
+          }, 0) / n;
+        const lengthBonus = n === 3 || n === 4 ? 1.25 : n === 2 ? 1 : 1.05;
+        const score = idf * lengthBonus;
+        const prev = candidates.get(phrase) ?? 0;
+        if (score > prev) candidates.set(phrase, score);
+      }
+    }
+  }
+
+  const ranked = [...candidates.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [phrase] of ranked.slice(0, 12)) {
+    const label = titleCase(phrase);
+    if (isGoodUserLabel(label)) return label;
+  }
+  return null;
 }
 
 interface Section {

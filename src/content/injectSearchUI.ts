@@ -1284,8 +1284,14 @@ async function indexVideo(
       const message = err instanceof Error ? err.message : String(err);
       console.error(LOG, "Indexing failed:", err);
 
-      if (/no captions/i.test(message)) {
-        panel.setStatus({ kind: "no-captions", message });
+      if (
+        /no captions|no transcript|no usable transcript/i.test(message)
+      ) {
+        panel.setStatus({
+          kind: "no-captions",
+          message:
+            "YouTube did not publish captions for this video, so search and topics cannot run.",
+        });
       } else {
         panel.setStatus({ kind: "error", message });
       }

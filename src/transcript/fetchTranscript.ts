@@ -41,7 +41,7 @@ export class NoCaptionsError extends Error {
   constructor(videoId: string, message?: string) {
     super(
       message ??
-        `No captions available for video ${videoId}. Speech-to-text fallback is out of scope for Phase 1.`
+        `This video has no transcript. VideoSearch needs YouTube captions to search what was said and to build topics.`
     );
     this.name = "NoCaptionsError";
   }
@@ -185,8 +185,9 @@ export async function fetchTranscript(
 
   const segments = parseCaptionBody(body);
   if (segments.length === 0) {
-    throw new TranscriptFetchError(
-      `Parsed 0 segments from caption body (${body.length} bytes, format ${usedLabel}).`
+    throw new NoCaptionsError(
+      videoId,
+      `This video has no usable transcript. YouTube returned captions we could not read, so search and topics cannot run.`
     );
   }
 

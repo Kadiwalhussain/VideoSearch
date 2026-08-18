@@ -866,16 +866,12 @@ export class SearchPanel {
       case "no-captions":
         this.hasSearchableIndex = false;
         this.lockInput(true);
-        this.statusEl.textContent = "No captions";
+        this.statusEl.textContent = "No transcript";
         this.badgeEl.textContent = "!";
         this.setBrandState("warn");
         this.ensureSearchTabForResults();
-        this.resultsEl.innerHTML = `
-          <div class="vsa-empty">
-            <strong>No captions on this video</strong>
-            <p>${escapeHtml(status.message)}</p>
-            <button type="button" class="vsa-retry">Retry</button>
-          </div>`;
+        this.resultsEl.innerHTML = noTranscriptCard();
+        this.topicsEl.innerHTML = noTranscriptCard();
         this.bindRetry();
         break;
 
@@ -1485,10 +1481,12 @@ export class SearchPanel {
   }
 
   private bindRetry(): void {
-    this.resultsEl.querySelector(".vsa-retry")?.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.handlers.onRetry();
+    this.root.querySelectorAll(".vsa-retry").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.handlers.onRetry();
+      });
     });
   }
 
@@ -1966,6 +1964,22 @@ function formatCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
   return String(Math.round(n));
+}
+
+function noTranscriptCard(): string {
+  return `
+    <div class="vsa-empty vsa-empty-transcript">
+      <strong>No transcript on this video</strong>
+      <p>
+        YouTube did not publish captions for this video, so VideoSearch cannot
+        search what was said or build topics from speech.
+      </p>
+      <p>
+        Marks, shots, and bio still work. If the creator adds captions later,
+        tap Retry.
+      </p>
+      <button type="button" class="vsa-retry">Retry</button>
+    </div>`;
 }
 
 function escapeHtml(s: string): string {

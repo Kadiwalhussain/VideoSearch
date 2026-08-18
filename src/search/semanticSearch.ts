@@ -39,12 +39,21 @@ export async function search(
 
   const queryVec = await embedQuery(q);
   const queryTerms = tokenizeQuery(q);
+  const phrase = q.toLowerCase();
+  const pairs = queryBigrams(queryTerms);
 
   const scored: SearchResult[] = index.chunks.map((chunk) => {
     const semantic = cosineSimilarity(queryVec, chunk.embedding);
-    const keyword = keywordScore(queryTerms, chunk.text);
-    // Blend — keyword helps exact terms MiniLM underscores
-    const score = clamp01(0.75 * semantic + 0.25 * keyword);
+    const hay = chunk.text.toLowerCase();
+    const keyword = keywordScore(queryTerms, hay);
+    const exactPhrase = phrase.length >= 4 && hay.includes(phrase) ? 1 : 0;
+    let pairHits = 0;
+    for (const p of pairs) if (hay.includes(p)) pairHits += 1;
+    const pairScore = pairs.length ? pairHits / pairs.length : 0;
+    // Semantic first; phrase/keyword pull exact terms MiniLM undersells
+    const score = clamp01(
+      0.62 * semantic + 0.18 * keyword + 0.12 * pairScore + 0.08 * exactPhrase
+    );
     return {
       chunkId: chunk.chunkId,
       startTime: chunk.startTime,
@@ -78,14 +87,21 @@ function tokenizeQuery(q: string): string[] {
     .filter((t) => t.length >= 2);
 }
 
-function keywordScore(terms: string[], text: string): number {
+function keywordScore(terms: string[], hay: string): number {
   if (terms.length === 0) return 0;
-  const hay = text.toLowerCase();
   let hits = 0;
   for (const t of terms) {
     if (hay.includes(t)) hits += 1;
   }
   return hits / terms.length;
+}
+
+function queryBigrams(terms: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < terms.length - 1; i++) {
+    out.push(`${terms[i]} ${terms[i + 1]}`);
+  }
+  return out;
 }
 
 function clamp01(n: number): number {
