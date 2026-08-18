@@ -45,6 +45,10 @@ export interface HighlightsPaneHandlers {
   onTogglePlaylist?: (name: string) => void;
   /** Called when playlist panel opens — load existing names */
   onRequestPlaylists?: () => void;
+  /** Save the full YouTube playlist currently open (all videos) */
+  onSaveYoutubePlaylist?: () => void;
+  /** Save Drive / PPT / source links from the video description */
+  onSaveDescriptionLinks?: () => void;
 }
 
 export class HighlightsPane {
@@ -99,7 +103,15 @@ export class HighlightsPane {
           <span class="vsa-lib-ico" data-lib-pl-ico></span>
           <span>Playlist</span>
         </button>
+        <button type="button" class="vsa-lib-btn vsa-lib-btn-ytpl" data-lib-ytpl title="Save full YouTube playlist to vault" hidden>
+          <span>Save YT playlist</span>
+        </button>
+        <button type="button" class="vsa-lib-btn vsa-lib-btn-links" data-lib-links title="Sync full YouTube bio (description) into VideoSearch — editable in Studio" hidden>
+          <span class="vsa-lib-ico" data-lib-links-ico></span>
+          <span data-lib-links-txt>Sync bio</span>
+        </button>
       </div>
+      <div class="vsa-lib-links-panel" data-lib-links-panel hidden></div>
       <div class="vsa-lib-pl-panel" data-lib-pl-form hidden>
         <div class="vsa-lib-pl-label">Your playlists</div>
         <div class="vsa-lib-pl-list" data-lib-pl-list>
@@ -170,6 +182,10 @@ export class HighlightsPane {
     if (saveIco) saveIco.innerHTML = iconHtml("bookmark", 13);
     const plIco = this.root.querySelector("[data-lib-pl-ico]") as HTMLElement;
     if (plIco) plIco.innerHTML = iconHtml("playlist", 13);
+    const linksIco = this.root.querySelector(
+      "[data-lib-links-ico]"
+    ) as HTMLElement;
+    if (linksIco) linksIco.innerHTML = iconHtml("link", 13);
 
     this.root.querySelector(".vsa-hl-add")?.addEventListener("click", (e) => {
       e.preventDefault();
@@ -212,6 +228,20 @@ export class HighlightsPane {
         }
       }
     });
+    this.root
+      .querySelector("[data-lib-ytpl]")
+      ?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.handlers.onSaveYoutubePlaylist?.();
+      });
+    this.root
+      .querySelector("[data-lib-links]")
+      ?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.handlers.onSaveDescriptionLinks?.();
+      });
     const submitPlaylist = () => {
       const input = this.root.querySelector(
         "[data-lib-pl-input]"
@@ -247,6 +277,67 @@ export class HighlightsPane {
     };
     this.renderLibraryBar();
     this.renderPlaylistPicker();
+  }
+
+  /** Show/hide “Save YT playlist” when a YouTube list= is active */
+  setYoutubePlaylistAvailable(on: boolean, label?: string): void {
+    const btn = this.root.querySelector(
+      "[data-lib-ytpl]"
+    ) as HTMLButtonElement | null;
+    if (!btn) return;
+    btn.hidden = !on;
+    if (on && label) {
+      btn.title = `Save full playlist “${label}” to vault`;
+      const span = btn.querySelector("span");
+      if (span) span.textContent = "Save playlist";
+    }
+  }
+
+  /**
+   * Show “Save sources” when description has Drive/PPT/doc links.
+   * Pass previews for a compact list under the bar.
+   */
+  setDescriptionLinksAvailable(
+    on: boolean,
+    count = 0,
+    previews?: Array<{ label: string; kind: string; url: string }>
+  ): void {
+    const btn = this.root.querySelector(
+      "[data-lib-links]"
+    ) as HTMLButtonElement | null;
+    const panel = this.root.querySelector(
+      "[data-lib-links-panel]"
+    ) as HTMLElement | null;
+    const txt = this.root.querySelector(
+      "[data-lib-links-txt]"
+    ) as HTMLElement | null;
+    if (!btn) return;
+    btn.hidden = !on || count <= 0;
+    if (on && count > 0) {
+      btn.title =
+        "Sync complete YouTube description/bio into VideoSearch (links stay clickable; edit later in Studio)";
+      if (txt) {
+        txt.textContent = "Sync bio";
+      }
+    }
+    if (panel) {
+      if (!on || !previews?.length) {
+        panel.hidden = true;
+        panel.innerHTML = "";
+      } else {
+        panel.hidden = false;
+        panel.innerHTML = previews
+          .slice(0, 6)
+          .map(
+            (p) =>
+              `<a class="vsa-lib-link-chip" href="${escapeAttr(p.url)}" target="_blank" rel="noopener noreferrer" title="${escapeAttr(p.url)}"><span class="vsa-lib-link-kind">${escapeAttr(p.kind)}</span><span class="vsa-lib-link-label">${escapeAttr(p.label || p.kind)}</span></a>`
+          )
+          .join("");
+        if (count > 6) {
+          panel.innerHTML += `<span class="vsa-lib-link-more">+${count - 6} more</span>`;
+        }
+      }
+    }
   }
 
   /** Existing playlists from cloud/local for the picker */

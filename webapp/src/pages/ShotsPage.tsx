@@ -15,7 +15,7 @@ import { EmptyState } from "../components/EmptyState";
 import { useVault } from "../store/VaultContext";
 import { useSession } from "../store/SessionContext";
 import { formatTime, relTime, ytThumb, ytWatchUrl } from "../lib/format";
-import { mediaSrc } from "../api/client";
+import { shotSrc } from "../api/client";
 import type { ShotItem } from "../types";
 
 type Group = {
@@ -220,10 +220,7 @@ export function ShotsPage() {
               </div>
               <div className="shot-album-grid">
                 {g.shots.map((s) => {
-                  const src = mediaSrc(
-                    s.shot.imageUrl || s.shot.dataUrl,
-                    session?.token
-                  );
+                  const src = shotSrc(s.videoId, s.shot, session?.token);
                   return (
                     <button
                       key={s.shot.id}
@@ -248,10 +245,7 @@ export function ShotsPage() {
       ) : (
         <div className="shot-masonry">
           {flatFiltered.map((s) => {
-            const src = mediaSrc(
-              s.shot.imageUrl || s.shot.dataUrl,
-              session?.token
-            );
+            const src = shotSrc(s.videoId, s.shot, session?.token);
             return (
               <button
                 key={`${s.videoId}-${s.shot.id}`}
@@ -328,10 +322,7 @@ export function ShotsPage() {
               >
                 <div className="shot-lb-frame">
                   <ShotImg
-                    src={mediaSrc(
-                      active.shot.imageUrl || active.shot.dataUrl,
-                      session?.token
-                    )}
+                    src={shotSrc(active.videoId, active.shot, session?.token)}
                   />
                 </div>
                 <div className="shot-lb-info">

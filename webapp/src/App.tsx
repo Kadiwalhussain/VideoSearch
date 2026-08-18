@@ -18,6 +18,7 @@ import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { ExtensionPage } from "./pages/ExtensionPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
+import { SharePage } from "./pages/SharePage";
 import type { ReactNode } from "react";
 import { SessionLoader } from "./components/SessionLoader";
 
@@ -39,6 +40,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Public shared video cards — no login required */}
+      <Route path="/share/:token" element={<SharePage />} />
       <Route
         element={
           <Protected>

@@ -14,7 +14,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
-  HeadBucketCommand,
+  ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 
 const endpoint = (process.env.R2_ENDPOINT || "").replace(/\/$/, "");
@@ -40,6 +40,10 @@ export function getR2Client() {
         secretAccessKey,
       },
       forcePathStyle: true, // R2-friendly
+      // AWS SDK JS v3.729+ adds CRC32 checksums by default. R2 rejects
+      // those headers with 403 Access Denied on Put/Get/Head.
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
     });
   }
   return client;
@@ -93,7 +97,11 @@ export async function checkR2() {
   }
   try {
     const s3 = getR2Client();
-    await s3.send(new HeadBucketCommand({ Bucket: bucket }));
+    // List — not HeadBucket. Object R/W tokens often 403 HeadBucket
+    // even when Put/Get on objects works.
+    await s3.send(
+      new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1 })
+    );
     return {
       ok: true,
       endpoint,

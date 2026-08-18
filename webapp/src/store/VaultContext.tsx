@@ -15,6 +15,7 @@ import {
   deleteVideo as apiDeleteVideo,
   deleteHighlight as apiDeleteHighlight,
   deleteScreenshot as apiDeleteScreenshot,
+  saveVideoBio as apiSaveBio,
 } from "../api/vault";
 import {
   allNotes,
@@ -39,7 +40,7 @@ import type {
 } from "../types";
 import { useSession } from "./SessionContext";
 
-const CACHE_KEY = "vsa_vault_cache_v2";
+const CACHE_KEY = "vsa_vault_cache_v3";
 /** Min gap between automatic refetches (focus / soft refresh) */
 const SOFT_REFRESH_MS = 45_000;
 
@@ -70,6 +71,11 @@ type VaultCtx = {
   deleteMark: (videoId: string, highlightId: string) => Promise<void>;
   /** Remove one shot from a video. */
   deleteShot: (videoId: string, shotId: string) => Promise<void>;
+  /** Save / edit full YouTube bio for a video. */
+  saveBio: (
+    videoId: string,
+    opts: { bioText: string; bioMarkdown?: string }
+  ) => Promise<{ sourceCount: number }>;
 };
 
 const Ctx = createContext<VaultCtx | null>(null);
@@ -124,9 +130,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // Wait for any in-flight fetch, then re-run if this call needs force
       if (inFlight.current) {
         await inFlight.current;
-        return;
+        if (!opts?.force) return;
+        // force after soft fetch: fall through and fetch again
       }
 
       const run = (async () => {
@@ -314,6 +322,46 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [session, rows, refresh]
   );
 
+  const saveBioFn = useCallback(
+    async (
+      videoId: string,
+      opts: { bioText: string; bioMarkdown?: string }
+    ) => {
+      if (!session) throw new Error("Not signed in");
+      const row = findRow(rows, videoId);
+      const title = row?.payload?.videoTitle || videoId;
+      const saved = await apiSaveBio(session, {
+        videoId,
+        videoTitle: title,
+        bioText: opts.bioText,
+        bioMarkdown: opts.bioMarkdown ?? opts.bioText,
+      });
+      const now = Date.now();
+      setRows((prev) => {
+        const next = prev.map((r) => {
+          if (r.video_id !== videoId) return r;
+          return {
+            ...r,
+            updated_at: new Date().toISOString(),
+            payload: {
+              ...r.payload,
+              bioText: opts.bioText,
+              bioMarkdown: opts.bioMarkdown ?? opts.bioText,
+              bioSyncedAt: now,
+              sourceLinks: saved.sourceLinks?.length
+                ? saved.sourceLinks
+                : r.payload?.sourceLinks,
+            },
+          };
+        });
+        writeCache(session.user?.userId, next);
+        return next;
+      });
+      return { sourceCount: saved.sourceLinks?.length ?? 0 };
+    },
+    [session, rows]
+  );
+
   const value = useMemo<VaultCtx>(() => {
     const stats = vaultStats(rows);
     return {
@@ -336,6 +384,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       deleteVideo: deleteVideoFn,
       deleteMark: deleteMarkFn,
       deleteShot: deleteShotFn,
+      saveBio: saveBioFn,
     };
   }, [
     rows,
@@ -347,6 +396,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     deleteVideoFn,
     deleteMarkFn,
     deleteShotFn,
+    saveBioFn,
   ]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -49,6 +49,17 @@ export function savedRows(rows: VaultRow[]): VaultRow[] {
     .sort((a, b) => (b.payload?.savedAt || 0) - (a.payload?.savedAt || 0));
 }
 
+/** Sort playlist videos so the cover / “first” item is most recently active. */
+function sortPlaylistRows(list: VaultRow[]): VaultRow[] {
+  return [...list].sort((a, b) => {
+    const ta = new Date(a.updated_at || 0).getTime() || 0;
+    const tb = new Date(b.updated_at || 0).getTime() || 0;
+    const pa = a.payload?.updatedAt || 0;
+    const pb = b.payload?.updatedAt || 0;
+    return Math.max(tb, pb) - Math.max(ta, pa);
+  });
+}
+
 export function playlistGroups(rows: VaultRow[]): PlaylistGroup[] {
   const map = new Map<string, { name: string; rows: VaultRow[] }>();
   for (const r of rows) {
@@ -63,7 +74,28 @@ export function playlistGroups(rows: VaultRow[]): PlaylistGroup[] {
       }
     }
   }
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return [...map.values()]
+    .map((g) => ({ ...g, rows: sortPlaylistRows(g.rows) }))
+    .sort((a, b) => {
+      // Most recently touched playlists first, then alpha
+      const aTop = gTopMs(a.rows);
+      const bTop = gTopMs(b.rows);
+      if (bTop !== aTop) return bTop - aTop;
+      return a.name.localeCompare(b.name);
+    });
+}
+
+function gTopMs(list: VaultRow[]): number {
+  let max = 0;
+  for (const r of list) {
+    const t =
+      Math.max(
+        new Date(r.updated_at || 0).getTime() || 0,
+        r.payload?.updatedAt || 0
+      ) || 0;
+    if (t > max) max = t;
+  }
+  return max;
 }
 
 export function allPlaylistNames(rows: VaultRow[]): string[] {
@@ -111,13 +143,16 @@ export function searchVault(rows: VaultRow[], q: string): SearchHit[] {
   for (const r of rows) {
     const p = r.payload || {};
     const title = p.videoTitle || r.video_id;
-    if (title.toLowerCase().includes(query)) {
+    const channel = (p.channelTitle || "").toLowerCase();
+    if (title.toLowerCase().includes(query) || channel.includes(query)) {
       hits.push({
         kind: "video",
         videoId: r.video_id,
         title,
-        snippet: title,
-        score: 3,
+        snippet: p.channelTitle
+          ? `${title} · ${p.channelTitle}`
+          : title,
+        score: title.toLowerCase().includes(query) ? 3 : 2.5,
       });
     }
     for (const h of p.highlights || []) {
@@ -143,6 +178,36 @@ export function searchVault(rows: VaultRow[], q: string): SearchHit[] {
           snippet: note || "Screenshot",
           time: s.videoTime,
           score: 2,
+        });
+      }
+    }
+    // Full bio text (description synced from YouTube)
+    const bio = (p.bioText || p.bioMarkdown || "").toLowerCase();
+    if (bio && bio.includes(query)) {
+      const idx = bio.indexOf(query);
+      const start = Math.max(0, idx - 40);
+      const snip = (p.bioText || p.bioMarkdown || "")
+        .slice(start, start + 120)
+        .replace(/\s+/g, " ")
+        .trim();
+      hits.push({
+        kind: "video",
+        videoId: r.video_id,
+        title,
+        snippet: (start > 0 ? "…" : "") + snip + "…",
+        score: 1.5,
+      });
+    }
+    for (const l of p.sourceLinks || []) {
+      const label = (l.label || "").toLowerCase();
+      const url = (l.url || "").toLowerCase();
+      if (label.includes(query) || url.includes(query)) {
+        hits.push({
+          kind: "video",
+          videoId: r.video_id,
+          title,
+          snippet: l.label || l.url || "Source link",
+          score: 1.8,
         });
       }
     }

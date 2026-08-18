@@ -9,7 +9,14 @@ import morgan from "morgan";
 import mongoose from "mongoose";
 import path from "path";
 import { fileURLToPath } from "url";
-import { User, VaultVideo } from "./models.js";
+import { User, VaultVideo, SharedCard } from "./models.js";
+import {
+  extractSourcesFromBio,
+  isUsefulVaultSource,
+  mergeSourceLinks,
+  normalizeClientSource,
+} from "./bioSources.js";
+import crypto from "crypto";
 import {
   authMiddleware,
   loginUser,
@@ -25,7 +32,22 @@ import {
   isR2Configured,
   uploadJpeg,
 } from "./r2.js";
-import { getLlmConfig, serverChatCompletions } from "./ai.js";
+import {
+  checkLocalBackup,
+  readLocalShot,
+  saveLocalShot,
+} from "./shotBackup.js";
+import {
+  checkFil,
+  getFilObject,
+  isFilConfigured,
+  uploadFilJpeg,
+} from "./filone.js";
+import {
+  getLlmConfig,
+  serverChatCompletions,
+  buildVaultSearchContext,
+} from "./ai.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** React Studio build output (vite base: /app/) */
@@ -103,6 +125,8 @@ app.get("/app/*", (req, res, next) => {
 
 async function healthPayload() {
   const r2 = await checkR2();
+  const fil = await checkFil();
+  const local = await checkLocalBackup();
   return {
     ok: true,
     service: "videosearch-vault-api",
@@ -111,6 +135,14 @@ async function healthPayload() {
     r2: r2.ok
       ? { ok: true, bucket: r2.bucket }
       : { ok: false, message: r2.message || "not configured" },
+    backup: {
+      filone: fil.ok
+        ? { ok: true, bucket: fil.bucket }
+        : { ok: false, message: fil.message || "not configured" },
+      local: local.ok
+        ? { ok: true }
+        : { ok: false, message: local.message },
+    },
   };
 }
 
@@ -265,7 +297,9 @@ async function refreshUserStats(userId) {
 }
 
 async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC_API_BASE) {
-  if (!Array.isArray(screenshots)) return { list: [], uploaded: 0, r2Errors: 0 };
+  if (!Array.isArray(screenshots)) {
+    return { list: [], uploaded: 0, r2Errors: 0, filUploaded: 0, localSaved: 0 };
+  }
 
   const existing = await VaultVideo.findOne({ userId, videoId }).lean();
   const prevById = new Map(
@@ -274,6 +308,8 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
 
   let uploaded = 0;
   let r2Errors = 0;
+  let filUploaded = 0;
+  let localSaved = 0;
   const list = [];
   const base = (apiBase || PUBLIC_API_BASE).replace(/\/$/, "");
 
@@ -282,26 +318,70 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
     const prev = prevById.get(raw.id);
     let imageUrl = raw.imageUrl || prev?.imageUrl || "";
     let r2Key = raw.r2Key || prev?.r2Key || "";
-    let dataUrl = raw.dataUrl || "";
+    let filKey = raw.filKey || prev?.filKey || "";
+    let backupPath = raw.backupPath || prev?.backupPath || "";
+    let dataUrl = raw.dataUrl || prev?.dataUrl || "";
 
-    if (dataUrl && dataUrl.startsWith("data:image") && isR2Configured()) {
+    if (isLocalImagePointer(imageUrl)) {
+      imageUrl = isLocalImagePointer(prev?.imageUrl) ? "" : prev?.imageUrl || "";
+    }
+
+    if (dataUrl && dataUrl.startsWith("data:image")) {
+      let buffer = null;
       try {
-        const buffer = dataUrlToBuffer(dataUrl);
-        const out = await uploadJpeg({
-          userId,
-          videoId,
-          shotId: raw.id,
-          buffer,
-        });
-        r2Key = out.key;
-        imageUrl = out.publicUrl || `${base}${out.proxyPath}`;
-        dataUrl = "";
-        uploaded += 1;
+        buffer = dataUrlToBuffer(dataUrl);
       } catch (err) {
-        r2Errors += 1;
-        console.warn("[vault-api] R2 upload failed", raw.id, err?.message);
+        console.warn("[vault-api] bad shot dataUrl", raw.id, err?.message);
       }
-    } else if (!imageUrl && prev?.imageUrl) {
+
+      if (buffer && buffer.length > 32) {
+        try {
+          const local = await saveLocalShot({
+            userId,
+            videoId,
+            shotId: raw.id,
+            buffer,
+          });
+          backupPath = local.path;
+          localSaved += 1;
+        } catch (err) {
+          console.warn("[vault-api] local backup failed", raw.id, err?.message);
+        }
+
+        if (isFilConfigured()) {
+          try {
+            const out = await uploadFilJpeg({
+              userId,
+              videoId,
+              shotId: raw.id,
+              buffer,
+            });
+            filKey = out.key;
+            filUploaded += 1;
+          } catch (err) {
+            console.warn("[vault-api] Fil One upload failed", raw.id, err?.message);
+          }
+        }
+
+        if (isR2Configured()) {
+          try {
+            const out = await uploadJpeg({
+              userId,
+              videoId,
+              shotId: raw.id,
+              buffer,
+            });
+            await getObjectStream(out.key);
+            r2Key = out.key;
+            imageUrl = out.publicUrl || `${base}${out.proxyPath}`;
+            uploaded += 1;
+          } catch (err) {
+            r2Errors += 1;
+            console.warn("[vault-api] R2 upload failed", raw.id, err?.message);
+          }
+        }
+      }
+    } else if (!imageUrl && prev?.imageUrl && !isLocalImagePointer(prev.imageUrl)) {
       imageUrl = prev.imageUrl;
       r2Key = r2Key || prev.r2Key;
     }
@@ -315,11 +395,13 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
       createdAt: raw.createdAt || Date.now(),
       imageUrl: imageUrl || undefined,
       r2Key: r2Key || undefined,
+      filKey: filKey || undefined,
+      backupPath: backupPath || undefined,
       dataUrl: dataUrl && dataUrl.startsWith("data:") ? dataUrl : undefined,
     });
   }
 
-  return { list, uploaded, r2Errors };
+  return { list, uploaded, r2Errors, filUploaded, localSaved };
 }
 
 /**
@@ -327,6 +409,21 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
  * NEVER embed full base64 dataUrls in list payloads (they hang Studio).
  * Images load on demand via /api/vault/shot/:videoId/:shotId (or R2 media).
  */
+function isLocalImagePointer(url) {
+  const s = String(url || "").toLowerCase();
+  return (
+    !s ||
+    s.startsWith("account:") ||
+    s.startsWith("blob:") ||
+    s.startsWith("chrome-extension:")
+  );
+}
+
+function isHttpImageUrl(url) {
+  const s = String(url || "");
+  return s.startsWith("http://") || s.startsWith("https://");
+}
+
 function mapScreenshotOut(
   s,
   videoId,
@@ -334,14 +431,12 @@ function mapScreenshotOut(
   apiBase = PUBLIC_API_BASE
 ) {
   const base = (apiBase || PUBLIC_API_BASE).replace(/\/$/, "");
-  const external =
-    s.imageUrl && !String(s.imageUrl).startsWith("data:")
-      ? String(s.imageUrl)
-      : undefined;
+  const raw = String(s.imageUrl || "");
+  const external = isHttpImageUrl(raw) && !isLocalImagePointer(raw) ? raw : undefined;
   const mediaUrl = s.r2Key
     ? `${base}/api/media/${encodeURIComponent(s.r2Key)}`
     : undefined;
-  // Lazy proxy always available — browser loads one image at a time (no hang)
+  // Lazy proxy always available — never expose account:// pointers to clients
   const shotProxy =
     videoId && s.id
       ? `${base}/api/vault/shot/${encodeURIComponent(videoId)}/${encodeURIComponent(s.id)}`
@@ -356,7 +451,7 @@ function mapScreenshotOut(
     createdAt: s.createdAt,
     imageUrl: external || mediaUrl || shotProxy || undefined,
     r2Key: s.r2Key,
-    hasImage: true,
+    hasImage: Boolean(s.dataUrl || s.r2Key || external || s.id),
   };
 }
 
@@ -378,14 +473,15 @@ function isBareVideoId(s) {
   return /^[A-Za-z0-9_-]{10,12}$/.test(String(s || "").trim());
 }
 
-const titleCache = new Map();
+const metaCache = new Map();
 
-/** Resolve human title via YouTube oEmbed (no API key). */
-async function resolveYouTubeTitle(videoId) {
-  if (!videoId || !isBareVideoId(videoId) && videoId.length < 6) {
-    /* still try */
-  }
-  if (titleCache.has(videoId)) return titleCache.get(videoId);
+/**
+ * Resolve title + channel via YouTube oEmbed (no API key).
+ * Returns { title, channelTitle, channelUrl } or null fields.
+ */
+async function resolveYouTubeMeta(videoId) {
+  if (!videoId) return { title: null, channelTitle: null, channelUrl: null };
+  if (metaCache.has(videoId)) return metaCache.get(videoId);
 
   try {
     const url = `https://www.youtube.com/oembed?url=${encodeURIComponent(
@@ -396,39 +492,62 @@ async function resolveYouTubeTitle(videoId) {
       signal: AbortSignal.timeout?.(8000),
     });
     if (!res.ok) {
-      titleCache.set(videoId, null);
-      return null;
+      const empty = { title: null, channelTitle: null, channelUrl: null };
+      metaCache.set(videoId, empty);
+      return empty;
     }
     const data = await res.json();
     const title = String(data?.title || "").trim();
-    if (title && !isBareVideoId(title)) {
-      titleCache.set(videoId, title);
-      return title;
-    }
+    const channelTitle = String(data?.author_name || "").trim();
+    const channelUrl = String(data?.author_url || "").trim();
+    const out = {
+      title: title && !isBareVideoId(title) ? title : null,
+      channelTitle: channelTitle || null,
+      channelUrl: channelUrl || null,
+    };
+    metaCache.set(videoId, out);
+    return out;
   } catch (err) {
-    console.warn("[vault-api] oEmbed title failed", videoId, err?.message);
+    console.warn("[vault-api] oEmbed meta failed", videoId, err?.message);
   }
-  titleCache.set(videoId, null);
-  return null;
+  const empty = { title: null, channelTitle: null, channelUrl: null };
+  metaCache.set(videoId, empty);
+  return empty;
 }
 
-/** Backfill missing / id-only titles for a user's vault (best-effort). */
+/** Resolve human title via YouTube oEmbed (no API key). */
+async function resolveYouTubeTitle(videoId) {
+  const meta = await resolveYouTubeMeta(videoId);
+  return meta.title;
+}
+
+/** Backfill missing titles and channel names for a user's vault. */
 async function backfillUserTitles(userId, limit = 40) {
   const rows = await VaultVideo.find({ userId })
-    .select("videoId videoTitle")
+    .select("videoId videoTitle channelTitle channelUrl")
     .limit(200)
     .lean();
   let fixed = 0;
   for (const r of rows) {
     if (fixed >= limit) break;
     const t = (r.videoTitle || "").trim();
-    if (t && t !== r.videoId && !isBareVideoId(t)) continue;
-    const resolved = await resolveYouTubeTitle(r.videoId);
-    if (!resolved) continue;
-    await VaultVideo.updateOne(
-      { userId, videoId: r.videoId },
-      { $set: { videoTitle: resolved } }
-    );
+    const ch = (r.channelTitle || "").trim();
+    const needTitle = !t || t === r.videoId || isBareVideoId(t);
+    const needChannel = !ch;
+    if (!needTitle && !needChannel) continue;
+
+    const meta = await resolveYouTubeMeta(r.videoId);
+    if (!meta.title && !meta.channelTitle) continue;
+
+    const $set = {};
+    if (needTitle && meta.title) $set.videoTitle = meta.title;
+    if (needChannel && meta.channelTitle) {
+      $set.channelTitle = meta.channelTitle;
+      if (meta.channelUrl) $set.channelUrl = meta.channelUrl;
+    }
+    if (!Object.keys($set).length) continue;
+
+    await VaultVideo.updateOne({ userId, videoId: r.videoId }, { $set });
     fixed += 1;
   }
   return fixed;
@@ -441,11 +560,18 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
       videoId,
       videoTitle = "",
       videoUrl = "",
+      channelTitle = "",
+      channelUrl = "",
       highlights = [],
       screenshots = [],
+      sourceLinks = [],
+      /** Full description/bio (plain + markdown with hyperlinks) */
+      bioText = undefined,
+      bioMarkdown = undefined,
       /** when true, client list fully replaces (after explicit delete-all) */
       replaceHighlights = false,
       replaceScreenshots = false,
+      replaceSourceLinks = false,
     } = req.body || {};
 
     if (!videoId || typeof videoId !== "string") {
@@ -471,29 +597,96 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
       ? processed.list
       : mergeById(existing?.screenshots || [], processed.list);
 
+    // Description / bio source links — real materials only (not default Google/YT noise)
+    const clientLinks = Array.isArray(sourceLinks)
+      ? sourceLinks.map(normalizeClientSource).filter(Boolean)
+      : [];
+    // When bio is saved, always mine it for Drive/PPT/docs/PDF/… links
+    const bioForExtract =
+      typeof bioMarkdown === "string" || typeof bioText === "string"
+        ? `${typeof bioMarkdown === "string" ? bioMarkdown : existing?.bioMarkdown || ""}\n${
+            typeof bioText === "string" ? bioText : existing?.bioText || ""
+          }`
+        : "";
+    const extractedFromBio = bioForExtract.trim()
+      ? extractSourcesFromBio(
+          typeof bioText === "string" ? bioText : existing?.bioText || "",
+          typeof bioMarkdown === "string"
+            ? bioMarkdown
+            : existing?.bioMarkdown || ""
+        )
+      : [];
+    const incomingLinks = mergeSourceLinks(clientLinks, extractedFromBio);
+    const nextSourceLinks = replaceSourceLinks
+      ? incomingLinks
+      : mergeSourceLinks(
+          (existing?.sourceLinks || []).filter((l) =>
+            isUsefulVaultSource(l.url, l.kind)
+          ),
+          incomingLinks
+        );
+
     let nextTitle =
       (videoTitle && String(videoTitle).trim()) ||
       existing?.videoTitle ||
       "";
-    // Never keep a bare YouTube id as the title when we can resolve a real one
-    if (!nextTitle || nextTitle === videoId || isBareVideoId(nextTitle)) {
-      const resolved = await resolveYouTubeTitle(videoId);
-      if (resolved) nextTitle = resolved;
-      else if (!nextTitle) nextTitle = videoId;
+    let nextChannel =
+      (channelTitle && String(channelTitle).trim()) ||
+      existing?.channelTitle ||
+      "";
+    let nextChannelUrl =
+      (channelUrl && String(channelUrl).trim()) ||
+      existing?.channelUrl ||
+      "";
+
+    const needMeta =
+      !nextTitle ||
+      nextTitle === videoId ||
+      isBareVideoId(nextTitle) ||
+      !nextChannel;
+    if (needMeta) {
+      const meta = await resolveYouTubeMeta(videoId);
+      if (
+        (!nextTitle || nextTitle === videoId || isBareVideoId(nextTitle)) &&
+        meta.title
+      ) {
+        nextTitle = meta.title;
+      }
+      if (!nextChannel && meta.channelTitle) {
+        nextChannel = meta.channelTitle;
+      }
+      if (!nextChannelUrl && meta.channelUrl) {
+        nextChannelUrl = meta.channelUrl;
+      }
     }
+    if (!nextTitle) nextTitle = videoId;
 
     const setDoc = {
       userId,
       videoId,
       videoTitle: nextTitle,
+      channelTitle: nextChannel || "",
+      channelUrl: nextChannelUrl || "",
       videoUrl:
         videoUrl ||
         existing?.videoUrl ||
         `https://www.youtube.com/watch?v=${videoId}`,
       highlights: nextHighlights,
       screenshots: nextScreenshots,
+      sourceLinks: nextSourceLinks,
       updatedAt: new Date(),
     };
+
+    // Full bio — only overwrite when client sends a non-empty string (or explicit empty with flag)
+    if (typeof bioText === "string") {
+      setDoc.bioText = String(bioText).slice(0, 100_000);
+      setDoc.bioSyncedAt = new Date();
+    }
+    if (typeof bioMarkdown === "string") {
+      setDoc.bioMarkdown = String(bioMarkdown).slice(0, 120_000);
+      if (!setDoc.bioSyncedAt) setDoc.bioSyncedAt = new Date();
+    }
+
     // Preserve library flags (saved / watch later / playlists) on note/shot sync
     const doc = await VaultVideo.findOneAndUpdate(
       { userId, videoId },
@@ -503,18 +696,51 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
 
     await refreshUserStats(userId);
 
-    const r2Note = isR2Configured()
-      ? ` · R2 ${processed.uploaded} uploaded`
-      : " · R2 off";
+    const storedShots = processed.list.filter(
+      (s) =>
+        (s.dataUrl && String(s.dataUrl).startsWith("data:")) ||
+        s.r2Key ||
+        s.filKey ||
+        s.backupPath
+    ).length;
+    const r2Note = processed.filUploaded
+      ? ` · ${processed.filUploaded} backed up to Fil One`
+      : processed.uploaded
+        ? ` · ${processed.uploaded} in R2`
+        : processed.localSaved
+          ? ` · ${processed.localSaved} shots on disk`
+          : storedShots
+            ? ` · ${storedShots} shots stored`
+            : processed.r2Errors
+              ? " · shots saved in vault (cloud storage unavailable)"
+              : "";
+    const linkN = (doc.sourceLinks || []).length;
+    const extractedN = extractedFromBio.length;
+    const linkNote = linkN ? ` · ${linkN} sources` : "";
+    const bioNote =
+      typeof bioText === "string" && bioText.trim()
+        ? extractedN
+          ? ` · bio saved · ${extractedN} sources from description`
+          : " · bio saved"
+        : typeof bioMarkdown === "string" && bioMarkdown.trim()
+          ? extractedN
+            ? ` · bio saved · ${extractedN} sources from description`
+            : " · bio saved"
+          : "";
 
     res.json({
       ok: true,
-      message: `Saved · ${doc.highlights.length} marks · ${doc.screenshots.length} shots${r2Note}`,
+      message: `Saved · ${doc.highlights.length} marks · ${doc.screenshots.length} shots${linkNote}${bioNote}${r2Note}`,
       videoId: doc.videoId,
       userId,
       uploadedToR2: processed.uploaded,
       highlightCount: doc.highlights.length,
       screenshotCount: doc.screenshots.length,
+      sourceLinkCount: linkN,
+      sourceLinks: (doc.sourceLinks || []).filter(
+        (l) => l && l.url && isUsefulVaultSource(l.url, l.kind)
+      ),
+      hasBio: Boolean((doc.bioText || doc.bioMarkdown || "").trim()),
     });
   } catch (err) {
     console.error("sync error", err);
@@ -543,10 +769,10 @@ app.get("/api/vault", authMiddleware, async (req, res) => {
       rows: rows.map((r) => mapVaultRow(r, includeImages, base)),
     });
 
-    // Non-blocking: fix bare titles in background (never delay first paint)
+    // Non-blocking: fill missing titles + channel names (never delay first paint)
     setImmediate(() => {
-      backfillUserTitles(userId, 6).catch((e) =>
-        console.warn("[vault-api] title backfill", e?.message)
+      backfillUserTitles(userId, 40).catch((e) =>
+        console.warn("[vault-api] title/channel backfill", e?.message)
       );
     });
   } catch (err) {
@@ -571,6 +797,43 @@ app.post("/api/vault/repair-titles", authMiddleware, async (req, res) => {
   }
 });
 
+const bioSourceBackfill = new Set();
+
+function serializeSource(l) {
+  return {
+    id: l.id,
+    url: l.url,
+    label: l.label || "",
+    kind: l.kind || "link",
+    source: l.source || "description",
+    createdAt: l.createdAt || null,
+  };
+}
+
+/** Merge stored sources with links mined from the saved bio (backfills old videos). */
+function sourcesForRow(r) {
+  const existing = Array.isArray(r.sourceLinks)
+    ? r.sourceLinks.filter((l) => l && l.url && isUsefulVaultSource(l.url, l.kind))
+    : [];
+  const fromBio = extractSourcesFromBio(r.bioText || "", r.bioMarkdown || "");
+  if (!fromBio.length) return existing.map(serializeSource);
+  const merged = mergeSourceLinks(existing, fromBio);
+  if (
+    r._id &&
+    merged.length > existing.length &&
+    !bioSourceBackfill.has(String(r._id))
+  ) {
+    bioSourceBackfill.add(String(r._id));
+    VaultVideo.updateOne(
+      { _id: r._id },
+      { $set: { sourceLinks: merged } }
+    ).catch(() => {});
+  }
+  return merged
+    .filter((l) => l && l.url && isUsefulVaultSource(l.url, l.kind))
+    .map(serializeSource);
+}
+
 function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
   const updatedMs = r.updatedAt ? new Date(r.updatedAt).getTime() : Date.now();
   return {
@@ -583,10 +846,18 @@ function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
       videoId: r.videoId,
       videoTitle: r.videoTitle,
       videoUrl: r.videoUrl,
+      channelTitle: r.channelTitle || "",
+      channelUrl: r.channelUrl || "",
       highlights: r.highlights || [],
       screenshots: (r.screenshots || []).map((s) =>
         mapScreenshotOut(s, r.videoId, includeImages, apiBase)
       ),
+      sourceLinks: sourcesForRow(r),
+      bioText: r.bioText || "",
+      bioMarkdown: r.bioMarkdown || "",
+      bioSyncedAt: r.bioSyncedAt
+        ? new Date(r.bioSyncedAt).getTime()
+        : null,
       saved: Boolean(r.saved),
       savedAt: r.savedAt ? new Date(r.savedAt).getTime() : null,
       watchLater: Boolean(r.watchLater),
@@ -663,7 +934,33 @@ app.get("/api/vault/shot/:videoId/:shotId", async (req, res) => {
 
     res.setHeader("Cache-Control", "private, max-age=3600");
 
-    // Prefer R2 when configured
+    const sendJpeg = (bytes, type = "image/jpeg") => {
+      res.setHeader("Content-Type", type);
+      return res.end(Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes));
+    };
+
+    // 1) Local backup on this machine
+    try {
+      const local = await readLocalShot({ userId, videoId, shotId });
+      if (local && local.length > 32) return sendJpeg(local);
+    } catch (e) {
+      console.warn("[vault-api] local shot read", shotId, e?.message);
+    }
+
+    // 2) Fil One backup — only when we already stored a key there
+    if (shot.filKey && isFilConfigured()) {
+      try {
+        const out = await getFilObject(shot.filKey);
+        if (out.Body?.transformToByteArray) {
+          const bytes = await out.Body.transformToByteArray();
+          return sendJpeg(bytes, out.ContentType || "image/jpeg");
+        }
+      } catch (e) {
+        console.warn("[vault-api] shot Fil One miss", shotId, e?.message);
+      }
+    }
+
+    // 3) Cloudflare R2
     if (shot.r2Key && isR2Configured()) {
       try {
         const out = await getObjectStream(shot.r2Key);
@@ -677,12 +974,7 @@ app.get("/api/vault/shot/:videoId/:shotId", async (req, res) => {
       }
     }
 
-    // External non-data URL
-    if (shot.imageUrl && !String(shot.imageUrl).startsWith("data:")) {
-      return res.redirect(302, shot.imageUrl);
-    }
-
-    // Inline dataUrl in Mongo (normal path when R2 is unavailable)
+    // Inline dataUrl in Mongo (used when R2 is down or denied)
     if (shot.dataUrl && String(shot.dataUrl).startsWith("data:image")) {
       const m = String(shot.dataUrl).match(
         /^data:(image\/[\w+.-]+);base64,(.+)$/s
@@ -691,6 +983,11 @@ app.get("/api/vault/shot/:videoId/:shotId", async (req, res) => {
         res.setHeader("Content-Type", m[1]);
         return res.end(Buffer.from(m[2], "base64"));
       }
+    }
+
+    // Real HTTP image only — never redirect to account:// (extension-local pointer)
+    if (isHttpImageUrl(shot.imageUrl) && !String(shot.imageUrl).includes("/api/media/")) {
+      return res.redirect(302, shot.imageUrl);
     }
 
     return res
@@ -760,7 +1057,7 @@ app.post("/api/vault/library", authMiddleware, async (req, res) => {
     let watchLaterAt = existing?.watchLaterAt || null;
 
     const plName =
-      typeof playlist === "string" ? playlist.trim().slice(0, 80) : "";
+      typeof playlist === "string" ? playlist.trim().slice(0, 120) : "";
 
     /** Case-insensitive find; prefer existing casing so "politics" matches "Politics" */
     const findPlaylistIndex = (name) => {
@@ -776,12 +1073,22 @@ app.post("/api/vault/library", authMiddleware, async (req, res) => {
       })
         .select("playlists")
         .lean();
+      let prefixHit = "";
       for (const r of rows) {
         for (const p of r.playlists || []) {
-          if (String(p).toLowerCase() === key) return p;
+          const pk = String(p).toLowerCase();
+          if (pk === key) return p;
+          // Merge 80-char truncated imports with the full name
+          if (
+            pk.length >= 40 &&
+            key.length >= 40 &&
+            (pk.startsWith(key) || key.startsWith(pk))
+          ) {
+            if (String(p).length > prefixHit.length) prefixHit = p;
+          }
         }
       }
-      return name;
+      return prefixHit || name;
     };
 
     switch (action) {
@@ -923,6 +1230,149 @@ function libraryActionMessage(action, playlist, doc) {
 }
 
 /** Playlist names + video counts for the signed-in user */
+/**
+ * Import a whole YouTube playlist into the vault.
+ * Body: {
+ *   playlistName: string,
+ *   playlistId?: string,
+ *   videos: Array<{ videoId, videoTitle?, channelTitle?, channelUrl?, videoUrl? }>
+ * }
+ * Upserts each video and adds playlistName to its playlists[].
+ */
+app.post("/api/vault/playlist/import", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const playlistName = String(req.body?.playlistName || "")
+      .trim()
+      .slice(0, 120);
+    const playlistId = String(req.body?.playlistId || "").trim().slice(0, 80);
+    const videos = Array.isArray(req.body?.videos) ? req.body.videos : [];
+
+    if (!playlistName) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "playlistName required" });
+    }
+    if (!videos.length) {
+      return res.status(400).json({ ok: false, message: "videos[] required" });
+    }
+    if (videos.length > 250) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Max 250 videos per import" });
+    }
+
+    // Canonicalize against existing playlist casing
+    let canonical = playlistName;
+    const existingPl = await VaultVideo.find({
+      userId,
+      playlists: { $exists: true, $ne: [] },
+    })
+      .select("playlists")
+      .limit(200)
+      .lean();
+    for (const r of existingPl) {
+      for (const p of r.playlists || []) {
+        if (String(p).toLowerCase() === playlistName.toLowerCase()) {
+          canonical = p;
+          break;
+        }
+      }
+    }
+
+    let imported = 0;
+    let updated = 0;
+    const now = new Date();
+    const seen = new Set();
+
+    for (const raw of videos) {
+      const videoId = String(raw?.videoId || "").trim();
+      if (!videoId || seen.has(videoId)) continue;
+      if (!/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) continue;
+      seen.add(videoId);
+
+      const videoTitle = String(raw?.videoTitle || videoId).slice(0, 500);
+      const channelTitle = String(raw?.channelTitle || "").slice(0, 200);
+      const channelUrl = String(raw?.channelUrl || "").slice(0, 400);
+      const videoUrl =
+        String(raw?.videoUrl || "").trim() ||
+        `https://www.youtube.com/watch?v=${videoId}${
+          playlistId ? `&list=${encodeURIComponent(playlistId)}` : ""
+        }`;
+
+      const existing = await VaultVideo.findOne({ userId, videoId }).lean();
+      let playlists = Array.isArray(existing?.playlists)
+        ? [...existing.playlists]
+        : [];
+      const has = playlists.some(
+        (p) => String(p).toLowerCase() === canonical.toLowerCase()
+      );
+      if (!has) playlists.push(canonical);
+
+      const $set = {
+        userId,
+        videoId,
+        updatedAt: now,
+        videoUrl: existing?.videoUrl || videoUrl,
+        playlists,
+        saved: true,
+        savedAt: existing?.savedAt || now,
+      };
+
+      // Don't wipe good titles/channels
+      const bareTitle =
+        !existing?.videoTitle ||
+        existing.videoTitle === videoId ||
+        isBareVideoId(existing.videoTitle);
+      if (bareTitle && videoTitle && videoTitle !== videoId) {
+        $set.videoTitle = videoTitle;
+      } else if (!existing?.videoTitle) {
+        $set.videoTitle = videoTitle || videoId;
+      }
+
+      if (!existing?.channelTitle && channelTitle) {
+        $set.channelTitle = channelTitle;
+        if (channelUrl) $set.channelUrl = channelUrl;
+      }
+
+      await VaultVideo.findOneAndUpdate(
+        { userId, videoId },
+        {
+          $set,
+          $setOnInsert: {
+            highlights: [],
+            screenshots: [],
+            watchLater: false,
+            watchLaterAt: null,
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+
+      if (existing) updated += 1;
+      else imported += 1;
+    }
+
+    await refreshUserStats(userId);
+
+    res.json({
+      ok: true,
+      playlistName: canonical,
+      playlistId: playlistId || null,
+      imported,
+      updated,
+      total: imported + updated,
+      message: `Saved playlist “${canonical}” · ${imported + updated} videos`,
+    });
+  } catch (err) {
+    console.error("[vault-api] playlist import", err);
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Playlist import failed",
+    });
+  }
+});
+
 app.get("/api/library/playlists", authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -933,20 +1383,40 @@ app.get("/api/library/playlists", authMiddleware, async (req, res) => {
       .select("playlists videoId videoTitle")
       .lean();
 
-    // Merge case-insensitive duplicates under first-seen casing
+    // Merge case-insensitive + truncated-name duplicates under the longest title
     const counts = new Map(); // lower -> { name, count, videoIds }
+    const attach = (name, videoId) => {
+      const key = String(name).toLowerCase();
+      let matchKey = key;
+      for (const [k, cur] of counts) {
+        if (
+          k === key ||
+          (k.length >= 40 &&
+            key.length >= 40 &&
+            (k.startsWith(key) || key.startsWith(k)))
+        ) {
+          matchKey = k.length >= key.length ? k : key;
+          if (matchKey !== k) {
+            counts.set(matchKey, cur);
+            if (matchKey !== k) counts.delete(k);
+          }
+          break;
+        }
+      }
+      const cur = counts.get(matchKey) || {
+        name,
+        count: 0,
+        videoIds: [],
+      };
+      if (String(name).length > String(cur.name).length) cur.name = name;
+      cur.count += 1;
+      if (videoId) cur.videoIds.push(videoId);
+      counts.set(matchKey, cur);
+    };
     for (const r of rows) {
       for (const name of r.playlists || []) {
         if (!name) continue;
-        const key = String(name).toLowerCase();
-        const cur = counts.get(key) || {
-          name,
-          count: 0,
-          videoIds: [],
-        };
-        cur.count += 1;
-        if (r.videoId) cur.videoIds.push(r.videoId);
-        counts.set(key, cur);
+        attach(name, r.videoId);
       }
     }
 
@@ -1212,6 +1682,263 @@ app.post("/api/ai/chat", authMiddleware, async (req, res) => {
     res.status(err?.status && err.status < 600 ? err.status : 502).json({
       ok: false,
       message: err instanceof Error ? err.message : "AI request failed",
+      code: code || "AI_ERROR",
+    });
+  }
+});
+
+/**
+ * Create a public share link for a video card (notes + marks + shot captions).
+ * POST /api/vault/:videoId/share
+ * Body optional: { expiresInDays?: number }
+ */
+app.post("/api/vault/:videoId/share", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const videoId = String(req.params.videoId || "");
+    if (!videoId) {
+      return res.status(400).json({ ok: false, message: "videoId required" });
+    }
+
+    const doc = await VaultVideo.findOne({ userId, videoId }).lean();
+    if (!doc) {
+      return res.status(404).json({ ok: false, message: "Video not in vault" });
+    }
+
+    const highlights = (doc.highlights || []).map((h) => ({
+      id: h.id,
+      startTime: h.startTime,
+      endTime: h.endTime,
+      note: h.note || "",
+      color: h.color || "#ef4444",
+    }));
+    const screenshots = (doc.screenshots || []).map((s) => ({
+      id: s.id,
+      videoTime: s.videoTime,
+      note: s.note || "",
+    }));
+    const sourceLinks = sourcesForRow(doc).slice(0, 40);
+    const noteCount =
+      highlights.filter((h) => (h.note || "").trim()).length +
+      screenshots.filter((s) => (s.note || "").trim()).length;
+
+    const days = Number(req.body?.expiresInDays);
+    const expiresAt =
+      Number.isFinite(days) && days > 0
+        ? new Date(Date.now() + days * 86400_000)
+        : null;
+
+    const token = crypto.randomBytes(18).toString("hex");
+    const sharedBy =
+      req.user.displayName || req.user.email || "VideoSearch user";
+
+    await SharedCard.create({
+      token,
+      userId,
+      videoId,
+      expiresAt,
+      snapshot: {
+        videoId: doc.videoId,
+        videoTitle: doc.videoTitle || doc.videoId,
+        videoUrl:
+          doc.videoUrl || `https://www.youtube.com/watch?v=${doc.videoId}`,
+        channelTitle: doc.channelTitle || "",
+        channelUrl: doc.channelUrl || "",
+        sharedBy,
+        highlights,
+        screenshots,
+        sourceLinks,
+        markCount: highlights.length,
+        shotCount: screenshots.length,
+        noteCount,
+        sourceCount: sourceLinks.length,
+      },
+    });
+
+    const base = apiBaseFromReq(req);
+    const sharePath = `/app/share/${token}`;
+    const shareUrl = `${base}${sharePath}`;
+
+    res.json({
+      ok: true,
+      token,
+      shareUrl,
+      sharePath,
+      expiresAt,
+      message: "Share link created",
+      preview: {
+        title: doc.videoTitle || doc.videoId,
+        channelTitle: doc.channelTitle || "",
+        markCount: highlights.length,
+        shotCount: screenshots.length,
+        noteCount,
+        sourceCount: sourceLinks.length,
+      },
+    });
+  } catch (err) {
+    console.error("[vault-api] share create", err);
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Share failed",
+    });
+  }
+});
+
+/** Public: load a shared video card snapshot (no auth). */
+app.get("/api/share/:token", async (req, res) => {
+  try {
+    const token = String(req.params.token || "").trim();
+    if (!token || token.length < 16) {
+      return res.status(400).json({ ok: false, message: "Invalid share link" });
+    }
+
+    const card = await SharedCard.findOne({ token }).lean();
+    if (!card) {
+      return res.status(404).json({ ok: false, message: "Share not found" });
+    }
+    if (card.expiresAt && new Date(card.expiresAt).getTime() < Date.now()) {
+      return res.status(410).json({ ok: false, message: "Share link expired" });
+    }
+
+    // Best-effort view counter
+    SharedCard.updateOne({ token }, { $inc: { viewCount: 1 } }).catch(() => {});
+
+    res.json({
+      ok: true,
+      token: card.token,
+      createdAt: card.createdAt,
+      expiresAt: card.expiresAt,
+      snapshot: card.snapshot,
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Share load failed",
+    });
+  }
+});
+
+/**
+ * AI Search over the signed-in user's vault (Mistral / configured LLM).
+ * Body: { query: string }
+ * Returns natural-language answer + structured citations.
+ */
+app.post("/api/vault/ai-search", authMiddleware, async (req, res) => {
+  try {
+    const query = String(req.body?.query || "").trim();
+    if (!query || query.length < 2) {
+      return res.status(400).json({ ok: false, message: "query required" });
+    }
+    if (query.length > 500) {
+      return res.status(400).json({ ok: false, message: "query too long" });
+    }
+
+    const rows = await VaultVideo.find({ userId: req.user.userId })
+      .select(
+        "videoId videoTitle channelTitle channelUrl highlights screenshots updatedAt"
+      )
+      .sort({ updatedAt: -1 })
+      .limit(80)
+      .lean();
+
+    // Slim highlights/screenshots (no dataUrl)
+    const slim = rows.map((r) => ({
+      videoId: r.videoId,
+      videoTitle: r.videoTitle,
+      channelTitle: r.channelTitle,
+      highlights: (r.highlights || []).map((h) => ({
+        id: h.id,
+        startTime: h.startTime,
+        note: h.note,
+      })),
+      screenshots: (r.screenshots || []).map((s) => ({
+        id: s.id,
+        videoTime: s.videoTime,
+        note: s.note,
+      })),
+    }));
+
+    const context = buildVaultSearchContext(slim);
+    if (!context.trim()) {
+      return res.json({
+        ok: true,
+        answer:
+          "Your vault is empty. Mark moments or capture frames on YouTube first, then ask again.",
+        citations: [],
+        provider: getLlmConfig().provider,
+        model: getLlmConfig().model,
+      });
+    }
+
+    const system = `You are VideoSearch Studio AI. Answer ONLY from the user's vault notes/marks/shots/titles below.
+Rules:
+- Be concise and practical.
+- Prefer concrete citations with video id and timestamp in seconds.
+- If the vault does not contain the answer, say so clearly.
+- Output valid JSON only (no markdown fences) with this shape:
+{
+  "answer": "string",
+  "citations": [
+    { "videoId": "string", "title": "string", "time": 0, "kind": "video|mark|shot", "snippet": "string", "why": "string" }
+  ]
+}
+Max 8 citations. time is seconds on the video (0 if whole video).`;
+
+    const result = await serverChatCompletions({
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: `USER QUESTION:\n${query}\n\nVAULT DATA:\n${context}`,
+        },
+      ],
+      temperature: 0.2,
+      max_tokens: 1100,
+    });
+
+    let parsed = null;
+    const raw = result.content || "";
+    try {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+    } catch {
+      parsed = { answer: raw, citations: [] };
+    }
+
+    const citations = Array.isArray(parsed.citations)
+      ? parsed.citations
+          .filter((c) => c && c.videoId)
+          .slice(0, 8)
+          .map((c) => ({
+            videoId: String(c.videoId),
+            title: String(c.title || c.videoId),
+            time: Math.max(0, Math.floor(Number(c.time) || 0)),
+            kind: ["video", "mark", "shot"].includes(c.kind) ? c.kind : "mark",
+            snippet: String(c.snippet || c.why || "").slice(0, 400),
+            why: String(c.why || "").slice(0, 200),
+          }))
+      : [];
+
+    res.json({
+      ok: true,
+      answer: String(parsed.answer || raw).slice(0, 4000),
+      citations,
+      provider: result.provider,
+      model: result.model,
+    });
+  } catch (err) {
+    const code = err?.code || "";
+    if (code === "AI_NOT_CONFIGURED") {
+      return res.status(503).json({
+        ok: false,
+        message: err.message,
+        code,
+      });
+    }
+    console.error("[vault-api] ai-search error", err);
+    res.status(err?.status && err.status < 600 ? err.status : 502).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "AI search failed",
       code: code || "AI_ERROR",
     });
   }

@@ -34,10 +34,18 @@ export function clearSession(): void {
 
 export function defaultApiUrl(): string {
   if (typeof window !== "undefined") {
-    const { origin } = window.location;
-    if (origin.includes("8787") || origin.includes("5173")) {
-      // Vite dev proxies /api; production serves under same origin
-      if (origin.includes("5173")) return "http://127.0.0.1:8787";
+    const { origin, port } = window.location;
+    // Vite dev (5173) proxies /api → vault, so same-origin works for public share
+    // and avoids hard-coding 127.0.0.1 for other devices.
+    if (port === "5173" || origin.includes(":5173")) {
+      return origin; // e.g. http://127.0.0.1:5173 — proxy handles /api
+    }
+    // Production / vault host (8787 or custom domain): same origin serves API + /app
+    if (
+      port === "8787" ||
+      origin.includes(":8787") ||
+      !origin.includes("localhost")
+    ) {
       return origin;
     }
   }
@@ -64,12 +72,34 @@ export async function apiFetch(
   }
 }
 
+export function shotSrc(
+  videoId: string,
+  shot: { id?: string; imageUrl?: string; dataUrl?: string },
+  token?: string
+): string {
+  if (shot.dataUrl && shot.dataUrl.startsWith("data:")) return shot.dataUrl;
+  const raw = shot.imageUrl || "";
+  const pointer =
+    !raw ||
+    raw.startsWith("account:") ||
+    raw.startsWith("blob:") ||
+    raw.startsWith("chrome-extension:");
+  if (pointer && videoId && shot.id) {
+    return mediaSrc(
+      `/api/vault/shot/${encodeURIComponent(videoId)}/${encodeURIComponent(shot.id)}`,
+      token
+    );
+  }
+  return mediaSrc(raw, token);
+}
+
 export function mediaSrc(
   url: string | undefined,
   token?: string
 ): string {
   if (!url) return "";
   if (url.startsWith("data:")) return url;
+  if (url.startsWith("account:") || url.startsWith("blob:")) return "";
   // <img> cannot send Authorization headers — attach JWT as query for media routes
   const needsToken =
     token &&

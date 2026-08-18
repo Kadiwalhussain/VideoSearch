@@ -3,6 +3,7 @@ import type {
   LibraryAction,
   LibraryState,
   Session,
+  SourceLink,
   VaultRow,
 } from "../types";
 
@@ -118,6 +119,170 @@ export async function deleteHighlight(
   return {
     message: data.message || "Mark deleted",
     remaining: data.remaining,
+  };
+}
+
+/** Create a public share link for a vault video card. */
+/** Save / update full YouTube bio for a video (editable later in Studio). */
+export async function saveVideoBio(
+  session: Session,
+  opts: {
+    videoId: string;
+    videoTitle?: string;
+    bioText: string;
+    bioMarkdown?: string;
+  }
+): Promise<{ message: string; sourceLinks?: SourceLink[] }> {
+  const res = await apiFetch(session.url, "/api/vault/sync", {
+    method: "POST",
+    token: session.token,
+    body: JSON.stringify({
+      videoId: opts.videoId,
+      videoTitle: opts.videoTitle,
+      videoUrl: `https://www.youtube.com/watch?v=${opts.videoId}`,
+      highlights: [],
+      screenshots: [],
+      sourceLinks: [],
+      bioText: opts.bioText,
+      bioMarkdown: opts.bioMarkdown ?? opts.bioText,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `Bio save failed (${res.status})`);
+  }
+  return {
+    message: data.message || "Bio saved",
+    sourceLinks: Array.isArray(data.sourceLinks) ? data.sourceLinks : undefined,
+  };
+}
+
+export async function createVideoShare(
+  session: Session,
+  videoId: string,
+  opts?: { expiresInDays?: number }
+): Promise<{
+  shareUrl: string;
+  sharePath: string;
+  token: string;
+  preview?: {
+    title?: string;
+    channelTitle?: string;
+    markCount?: number;
+    shotCount?: number;
+    noteCount?: number;
+  };
+}> {
+  const res = await apiFetch(
+    session.url,
+    `/api/vault/${encodeURIComponent(videoId)}/share`,
+    {
+      method: "POST",
+      token: session.token,
+      body: JSON.stringify({
+        expiresInDays: opts?.expiresInDays ?? null,
+      }),
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `Share failed (${res.status})`);
+  }
+  // Prefer same-origin app URL when Studio is on the vault host
+  let shareUrl = String(data.shareUrl || "");
+  if (typeof window !== "undefined" && data.sharePath) {
+    shareUrl = `${window.location.origin}${data.sharePath}`;
+  }
+  return {
+    shareUrl,
+    sharePath: String(data.sharePath || ""),
+    token: String(data.token || ""),
+    preview: data.preview,
+  };
+}
+
+/** Public fetch of a shared card (no auth). */
+export async function fetchSharedCard(
+  apiBase: string,
+  token: string
+): Promise<{
+  snapshot: {
+    videoId: string;
+    videoTitle?: string;
+    videoUrl?: string;
+    channelTitle?: string;
+    channelUrl?: string;
+    sharedBy?: string;
+    highlights?: Array<{
+      id?: string;
+      startTime?: number;
+      endTime?: number;
+      note?: string;
+      color?: string;
+    }>;
+    screenshots?: Array<{
+      id?: string;
+      videoTime?: number;
+      note?: string;
+    }>;
+    sourceLinks?: Array<{
+      id?: string;
+      url?: string;
+      label?: string;
+      kind?: string;
+    }>;
+    markCount?: number;
+    shotCount?: number;
+    noteCount?: number;
+    sourceCount?: number;
+  };
+  createdAt?: string;
+  expiresAt?: string | null;
+}> {
+  const base = apiBase.replace(/\/$/, "");
+  const res = await fetch(`${base}/api/share/${encodeURIComponent(token)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `Share load failed (${res.status})`);
+  }
+  return {
+    snapshot: data.snapshot,
+    createdAt: data.createdAt,
+    expiresAt: data.expiresAt,
+  };
+}
+
+/** AI search over the vault (Mistral / configured LLM). */
+export async function aiSearchVault(
+  session: Session,
+  query: string
+): Promise<{
+  answer: string;
+  citations: Array<{
+    videoId: string;
+    title: string;
+    time: number;
+    kind: string;
+    snippet: string;
+    why?: string;
+  }>;
+  provider?: string;
+  model?: string;
+}> {
+  const res = await apiFetch(session.url, "/api/vault/ai-search", {
+    method: "POST",
+    token: session.token,
+    body: JSON.stringify({ query }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `AI search failed (${res.status})`);
+  }
+  return {
+    answer: String(data.answer || ""),
+    citations: Array.isArray(data.citations) ? data.citations : [],
+    provider: data.provider,
+    model: data.model,
   };
 }
 

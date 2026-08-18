@@ -1,4 +1,4 @@
-import type { VaultRow, VaultStats } from "../types";
+import type { ChannelStat, VaultRow, VaultStats } from "../types";
 import { allNotes } from "./vaultSelectors";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -29,7 +29,12 @@ export type AnalyticsModel = {
     shots: number;
     notes: number;
     score: number;
+    channel?: string;
   }>;
+  /** Where you spend engagement — channels ranked by activity */
+  channels: ChannelStat[];
+  topChannel: string;
+  totalChannelMinutes: number;
   composition: {
     videos: number;
     marks: number;
@@ -41,9 +46,91 @@ export type AnalyticsModel = {
   watchLaterShare: number;
 };
 
+/** Estimate engaged minutes on a video from mark/shot timeline span. */
+function engagedMinutes(row: VaultRow): number {
+  const times: number[] = [];
+  for (const h of row.payload?.highlights || []) {
+    if (typeof h.startTime === "number") times.push(h.startTime);
+  }
+  for (const s of row.payload?.screenshots || []) {
+    if (typeof s.videoTime === "number") times.push(s.videoTime);
+  }
+  if (times.length >= 2) {
+    const span = Math.max(...times) - Math.min(...times);
+    // At least 2 min when you interact twice; cap crazy spans
+    return Math.min(180, Math.max(2, Math.round(span / 60) + 1));
+  }
+  if (times.length === 1) return 4;
+  return 2; // video in vault with no annotations yet
+}
+
+export function buildChannelStats(rows: VaultRow[]): ChannelStat[] {
+  const map = new Map<
+    string,
+    {
+      name: string;
+      url?: string;
+      videos: number;
+      marks: number;
+      shots: number;
+      notes: number;
+      minutes: number;
+      sampleVideoId?: string;
+    }
+  >();
+
+  for (const r of rows) {
+    const raw = (r.payload?.channelTitle || "").trim();
+    const name = raw || "Unknown channel";
+    const key = name.toLowerCase();
+    let g = map.get(key);
+    if (!g) {
+      g = {
+        name,
+        url: r.payload?.channelUrl || undefined,
+        videos: 0,
+        marks: 0,
+        shots: 0,
+        notes: 0,
+        minutes: 0,
+        sampleVideoId: r.video_id,
+      };
+      map.set(key, g);
+    }
+    const hl = r.payload?.highlights || [];
+    const ss = r.payload?.screenshots || [];
+    g.videos += 1;
+    g.marks += hl.length;
+    g.shots += ss.length;
+    g.notes += hl.filter((h) => h.note?.trim()).length;
+    g.minutes += engagedMinutes(r);
+    if (!g.url && r.payload?.channelUrl) g.url = r.payload.channelUrl;
+    if (!g.sampleVideoId) g.sampleVideoId = r.video_id;
+  }
+
+  return [...map.values()]
+    .map((g) => ({
+      ...g,
+      // Score: minutes matter most, then marks/shots (where you actively engage)
+      score: g.minutes * 3 + g.marks * 2 + g.shots * 3 + g.notes + g.videos,
+    }))
+    .sort((a, b) => b.score - a.score || b.minutes - a.minutes);
+}
+
 function dayIndex(d: Date): number {
   const day = d.getDay(); // 0 Sun
   return day === 0 ? 6 : day - 1;
+}
+
+function eventDayIndex(ts?: number | string | null): number | null {
+  if (ts == null || ts === "") return null;
+  const n = typeof ts === "number" ? ts : new Date(ts).getTime();
+  if (!Number.isFinite(n) || n <= 0) return null;
+  // Heuristic: timestamps from extension are usually ms; if tiny, treat as sec
+  const ms = n < 1e12 ? n * 1000 : n;
+  const d = new Date(ms);
+  if (!Number.isFinite(d.getTime())) return null;
+  return dayIndex(d);
 }
 
 export function buildAnalytics(
@@ -54,22 +141,54 @@ export function buildAnalytics(
   const marks = [0, 0, 0, 0, 0, 0, 0];
   const shots = [0, 0, 0, 0, 0, 0, 0];
   const videos = [0, 0, 0, 0, 0, 0, 0];
+  const videosSeenDay = new Set<string>();
 
+  // Prefer original mark/shot createdAt (true capture times), not last vault update
   for (const r of rows) {
-    const d = new Date(r.updated_at || Date.now());
-    const idx = dayIndex(d);
-    const hl = r.payload?.highlights?.length || 0;
-    const ss = r.payload?.screenshots?.length || 0;
-    videos[idx] += 1;
-    marks[idx] += hl;
-    shots[idx] += ss;
-    activity[idx] += 1 + hl + ss;
+    const hl = r.payload?.highlights || [];
+    const ss = r.payload?.screenshots || [];
+    let videoAttributed = false;
 
-    // Also attribute individual mark/shot createdAt when present
-    for (const h of r.payload?.highlights || []) {
-      if (h.createdAt) {
-        const i = dayIndex(new Date(h.createdAt));
-        // already counted in hl totals for updated_at day; skip double-count for weekly by video
+    for (const h of hl) {
+      const i =
+        eventDayIndex(h.createdAt) ??
+        eventDayIndex(h.updatedAt) ??
+        eventDayIndex(r.updated_at);
+      if (i == null) continue;
+      marks[i] += 1;
+      activity[i] += 1;
+      if (!videoAttributed) {
+        const key = `${r.video_id}:${i}`;
+        if (!videosSeenDay.has(key)) {
+          videosSeenDay.add(key);
+          videos[i] += 1;
+          videoAttributed = true;
+        }
+      }
+    }
+
+    for (const s of ss) {
+      const i =
+        eventDayIndex(s.createdAt) ?? eventDayIndex(r.updated_at);
+      if (i == null) continue;
+      shots[i] += 1;
+      activity[i] += 1;
+      if (!videoAttributed) {
+        const key = `${r.video_id}:${i}`;
+        if (!videosSeenDay.has(key)) {
+          videosSeenDay.add(key);
+          videos[i] += 1;
+          videoAttributed = true;
+        }
+      }
+    }
+
+    // Video only (no marks/shots) — count on vault update day
+    if (!hl.length && !ss.length) {
+      const i = eventDayIndex(r.updated_at);
+      if (i != null) {
+        videos[i] += 1;
+        activity[i] += 1;
       }
     }
   }
@@ -112,10 +231,15 @@ export function buildAnalytics(
         shots: shotsN,
         notes,
         score: marksN * 2 + shotsN * 3 + notes,
+        channel: r.payload?.channelTitle || undefined,
       };
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, 10);
+
+  const channels = buildChannelStats(rows);
+  const totalChannelMinutes = channels.reduce((a, c) => a + c.minutes, 0);
+  const topChannel = channels[0]?.name || "—";
 
   const radar = [
     Math.min(20, stats.videos),
@@ -143,6 +267,9 @@ export function buildAnalytics(
     },
     last14,
     top,
+    channels,
+    topChannel,
+    totalChannelMinutes,
     composition: {
       videos: stats.videos,
       marks: stats.marks,
@@ -161,6 +288,18 @@ export function buildAnalytics(
   };
 }
 
+function dayKeyFromTs(ts?: number | string | null): string | null {
+  if (ts == null || ts === "") return null;
+  const n = typeof ts === "number" ? ts : new Date(ts).getTime();
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const ms = n < 1e12 ? n * 1000 : n;
+  try {
+    return new Date(ms).toISOString().slice(0, 10);
+  } catch {
+    return null;
+  }
+}
+
 function buildLast14(rows: VaultRow[]): { labels: string[]; values: number[] } {
   const days: { key: string; label: string; value: number }[] = [];
   const now = new Date();
@@ -168,7 +307,8 @@ function buildLast14(rows: VaultRow[]): { labels: string[]; values: number[] } {
     const d = new Date(now);
     d.setHours(0, 0, 0, 0);
     d.setDate(d.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
+    // Local calendar day key (avoid UTC shift)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     days.push({
       key,
       label: `${d.getMonth() + 1}/${d.getDate()}`,
@@ -177,25 +317,23 @@ function buildLast14(rows: VaultRow[]): { labels: string[]; values: number[] } {
   }
   const map = new Map(days.map((d) => [d.key, d]));
 
+  const bump = (ts?: number | string | null, weight = 1) => {
+    if (ts == null) return;
+    const n = typeof ts === "number" ? ts : new Date(ts).getTime();
+    if (!Number.isFinite(n) || n <= 0) return;
+    const ms = n < 1e12 ? n * 1000 : n;
+    const d = new Date(ms);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const bucket = map.get(key);
+    if (bucket) bucket.value += weight;
+  };
+
   for (const r of rows) {
     for (const h of r.payload?.highlights || []) {
-      const ts = h.createdAt || h.updatedAt;
-      if (!ts) continue;
-      const key = new Date(ts).toISOString().slice(0, 10);
-      const bucket = map.get(key);
-      if (bucket) bucket.value += 1;
+      bump(h.createdAt || h.updatedAt, 1);
     }
     for (const s of r.payload?.screenshots || []) {
-      if (!s.createdAt) continue;
-      const key = new Date(s.createdAt).toISOString().slice(0, 10);
-      const bucket = map.get(key);
-      if (bucket) bucket.value += 1;
-    }
-    // Video sync day
-    if (r.updated_at) {
-      const key = new Date(r.updated_at).toISOString().slice(0, 10);
-      const bucket = map.get(key);
-      if (bucket) bucket.value += 0.5;
+      bump(s.createdAt, 1);
     }
   }
 

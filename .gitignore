@@ -13,3 +13,18 @@ server/node_modules/
 .vscode/
 coverage/
 server/.env
+server/data/shots/
+
+# Flutter
+mobile/build/
+mobile/.dart_tool/
+mobile/.pub-cache/
+mobile/.pub/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/**/*.iml
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/Flutter.podspec
+mobile/ios/Flutter/ephemeral/
+**/xcuserdata/

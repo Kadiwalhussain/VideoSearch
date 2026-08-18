@@ -10,19 +10,24 @@ import { StatCards } from "../components/StatCards";
 import { VideoCard } from "../components/VideoCard";
 import { useSession } from "../store/SessionContext";
 import { useVault } from "../store/VaultContext";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { formatTime } from "../lib/format";
 import { EmptyState } from "../components/EmptyState";
 import { SessionLoader } from "../components/SessionLoader";
-import { Inbox } from "lucide-react";
+import { Inbox, Tv } from "lucide-react";
+import { buildChannelStats } from "../lib/analytics";
 
 export function DashboardPage() {
   const { session } = useSession();
-  const { stats, recent, search, loading, error, refresh } = useVault();
+  const { stats, recent, search, loading, error, refresh, rows } = useVault();
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<ReturnType<typeof search>>([]);
   const nav = useNavigate();
   const name = session?.user.displayName || session?.user.email || "there";
+  const topChannels = useMemo(
+    () => buildChannelStats(rows).slice(0, 5),
+    [rows]
+  );
 
   const runSearch = () => {
     const h = search(q);
@@ -85,6 +90,41 @@ export function DashboardPage() {
           />
         )}
       </section>
+
+      {topChannels.length > 0 ? (
+        <section className="section" style={{ marginTop: 22 }}>
+          <div className="section-head">
+            <h2 className="section-title">
+              <Tv size={18} /> Channels you engage with
+            </h2>
+            <Link className="link-btn" to="/analytics">
+              Full analytics →
+            </Link>
+          </div>
+          <div className="dash-channel-strip">
+            {topChannels.map((ch, i) => (
+              <div key={ch.name} className="dash-channel-card glass-card">
+                <span className="dash-channel-rank">#{i + 1}</span>
+                <strong title={ch.name}>{ch.name}</strong>
+                <span>
+                  {ch.videos} video{ch.videos === 1 ? "" : "s"} · {ch.marks}{" "}
+                  marks · {ch.shots} shots
+                </span>
+                <div className="dash-channel-bar">
+                  <i
+                    style={{
+                      width: `${Math.max(
+                        8,
+                        (ch.score / (topChannels[0]?.score || 1)) * 100
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <div className="dash-split">
         <section className="glass-card pad">

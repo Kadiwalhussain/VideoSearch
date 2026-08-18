@@ -1,0 +1,14 @@
+// Shared Xcode 16+/26 quieting. Flutter writes products under mobile/build/ios,
+// which Xcode flags as "Stale file … outside of the allowed root paths".
+// These settings stop that flood from being treated like compile errors.
+ENABLE_USER_SCRIPT_SANDBOXING = NO
+ENABLE_MODULE_VERIFIER = NO
+CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES = YES
+CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO
+VALIDATE_WORKSPACE = NO
+// Xcode 16+/26 injects __preview.dylib into Debug. On a physical iPhone
+// (especially wireless) AMFI kills Runner before LLDB can attach:
+// IDEDebugSessionErrorDomain Code 7 / "Could not attach to pid".
+ENABLE_DEBUG_DYLIB = NO
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = Apple Development

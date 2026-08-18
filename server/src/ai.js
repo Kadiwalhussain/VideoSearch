@@ -1,38 +1,49 @@
 /**
  * Server-side LLM proxy (OpenAI-compatible).
- * Prefers SpaceXAI / xAI: XAI_API_KEY + https://api.x.ai/v1
- * Optional overrides: LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+ * Supports:
+ *  - Mistral: LLM_API_KEY + https://api.mistral.ai/v1
+ *  - xAI: XAI_API_KEY + https://api.x.ai/v1
+ *  - Groq / custom OpenAI-compatible hosts
  */
 
 const XAI_BASE = "https://api.x.ai/v1";
-const DEFAULT_MODEL = process.env.LLM_MODEL || "grok-4.5";
+const MISTRAL_BASE = "https://api.mistral.ai/v1";
 
 export function getLlmConfig() {
-  const apiKey = (
-    process.env.XAI_API_KEY ||
-    process.env.LLM_API_KEY ||
-    process.env.GROQ_API_KEY ||
-    ""
-  ).trim();
-  const baseUrl = (
-    process.env.LLM_BASE_URL ||
-    (process.env.XAI_API_KEY ? XAI_BASE : "") ||
-    "https://api.x.ai/v1"
-  )
-    .trim()
-    .replace(/\/$/, "");
-  const model = (process.env.LLM_MODEL || DEFAULT_MODEL).trim();
+  const xai = (process.env.XAI_API_KEY || "").trim();
+  const groq = (process.env.GROQ_API_KEY || "").trim();
+  const llm = (process.env.LLM_API_KEY || "").trim();
+  const mistralEnv = (process.env.MISTRAL_API_KEY || "").trim();
+
+  const apiKey = xai || mistralEnv || llm || groq;
+  let baseUrl = (process.env.LLM_BASE_URL || "").trim().replace(/\/$/, "");
+  let provider = "none";
+  let defaultModel = "mistral-small-latest";
+
+  if (xai) {
+    provider = "xai";
+    baseUrl = baseUrl || XAI_BASE;
+    defaultModel = "grok-4.5";
+  } else if (mistralEnv || (llm && /mistral/i.test(baseUrl || ""))) {
+    provider = "mistral";
+    baseUrl = baseUrl || MISTRAL_BASE;
+    defaultModel = "mistral-small-latest";
+  } else if (groq) {
+    provider = "groq";
+    baseUrl = baseUrl || "https://api.groq.com/openai/v1";
+    defaultModel = "llama-3.3-70b-versatile";
+  } else if (llm) {
+    provider = "custom";
+    baseUrl = baseUrl || MISTRAL_BASE;
+  }
+
+  const model = (process.env.LLM_MODEL || defaultModel).trim();
+
   return {
-    configured: Boolean(apiKey && apiKey.length > 8),
+    configured: Boolean(apiKey && apiKey.length > 8 && baseUrl),
     baseUrl,
     model,
-    provider: process.env.XAI_API_KEY
-      ? "xai"
-      : process.env.GROQ_API_KEY
-        ? "groq"
-        : process.env.LLM_API_KEY
-          ? "custom"
-          : "none",
+    provider,
   };
 }
 
@@ -44,7 +55,7 @@ export async function serverChatCompletions(opts) {
   const cfg = getLlmConfig();
   if (!cfg.configured) {
     const err = new Error(
-      "AI not configured. Add XAI_API_KEY to server/.env (https://console.x.ai)"
+      "AI not configured. Set MISTRAL_API_KEY or LLM_API_KEY + LLM_BASE_URL in server/.env"
     );
     err.code = "AI_NOT_CONFIGURED";
     throw err;
@@ -52,6 +63,7 @@ export async function serverChatCompletions(opts) {
 
   const apiKey = (
     process.env.XAI_API_KEY ||
+    process.env.MISTRAL_API_KEY ||
     process.env.LLM_API_KEY ||
     process.env.GROQ_API_KEY ||
     ""
@@ -105,4 +117,31 @@ export async function serverChatCompletions(opts) {
     provider: cfg.provider,
     usage: data.usage || null,
   };
+}
+
+/**
+ * Build a compact vault context string for RAG-style Q&A (no base64 images).
+ */
+export function buildVaultSearchContext(rows, maxChars = 14000) {
+  const lines = [];
+  for (const r of rows || []) {
+    const title = r.videoTitle || r.videoId;
+    const ch = r.channelTitle ? ` | channel: ${r.channelTitle}` : "";
+    lines.push(`VIDEO id=${r.videoId} title="${title}"${ch}`);
+    for (const h of r.highlights || []) {
+      const note = (h.note || "").trim();
+      const t = Math.floor(Number(h.startTime) || 0);
+      if (note) lines.push(`  MARK t=${t}s id=${h.id || ""}: ${note.slice(0, 240)}`);
+      else lines.push(`  MARK t=${t}s id=${h.id || ""} (no text)`);
+    }
+    for (const s of r.screenshots || []) {
+      const note = (s.note || "").trim();
+      const t = Math.floor(Number(s.videoTime) || 0);
+      if (note) lines.push(`  SHOT t=${t}s: ${note.slice(0, 160)}`);
+      else lines.push(`  SHOT t=${t}s`);
+    }
+  }
+  let out = lines.join("\n");
+  if (out.length > maxChars) out = out.slice(0, maxChars) + "\n…[truncated]";
+  return out;
 }

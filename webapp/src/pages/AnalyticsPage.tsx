@@ -12,6 +12,8 @@ import {
   CalendarDays,
   Trophy,
   Sparkles,
+  Tv,
+  Clock3,
 } from "lucide-react";
 import { SessionLoader } from "../components/SessionLoader";
 import {
@@ -108,12 +110,20 @@ function Heatmap({ values, labels }: { values: number[]; labels: string[] }) {
   );
 }
 
+function formatMinutes(m: number): string {
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+
 export function AnalyticsPage() {
   const { stats, rows, loading } = useVault();
   const { theme } = useTheme();
   const dark = theme !== "light";
   const c = chartTheme(dark);
   const model = useMemo(() => buildAnalytics(rows, stats), [rows, stats]);
+  const topChannels = model.channels.slice(0, 8);
 
   const commonOpts = useMemo((): ChartOptions => {
     return {
@@ -304,8 +314,8 @@ export function AnalyticsPage() {
             <BarChart3 size={22} /> Analytics
           </h1>
           <p className="view-sub">
-            Live intelligence from your vault — marks, shots, and notes synced
-            from the extension.
+            Live intelligence from your vault — channels you engage with, marks,
+            shots, and notes from the extension.
           </p>
         </div>
         <span className="ana-pill">
@@ -322,16 +332,24 @@ export function AnalyticsPage() {
                 Peak activity on{" "}
                 <em style={{ color: "var(--accent)", fontStyle: "normal" }}>
                   {model.peakDay}
-                </em>{" "}
+                </em>
+                {model.topChannel !== "—" ? (
+                  <>
+                    {" "}
+                    · most time with{" "}
+                    <em style={{ color: "var(--accent-2)", fontStyle: "normal" }}>
+                      {model.topChannel}
+                    </em>
+                  </>
+                ) : null}{" "}
                 · {model.noteDensity}% note density · {stats.videos} videos
-                tracked
               </>
             ) : (
               "Capture on YouTube to light up these charts."
             )}
           </p>
         </div>
-        <span className="ana-pill gold">R2 + Mongo</span>
+        <span className="ana-pill gold">Channels · vault</span>
       </div>
 
       {loading && !rows.length ? (
@@ -425,13 +443,163 @@ export function AnalyticsPage() {
         </div>
       </div>
 
-      <div className="ana-grid-2">
+      {/* Channel time first — real channel data from your vault videos */}
+      <section className="glass-card pad ana-card ana-channels" style={{ marginTop: 16 }}>
+        <div className="card-head">
+          <h3>
+            <Tv size={16} /> Where you spend time
+          </h3>
+          <span className="ana-pill sm">
+            <Clock3 size={11} /> real channels
+          </span>
+        </div>
+        <p className="ana-insight" style={{ marginTop: 0 }}>
+          Built from your vault videos’ real YouTube channel names. Focus time
+          is estimated from mark/shot positions on each video (when you
+          actually annotated — original timestamps).
+        </p>
+
+        {topChannels.length ? (
+          <div className="ana-channels-layout">
+            <div className="ana-chart ana-channels-chart">
+              <Bar
+                data={{
+                  labels: topChannels.map((ch) =>
+                    ch.name.length > 22 ? `${ch.name.slice(0, 20)}…` : ch.name
+                  ),
+                  datasets: [
+                    {
+                      label: "Focus minutes",
+                      data: topChannels.map((ch) => ch.minutes),
+                      backgroundColor: c.accent2,
+                      borderRadius: 8,
+                      borderSkipped: false,
+                    },
+                    {
+                      label: "Marks",
+                      data: topChannels.map((ch) => ch.marks),
+                      backgroundColor: c.accent,
+                      borderRadius: 8,
+                      borderSkipped: false,
+                    },
+                    {
+                      label: "Shots",
+                      data: topChannels.map((ch) => ch.shots),
+                      backgroundColor: c.accent3,
+                      borderRadius: 8,
+                      borderSkipped: false,
+                    },
+                  ],
+                }}
+                options={{
+                  ...commonOpts,
+                  indexAxis: "y" as const,
+                  plugins: {
+                    ...commonOpts.plugins,
+                    legend: {
+                      position: "top",
+                      align: "end",
+                      labels: {
+                        color: c.text,
+                        boxWidth: 8,
+                        boxHeight: 8,
+                        font: { size: 11 },
+                      },
+                    },
+                  },
+                  scales: {
+                    x: {
+                      stacked: false,
+                      ticks: { color: c.muted, font: { size: 10 } },
+                      grid: { color: c.grid },
+                      border: { display: false },
+                      beginAtZero: true,
+                    },
+                    y: {
+                      ticks: { color: c.text, font: { size: 11 } },
+                      grid: { display: false },
+                      border: { display: false },
+                    },
+                  },
+                }}
+              />
+            </div>
+
+            <div className="ana-channel-list">
+              <div className="ana-channel-summary">
+                <div>
+                  <b>{model.channels.length}</b>
+                  <span>channels</span>
+                </div>
+                <div>
+                  <b>{formatMinutes(model.totalChannelMinutes)}</b>
+                  <span>est. focus</span>
+                </div>
+                <div>
+                  <b title={model.topChannel}>
+                    {model.topChannel.length > 18
+                      ? `${model.topChannel.slice(0, 16)}…`
+                      : model.topChannel}
+                  </b>
+                  <span>top channel</span>
+                </div>
+              </div>
+              {topChannels.map((ch, i) => {
+                const max = topChannels[0]?.score || 1;
+                return (
+                  <div key={ch.name} className="ana-channel-row">
+                    <span className="rank">{i + 1}</span>
+                    {ch.sampleVideoId ? (
+                      <img
+                        src={ytThumb(ch.sampleVideoId)}
+                        alt=""
+                        className="ana-top-thumb"
+                      />
+                    ) : (
+                      <div className="ana-top-thumb ana-thumb-ph" />
+                    )}
+                    <div className="ana-top-main">
+                      {ch.url ? (
+                        <a
+                          href={ch.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ana-channel-name"
+                        >
+                          <strong>{ch.name}</strong>
+                        </a>
+                      ) : (
+                        <strong className="ana-channel-name">{ch.name}</strong>
+                      )}
+                      <span>
+                        {ch.videos} video{ch.videos === 1 ? "" : "s"} ·{" "}
+                        {formatMinutes(ch.minutes)} focus · {ch.marks} marks ·{" "}
+                        {ch.shots} shots
+                      </span>
+                      <div className="ana-top-bar">
+                        <i style={{ width: `${(ch.score / max) * 100}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="empty">
+            No channel data yet. Mark or capture on YouTube — channel names
+            fill in automatically from each video.
+          </div>
+        )}
+      </section>
+
+      <div className="ana-grid-2" style={{ marginTop: 16 }}>
         <section className="glass-card pad ana-card">
           <div className="card-head">
             <h3>
               <Activity size={16} /> Weekly pulse
             </h3>
-            <span className="ana-pill sm">stacked</span>
+            <span className="ana-pill sm">by capture day</span>
           </div>
           <div className="ana-chart lg">
             <Bar
@@ -470,6 +638,10 @@ export function AnalyticsPage() {
               }}
             />
           </div>
+          <p className="ana-insight">
+            Counts use original mark/shot timestamps (when you captured), not
+            last vault sync time.
+          </p>
         </section>
 
         <section className="glass-card pad ana-card">
@@ -556,8 +728,8 @@ export function AnalyticsPage() {
             labels={[...model.week.labels]}
           />
           <p className="ana-insight">
-            Darker emerald = more vault updates that weekday (videos + marks +
-            shots).
+            Darker emerald = more captures that weekday (from original mark/shot
+            times).
           </p>
           <div className="ana-mini-stats">
             <div>
@@ -596,6 +768,7 @@ export function AnalyticsPage() {
                       <strong>{t.title}</strong>
                     </Link>
                     <span>
+                      {t.channel ? `${t.channel} · ` : ""}
                       {t.marks} marks · {t.shots} shots · {t.notes} notes
                     </span>
                     <div className="ana-top-bar">

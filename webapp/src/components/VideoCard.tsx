@@ -4,6 +4,7 @@ import {
   Clock,
   ExternalLink,
   ListPlus,
+  Share2,
   StickyNote,
   Trash2,
 } from "lucide-react";
@@ -11,8 +12,11 @@ import { relTime, rowActivityMs, ytThumb, ytWatchUrl } from "../lib/format";
 import type { VaultRow } from "../types";
 import { useVault } from "../store/VaultContext";
 import { useDialog } from "../store/DialogContext";
+import { useSession } from "../store/SessionContext";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ShareCardModal } from "./ShareCardModal";
+import { filterUsefulSources } from "../lib/sourceFilter";
 
 function looksLikeVideoId(s: string): boolean {
   return /^[A-Za-z0-9_-]{10,12}$/.test(s.trim());
@@ -44,13 +48,16 @@ export function VideoCard({
   showDelete?: boolean;
 }) {
   const { libraryAction, playlistNames, deleteVideo } = useVault();
+  const { session } = useSession();
   const { confirm, toast } = useDialog();
   const p = row.payload || {};
   const marks = (p.highlights || []).length;
   const shots = (p.screenshots || []).length;
+  const sources = filterUsefulSources(p.sourceLinks).length;
   const noted = (p.highlights || []).filter((h) => h.note?.trim()).length;
   const [busy, setBusy] = useState(false);
   const [plOpen, setPlOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [newPl, setNewPl] = useState("");
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const plBtnRef = useRef<HTMLButtonElement>(null);
@@ -134,11 +141,14 @@ export function VideoCard({
   const metaParts: string[] = [activityLabel(row)];
   if (marks > 0) metaParts.push(`${marks} mark${marks === 1 ? "" : "s"}`);
   if (shots > 0) metaParts.push(`${shots} shot${shots === 1 ? "" : "s"}`);
+  if (sources > 0)
+    metaParts.push(`${sources} source${sources === 1 ? "" : "s"}`);
   // only show written-note count when it adds signal (not same as marks)
   if (noted > 0 && noted !== marks) {
     metaParts.push(`${noted} written`);
   }
-  if (marks === 0 && shots === 0) metaParts.push("No activity yet");
+  if (marks === 0 && shots === 0 && sources === 0)
+    metaParts.push("No activity yet");
   const metaText = metaParts.join(" · ");
 
   return (
@@ -176,6 +186,22 @@ export function VideoCard({
             </Link>
           </div>
           <div className="v-bar-icons">
+            <button
+              type="button"
+              className="v-bar-ico"
+              disabled={busy}
+              title="Share card with notes"
+              aria-label="Share card with notes"
+              onClick={() => {
+                if (!session) {
+                  toast("Sign in to share cards", "error");
+                  return;
+                }
+                setShareOpen(true);
+              }}
+            >
+              <Share2 size={15} strokeWidth={2} />
+            </button>
             <button
               type="button"
               className={`v-bar-ico ${p.watchLater ? "is-on" : ""}`}
@@ -297,6 +323,16 @@ export function VideoCard({
           </div>,
           document.body
         )}
+
+      {session ? (
+        <ShareCardModal
+          open={shareOpen}
+          row={row}
+          session={session}
+          onClose={() => setShareOpen(false)}
+          onToast={toast}
+        />
+      ) : null}
     </article>
   );
 }

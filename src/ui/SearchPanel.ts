@@ -93,6 +93,8 @@ export interface SearchPanelHandlers {
   onRemoveFromPlaylist?: (name: string) => void;
   onTogglePlaylist?: (name: string) => void;
   onRequestPlaylists?: () => void;
+  onSaveYoutubePlaylist?: () => void;
+  onSaveDescriptionLinks?: () => void;
 }
 
 type TabId =
@@ -462,6 +464,8 @@ export class SearchPanel {
       onRemoveFromPlaylist: (name) => this.handlers.onRemoveFromPlaylist?.(name),
       onTogglePlaylist: (name) => this.handlers.onTogglePlaylist?.(name),
       onRequestPlaylists: () => this.handlers.onRequestPlaylists?.(),
+      onSaveYoutubePlaylist: () => this.handlers.onSaveYoutubePlaylist?.(),
+      onSaveDescriptionLinks: () => this.handlers.onSaveDescriptionLinks?.(),
     });
     hlHost.appendChild(this.highlightsPane.root);
 
@@ -720,6 +724,18 @@ export class SearchPanel {
     list: Array<{ name: string; count?: number }>
   ): void {
     this.highlightsPane.setKnownPlaylists(list);
+  }
+
+  setYoutubePlaylistAvailable(on: boolean, label?: string): void {
+    this.highlightsPane.setYoutubePlaylistAvailable(on, label);
+  }
+
+  setDescriptionLinksAvailable(
+    on: boolean,
+    count = 0,
+    previews?: Array<{ label: string; kind: string; url: string }>
+  ): void {
+    this.highlightsPane.setDescriptionLinksAvailable(on, count, previews);
   }
 
   private updateVaultBadge(): void {
