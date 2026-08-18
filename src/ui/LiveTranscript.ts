@@ -37,10 +37,16 @@ export class LiveTranscript {
               <span class="vsa-tx-sub">Tap a line to jump · auto-scroll with video</span>
             </div>
           </div>
-          <label class="vsa-tx-follow">
-            <input type="checkbox" class="vsa-follow-check" checked />
-            <span>Follow</span>
-          </label>
+          <div class="vsa-tx-actions">
+            <button type="button" class="vsa-tx-copy" data-tx-copy disabled title="Copy full transcript">
+              ${iconHtml("copy", 13)}
+              <span data-tx-copy-label>Copy</span>
+            </button>
+            <label class="vsa-tx-follow">
+              <input type="checkbox" class="vsa-follow-check" checked />
+              <span>Follow</span>
+            </label>
+          </div>
         </div>
         <div class="vsa-tx-progress" aria-hidden="true">
           <i class="vsa-tx-progress-fill"></i>
@@ -79,6 +85,13 @@ export class LiveTranscript {
       this.applyFilter();
     });
 
+    const copyBtn = this.root.querySelector("[data-tx-copy]") as HTMLButtonElement;
+    copyBtn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void this.copyAll();
+    });
+
     // Manual scroll → pause auto-follow until they re-enable or click a line
     this.listEl.addEventListener(
       "wheel",
@@ -110,8 +123,11 @@ export class LiveTranscript {
     if (!segments.length) {
       this.metaEl.textContent = "No caption lines available";
       this.progressEl.style.width = "0%";
+      this.setCopyEnabled(false);
       return;
     }
+
+    this.setCopyEnabled(true);
 
     this.metaEl.innerHTML = `<b>${segments.length}</b> lines · click to jump`;
 
@@ -154,7 +170,52 @@ export class LiveTranscript {
     this.listEl.innerHTML = "";
     this.metaEl.textContent = "Waiting for captions…";
     this.progressEl.style.width = "0%";
+    this.setCopyEnabled(false);
     this.detachVideoSync();
+  }
+
+  private setCopyEnabled(on: boolean): void {
+    const btn = this.root.querySelector("[data-tx-copy]") as HTMLButtonElement | null;
+    if (btn) btn.disabled = !on;
+  }
+
+  private fullTranscriptText(): string {
+    return this.segments
+      .map((s) => `${formatTimestamp(s.startTime)}  ${cleanCaptionText(s.text)}`)
+      .join("\n");
+  }
+
+  private async copyAll(): Promise<void> {
+    const text = this.fullTranscriptText();
+    if (!text) return;
+    const btn = this.root.querySelector("[data-tx-copy]") as HTMLButtonElement | null;
+    const label = this.root.querySelector("[data-tx-copy-label]") as HTMLElement | null;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      }
+      if (label) label.textContent = "Copied";
+      btn?.classList.add("is-ok");
+      window.setTimeout(() => {
+        if (label) label.textContent = "Copy";
+        btn?.classList.remove("is-ok");
+      }, 1600);
+    } catch {
+      if (label) label.textContent = "Failed";
+      window.setTimeout(() => {
+        if (label) label.textContent = "Copy";
+      }, 1600);
+    }
   }
 
   destroy(): void {

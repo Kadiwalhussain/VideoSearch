@@ -15,7 +15,7 @@ export default defineManifest({
     "48": "public/icons/icon48.png",
     "128": "public/icons/icon128.png",
   },
-  permissions: ["storage"],
+  permissions: ["storage", "clipboardWrite"],
   // YouTube + model weight CDN + optional LLM providers (user API key)
   host_permissions: [
     "https://www.youtube.com/*",

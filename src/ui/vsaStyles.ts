@@ -2025,6 +2025,41 @@ export const VSA_STYLES = `
   margin-top: 2px;
   line-height: 1.35;
 }
+#videosearch-ai-panel .vsa-tx-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+#videosearch-ai-panel .vsa-tx-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--vsa-border);
+  background: rgba(255,255,255,0.03);
+  color: var(--vsa-muted);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+#videosearch-ai-panel .vsa-tx-copy:hover:not(:disabled) {
+  color: var(--vsa-accent);
+  border-color: rgba(62, 207, 142, 0.35);
+}
+#videosearch-ai-panel .vsa-tx-copy:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+#videosearch-ai-panel .vsa-tx-copy.is-ok {
+  color: var(--vsa-accent);
+  border-color: rgba(62, 207, 142, 0.4);
+}
+#videosearch-ai-panel .vsa-tx-copy .vsa-icon {
+  display: block;
+}
 #videosearch-ai-panel .vsa-tx-follow {
   display: inline-flex;
   align-items: center;
