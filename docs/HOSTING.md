@@ -1,5 +1,7 @@
 # Host the product website (static UI only)
 
+**Official site:** [https://videosearchai.netlify.app/](https://videosearchai.netlify.app/)
+
 The landing page lives in `website/`. HTML + CSS + JS. No vault, no npm build.
 
 **Repo configs already point hosts at that folder:**

@@ -5,9 +5,8 @@ Search what was **said**, keep the **frame**, play it **in-app**.
 Chrome extension · Studio web app · Android & iPhone · one signed-in vault
 
 <p align="center">
-  <a href="./website/index.html"><strong>Product website</strong></a>
-  · <code>npx serve website</code>
-  · static host: Vercel / Netlify / Cloudflare Pages
+  <a href="https://videosearchai.netlify.app/"><strong>Official product website</strong></a>
+  · <a href="./website/index.html">source</a>
 </p>
 
 ---
@@ -21,7 +20,7 @@ Long YouTube videos hide the sentence you need. VideoSearch indexes **captions o
 | **Chrome extension** | Lives on the YouTube page. Search, topics, marks, shots, sync bio, extract sources |
 | **Studio** (`server` + `webapp`) | Library, playlists, bio editor, sources, share cards, analytics |
 | **Flutter app** (`mobile/`) | Same account. In-app official YouTube player. Marks/shots seek here |
-| **Website** (`website/`) | Static product site + live demo (no backend) |
+| **Website** | [videosearchai.netlify.app](https://videosearchai.netlify.app/) — static product site + live demo |
 
 ---
 
@@ -106,7 +105,8 @@ See [mobile/README.md](./mobile/README.md). Wireless Xcode **Play** on new iOS c
 npx --yes serve website -l 5180
 ```
 
-Host for free: [docs/HOSTING.md](./docs/HOSTING.md) (Vercel, Netlify, or Cloudflare **Pages** — not Workers).
+**Live:** [https://videosearchai.netlify.app/](https://videosearchai.netlify.app/)  
+Other hosts: [docs/HOSTING.md](./docs/HOSTING.md).
 
 ---
 
