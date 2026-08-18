@@ -20,6 +20,7 @@ export interface ChatPaneHandlers {
   onSend: (text: string) => void;
   onSeek: (seconds: number) => void;
   onClear?: () => void;
+  onAskExternal?: () => void;
 }
 
 export class ChatPane {
@@ -41,7 +42,10 @@ export class ChatPane {
           <span class="vsa-chat-title-ico"></span>
           Chat with this video
         </div>
-        <button type="button" class="vsa-chat-clear" title="Clear conversation">Clear</button>
+        <div class="vsa-chat-head-actions">
+          <button type="button" class="vsa-chat-ask" data-chat-ask title="Open ChatGPT with the full transcript">Ask ChatGPT</button>
+          <button type="button" class="vsa-chat-clear" title="Clear conversation">Clear</button>
+        </div>
       </div>
       <div class="vsa-chat-status" hidden></div>
       <div class="vsa-chat-list" role="log" aria-live="polite"></div>
@@ -154,6 +158,19 @@ export class ChatPane {
         e.stopPropagation();
         this.handlers.onClear?.();
       });
+
+    this.root.querySelector("[data-chat-ask]")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.handlers.onAskExternal?.();
+    });
+  }
+
+  setAskLabel(name: string): void {
+    const btn = this.root.querySelector("[data-chat-ask]") as HTMLButtonElement | null;
+    if (!btn) return;
+    btn.textContent = `Ask ${name}`;
+    btn.title = `Open ${name} with the full transcript`;
   }
 
   private fireSend(): void {

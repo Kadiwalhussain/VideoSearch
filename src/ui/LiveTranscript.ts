@@ -17,6 +17,7 @@ export class LiveTranscript {
   private follow = true;
   private filter = "";
   private onSeek: (t: number) => void;
+  private onAskExternal: ((segments: RawCaptionSegment[]) => void) | null = null;
   private raf = 0;
   private bound = false;
   private videoEl: HTMLVideoElement | null = null;
@@ -41,6 +42,9 @@ export class LiveTranscript {
             <button type="button" class="vsa-tx-copy" data-tx-copy disabled title="Copy full transcript">
               ${iconHtml("copy", 13)}
               <span data-tx-copy-label>Copy</span>
+            </button>
+            <button type="button" class="vsa-tx-ask" data-tx-ask disabled title="Open ChatGPT with this transcript">
+              <span data-tx-ask-label>Ask ChatGPT</span>
             </button>
             <label class="vsa-tx-follow">
               <input type="checkbox" class="vsa-follow-check" checked />
@@ -90,6 +94,14 @@ export class LiveTranscript {
       e.preventDefault();
       e.stopPropagation();
       void this.copyAll();
+    });
+
+    const askBtn = this.root.querySelector("[data-tx-ask]") as HTMLButtonElement;
+    askBtn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!this.segments.length) return;
+      this.onAskExternal?.(this.segments);
     });
 
     // Manual scroll → pause auto-follow until they re-enable or click a line
@@ -174,9 +186,26 @@ export class LiveTranscript {
     this.detachVideoSync();
   }
 
+  setAskHandler(fn: (segments: RawCaptionSegment[]) => void): void {
+    this.onAskExternal = fn;
+  }
+
+  getSegments(): RawCaptionSegment[] {
+    return this.segments;
+  }
+
+  setAskLabel(name: string): void {
+    const el = this.root.querySelector("[data-tx-ask-label]") as HTMLElement | null;
+    if (el) el.textContent = `Ask ${name}`;
+    const btn = this.root.querySelector("[data-tx-ask]") as HTMLButtonElement | null;
+    if (btn) btn.title = `Open ${name} with this full transcript`;
+  }
+
   private setCopyEnabled(on: boolean): void {
-    const btn = this.root.querySelector("[data-tx-copy]") as HTMLButtonElement | null;
-    if (btn) btn.disabled = !on;
+    const copy = this.root.querySelector("[data-tx-copy]") as HTMLButtonElement | null;
+    const ask = this.root.querySelector("[data-tx-ask]") as HTMLButtonElement | null;
+    if (copy) copy.disabled = !on;
+    if (ask) ask.disabled = !on;
   }
 
   private fullTranscriptText(): string {

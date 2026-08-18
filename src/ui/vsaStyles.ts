@@ -2060,6 +2060,54 @@ export const VSA_STYLES = `
 #videosearch-ai-panel .vsa-tx-copy .vsa-icon {
   display: block;
 }
+#videosearch-ai-panel .vsa-tx-ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(62, 207, 142, 0.35);
+  background: rgba(62, 207, 142, 0.12);
+  color: var(--vsa-accent);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#videosearch-ai-panel .vsa-tx-ask:hover:not(:disabled) {
+  background: rgba(62, 207, 142, 0.2);
+}
+#videosearch-ai-panel .vsa-tx-ask:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+#videosearch-ai-panel .vsa-chat-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+#videosearch-ai-panel .vsa-chat-ask {
+  border: 1px solid rgba(62, 207, 142, 0.35);
+  background: rgba(62, 207, 142, 0.12);
+  color: var(--vsa-accent);
+  border-radius: 999px;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+#videosearch-ai-panel .vsa-set-ask-provider {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--vsa-border);
+  background: rgba(0,0,0,0.25);
+  color: var(--vsa-text);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 8px 10px;
+}
 #videosearch-ai-panel .vsa-tx-follow {
   display: inline-flex;
   align-items: center;

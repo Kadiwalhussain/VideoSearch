@@ -32,6 +32,12 @@ export default defineManifest({
     "https://api.x.ai/*",
     "https://api.openai.com/*",
     "https://api.groq.com/*",
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*",
+    "https://grok.com/*",
+    "https://www.perplexity.ai/*",
     // Cloud vault API (local Mongo backend + optional deployed host)
     "http://localhost:8787/*",
     "http://127.0.0.1:8787/*",
@@ -55,6 +61,18 @@ export default defineManifest({
     {
       matches: ["https://www.youtube.com/*", "https://youtube.com/*"],
       js: ["src/content/injectSearchUI.ts"],
+      run_at: "document_idle",
+    },
+    {
+      matches: [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://grok.com/*",
+        "https://www.perplexity.ai/*",
+      ],
+      js: ["src/content/externalAskPaste.ts"],
       run_at: "document_idle",
     },
   ],

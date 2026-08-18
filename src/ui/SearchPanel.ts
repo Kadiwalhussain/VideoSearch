@@ -273,6 +273,10 @@ export class SearchPanel {
             <label class="vsa-field"><span>Model</span>
               <input type="text" class="vsa-set-model" autocomplete="off" />
             </label>
+            <label class="vsa-field"><span>Ask in (full transcript)</span>
+              <select class="vsa-set-ask-provider" data-ask-provider></select>
+            </label>
+            <p class="vsa-settings-help">Opens ChatGPT or another chat in a new tab with this video’s transcript pasted. Default is ChatGPT. No VideoSearch server.</p>
             <div class="vsa-settings-actions">
               <button type="button" class="vsa-save-settings">Save</button>
               <span class="vsa-settings-msg"></span>
@@ -430,11 +434,15 @@ export class SearchPanel {
     this.commentsEl = this.root.querySelector(".vsa-comments") as HTMLElement;
 
     this.mountIcons();
+    void this.hydrateAskProvider();
 
     const host = this.root.querySelector(
       ".vsa-transcript-host"
     ) as HTMLElement;
     this.liveTranscript = new LiveTranscript((t) => this.handlers.onSeek(t));
+    this.liveTranscript.setAskHandler(() => {
+      void this.openExternalAsk();
+    });
     host.appendChild(this.liveTranscript.root);
 
     const chatHost = this.root.querySelector(".vsa-chat-host") as HTMLElement;
@@ -442,6 +450,9 @@ export class SearchPanel {
       onSend: (text) => this.handlers.onChatSend?.(text),
       onSeek: (t) => this.handlers.onSeek(t),
       onClear: () => this.handlers.onChatClear?.(),
+      onAskExternal: () => {
+        void this.openExternalAsk();
+      },
     });
     chatHost.appendChild(this.chatPane.root);
 
@@ -1191,12 +1202,90 @@ export class SearchPanel {
           msg.textContent = saved.enabled
             ? `Saved (${maskKey(saved.apiKey)}). Refreshing…`
             : "Saved (local topics only).";
+          const askSel = this.root.querySelector(
+            "[data-ask-provider]"
+          ) as HTMLSelectElement | null;
+          if (askSel?.value) {
+            const { saveAskProvider } = await import(
+              "../settings/askExternalSettings"
+            );
+            const p = await saveAskProvider(
+              askSel.value as import("../settings/askExternalSettings").AskProviderId
+            );
+            this.liveTranscript.setAskLabel(p.label);
+            this.chatPane.setAskLabel(p.label);
+          }
           this.handlers.onSettingsSaved?.();
         } catch (err) {
           msg.textContent =
             err instanceof Error ? err.message : "Failed to save";
         }
       });
+
+    this.root
+      .querySelector("[data-ask-provider]")
+      ?.addEventListener("change", async (e) => {
+        const sel = e.target as HTMLSelectElement;
+        const { saveAskProvider } = await import(
+          "../settings/askExternalSettings"
+        );
+        const p = await saveAskProvider(
+          sel.value as import("../settings/askExternalSettings").AskProviderId
+        );
+        this.liveTranscript.setAskLabel(p.label);
+        this.chatPane.setAskLabel(p.label);
+      });
+  }
+
+  private async hydrateAskProvider(): Promise<void> {
+    try {
+      const { ASK_PROVIDERS, loadAskProvider } = await import(
+        "../settings/askExternalSettings"
+      );
+      const sel = this.root.querySelector(
+        "[data-ask-provider]"
+      ) as HTMLSelectElement | null;
+      const current = await loadAskProvider();
+      if (sel && !sel.options.length) {
+        for (const p of ASK_PROVIDERS) {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = p.label;
+          if (p.id === current.id) opt.selected = true;
+          sel.appendChild(opt);
+        }
+      } else if (sel) {
+        sel.value = current.id;
+      }
+      this.liveTranscript.setAskLabel(current.label);
+      this.chatPane.setAskLabel(current.label);
+    } catch {
+      /* optional */
+    }
+  }
+
+  private async openExternalAsk(): Promise<void> {
+    const segs = this.liveTranscript.getSegments();
+    const root = this.root.closest("[data-video-id]");
+    const videoId = root?.getAttribute("data-video-id") || "";
+    const title =
+      document.querySelector("h1.ytd-watch-metadata yt-formatted-string")
+        ?.textContent?.trim() ||
+      document.title.replace(/ - YouTube$/i, "").trim();
+    try {
+      const { openExternalAsk } = await import("../llm/openExternalAsk");
+      const result = await openExternalAsk({
+        segments: segs,
+        videoId,
+        title,
+      });
+      this.statusEl.textContent = result.ok
+        ? `Ask ${result.provider.label}`
+        : result.message;
+    } catch (err) {
+      this.statusEl.textContent =
+        err instanceof Error ? err.message : "Could not open chat";
+    }
   }
 
   private bindAuth(): void {
