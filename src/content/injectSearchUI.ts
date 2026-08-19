@@ -240,17 +240,51 @@ function extractVideoId(): string | null {
   }
 }
 
-/**
- * Compact floating widget overlaid on the watch page (near the player).
- * Never injects into the document flow under the title — keeps the page clean.
- */
+function findActionsRow(): HTMLElement | null {
+  const selectors = [
+    "#actions #top-level-buttons-computed",
+    "ytd-watch-metadata #actions #top-level-buttons-computed",
+    "#actions ytd-menu-renderer #top-level-buttons-computed",
+    "ytd-watch-metadata #actions",
+    "#below #actions",
+    "#menu-container #top-level-buttons-computed",
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector<HTMLElement>(sel);
+    if (el && el.isConnected) return el;
+  }
+  return null;
+}
+
+/** Expanded panel: overlay on the page so it can be large. */
 function placeRoot(wrap: HTMLElement): void {
   wrap.setAttribute("data-vsa-float", "1");
-  wrap.setAttribute("data-vsa-compact", "1");
-  // Fixed overlay lives on <html> so it stays above YT chrome
+  wrap.removeAttribute("data-vsa-docked");
   if (wrap.parentElement !== document.documentElement) {
     document.documentElement.appendChild(wrap);
   }
+}
+
+/** Collapsed pill: sit in the Like / Share / Save row under the video. */
+function dockToActions(wrap: HTMLElement): void {
+  const row = findActionsRow();
+  if (!row) {
+    placeRoot(wrap);
+    wrap.setAttribute("data-vsa-float", "1");
+    return;
+  }
+  wrap.setAttribute("data-vsa-docked", "1");
+  wrap.removeAttribute("data-vsa-float");
+  if (wrap.parentElement !== row) {
+    row.appendChild(wrap);
+  }
+}
+
+function syncPanelPlacement(open: boolean): void {
+  const wrap = document.getElementById(ROOT_ID);
+  if (!wrap) return;
+  if (open) placeRoot(wrap);
+  else dockToActions(wrap);
 }
 
 function seekTo(seconds: number): void {
@@ -1584,6 +1618,9 @@ function mountPanel(videoId: string): void {
         void runSearch(videoId, q, panel, mode);
       },
       onSeek: (t) => seekTo(t),
+      onToggle: (open) => {
+        syncPanelPlacement(open);
+      },
       onRetry: () => {
         sessionIndex.delete(videoId);
         sessionSegments.delete(videoId);
@@ -1793,10 +1830,11 @@ function mountPanel(videoId: string): void {
     activeVideoId = videoId;
 
     wrap.appendChild(panel.root);
-    placeRoot(wrap);
-    // Compact pill by default (after host exists so classes stick on #videosearch-ai-root)
     wrap.classList.add("is-collapsed");
     panel.root.classList.add("is-collapsed");
+    dockToActions(wrap);
+    window.setTimeout(() => dockToActions(wrap), 400);
+    window.setTimeout(() => dockToActions(wrap), 1400);
 
     panel.setStatus({ kind: "indexing", message: "Preparing…" });
     console.info(LOG, "Panel MOUNTED for", videoId);
@@ -1891,6 +1929,10 @@ function startWatchers(): void {
     window.setTimeout(() => {
       void maybeImportYoutubePlaylist(activePanel);
     }, 1500);
+    window.setTimeout(() => {
+      const wrap = document.getElementById(ROOT_ID);
+      if (wrap?.classList.contains("is-collapsed")) dockToActions(wrap);
+    }, 800);
   });
   window.addEventListener("popstate", onNavigate);
 

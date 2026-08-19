@@ -97,22 +97,41 @@ export const VSA_STYLES = `
   width: auto;
   max-width: none;
 }
-/* Collapsed pill: bottom-LEFT so it never hits camera/mark stack on the right */
+/* Collapsed: docked in YT Like/Share row under the video */
 #videosearch-ai-root.is-collapsed {
+  position: relative !important;
+  left: auto !important;
   right: auto !important;
-  left: max(16px, env(safe-area-inset-left, 0px)) !important;
-  bottom: max(68px, env(safe-area-inset-bottom, 0px)) !important;
   top: auto !important;
+  bottom: auto !important;
+  inset: auto !important;
   width: auto !important;
+  max-width: none !important;
+  max-height: none !important;
+  display: inline-flex !important;
+  align-items: center;
+  vertical-align: middle;
+  margin: 0 0 0 8px !important;
+  flex: 0 0 auto;
+  z-index: 3;
+  overflow: visible !important;
+  pointer-events: auto !important;
+}
+#videosearch-ai-root.is-collapsed[data-vsa-float="1"] {
+  position: fixed !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  top: auto !important;
+  transform: translateX(-50%);
+  margin: 0 !important;
 }
 #videosearch-ai-root.is-collapsed #videosearch-ai-panel {
-  border-radius: 999px;
-  background: #111318;
-  border: 1px solid var(--vsa-border-strong);
-  box-shadow:
-    0 0 0 1px rgba(62,207,142,0.15),
-    0 12px 32px rgba(0,0,0,0.5),
-    0 0 24px rgba(62,207,142,0.08);
+  border-radius: 18px;
+  height: 36px;
+  background: #212121;
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: none;
   animation: none;
 }
 #videosearch-ai-root.is-collapsed #videosearch-ai-panel::before { display: none; }
@@ -127,9 +146,10 @@ export const VSA_STYLES = `
   background: transparent;
   box-shadow: none;
   color: var(--vsa-text);
-  padding: 7px 12px 7px 8px;
+  padding: 0 12px 0 8px;
   gap: 8px;
-  border-radius: 999px;
+  border-radius: 18px;
+  height: 36px;
 }
 #videosearch-ai-root.is-collapsed .vsa-logo {
   width: 28px; height: 28px;
@@ -3058,9 +3078,11 @@ export const VSA_STYLES = `
     bottom: max(56px, env(safe-area-inset-bottom, 0px));
   }
   #videosearch-ai-root.is-collapsed {
-    left: auto;
-    right: 12px;
+    position: relative !important;
+    left: auto !important;
+    right: auto !important;
     width: auto;
+    transform: none;
   }
   #videosearch-ai-panel .vsa-status { display: none; }
   #videosearch-ai-panel .vsa-tabs {
