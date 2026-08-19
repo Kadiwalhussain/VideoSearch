@@ -106,6 +106,7 @@ type TabId =
   | "highlights"
   | "account"
   | "settings"
+  | "sources"
   | "more";
 
 const SEARCH_DEBOUNCE_MS = 700;
@@ -133,6 +134,7 @@ export class SearchPanel {
   private paneAccount: HTMLElement;
   private paneSettings: HTMLElement;
   private paneMore: HTMLElement;
+  private paneSources: HTMLElement;
   private commentsEl: HTMLElement;
   private handlers: SearchPanelHandlers;
   private authMode: "login" | "register" = "login";
@@ -229,6 +231,12 @@ export class SearchPanel {
               <strong>Live</strong>
               <span>Follow the transcript</span>
             </button>
+            <button type="button" class="vsa-more-card" data-goto="sources">
+              <span class="vsa-more-ico" data-more-ico="link"></span>
+              <strong>Sources</strong>
+              <span>Bio + spoken links</span>
+              <em class="vsa-tab-count" data-count="sources"></em>
+            </button>
             <button type="button" class="vsa-more-card" data-goto="comments">
               <span class="vsa-more-ico" data-more-ico="mood"></span>
               <strong>Mood</strong>
@@ -254,6 +262,12 @@ export class SearchPanel {
         <div class="vsa-pane vsa-pane-transcript" data-pane="transcript" hidden>
           <button type="button" class="vsa-back" data-back="more"><span data-back-ico></span> More</button>
           <div class="vsa-transcript-host"></div>
+        </div>
+        <div class="vsa-pane vsa-pane-sources" data-pane="sources" hidden>
+          <button type="button" class="vsa-back" data-back="more"><span data-back-ico></span> More</button>
+          <div class="vsa-src-host" data-sources-host>
+            <div class="vsa-src-empty">No sources yet — sync bio or wait for captions.</div>
+          </div>
         </div>
         <div class="vsa-pane vsa-pane-comments" data-pane="comments" hidden>
           <button type="button" class="vsa-back" data-back="more"><span data-back-ico></span> More</button>
@@ -430,6 +444,9 @@ export class SearchPanel {
     ) as HTMLElement;
     this.paneMore = this.root.querySelector(
       '[data-pane="more"]'
+    ) as HTMLElement;
+    this.paneSources = this.root.querySelector(
+      '[data-pane="sources"]'
     ) as HTMLElement;
     this.commentsEl = this.root.querySelector(".vsa-comments") as HTMLElement;
 
@@ -747,9 +764,80 @@ export class SearchPanel {
   setDescriptionLinksAvailable(
     on: boolean,
     count = 0,
-    previews?: Array<{ label: string; kind: string; url: string }>
+    previews?: Array<{
+      label: string;
+      kind: string;
+      url: string;
+      source?: string;
+      startTime?: number;
+    }>
   ): void {
-    this.highlightsPane.setDescriptionLinksAvailable(on, count, previews);
+    const bioCount = (previews || []).filter((p) => p.source !== "cc").length;
+    this.highlightsPane.setDescriptionLinksAvailable(
+      on && bioCount > 0,
+      bioCount || count,
+      undefined
+    );
+    const badge = this.root.querySelector(
+      '[data-count="sources"]'
+    ) as HTMLElement | null;
+    if (badge) badge.textContent = on && count > 0 ? String(count) : "";
+    this.renderSourcesPane(on ? previews || [] : []);
+  }
+
+  private renderSourcesPane(
+    items: Array<{
+      label: string;
+      kind: string;
+      url: string;
+      source?: string;
+      startTime?: number;
+    }>
+  ): void {
+    const host = this.root.querySelector(
+      "[data-sources-host]"
+    ) as HTMLElement | null;
+    if (!host) return;
+    if (!items.length) {
+      host.innerHTML =
+        '<div class="vsa-src-empty">No sources yet — sync bio or wait for captions.</div>';
+      return;
+    }
+    const bio = items.filter((p) => p.source !== "cc");
+    const spoken = items.filter((p) => p.source === "cc");
+    const block = (
+      title: string,
+      list: typeof items,
+      spokenBlock: boolean
+    ) => {
+      if (!list.length) return "";
+      const rows = list
+        .map((p) => {
+          const kind = (p.kind || "link").replace(/^CC · /i, "");
+          const t =
+            spokenBlock && typeof p.startTime === "number"
+              ? `<button type="button" class="vsa-src-time" data-src-seek="${p.startTime}">${formatTimestamp(p.startTime)}</button>`
+              : "";
+          return `<a class="vsa-src-row" href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer">
+            ${t}
+            <span class="vsa-src-kind">${escapeHtml(kind)}</span>
+            <span class="vsa-src-label">${escapeHtml(p.label || kind)}</span>
+          </a>`;
+        })
+        .join("");
+      return `<div class="vsa-src-block"><div class="vsa-src-h">${title} · ${list.length}</div>${rows}</div>`;
+    };
+    host.innerHTML =
+      block("From bio", bio, false) +
+      block("Spoken in captions", spoken, true);
+    host.querySelectorAll("[data-src-seek]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const t = Number((btn as HTMLElement).dataset.srcSeek);
+        if (Number.isFinite(t)) this.handlers.onSeek(t);
+      });
+    });
   }
 
   setSyncClock(opts: {
@@ -1012,6 +1100,7 @@ export class SearchPanel {
     const primaryFor =
       tab === "topics" ||
       tab === "transcript" ||
+      tab === "sources" ||
       tab === "comments" ||
       tab === "settings"
         ? "more"
@@ -1036,6 +1125,7 @@ export class SearchPanel {
     this.paneAccount.hidden = tab !== "account";
     this.paneSettings.hidden = tab !== "settings";
     this.paneMore.hidden = tab !== "more";
+    this.paneSources.hidden = tab !== "sources";
 
     if (tab === "settings") {
       void loadLlmSettings().then((s) => this.fillSettingsForm(s));

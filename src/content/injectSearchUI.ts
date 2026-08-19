@@ -904,8 +904,10 @@ async function hydrateLocalVaultUi(
         local.length,
         local.map((l) => ({
           label: l.label,
-          kind: l.source === "cc" ? `CC · ${l.kind}` : l.kind,
+          kind: l.kind,
           url: l.url,
+          source: l.source,
+          startTime: l.startTime,
         }))
       );
     }
@@ -983,8 +985,10 @@ async function maybeScanDescriptionLinks(
 
     const previews = (all.length ? all : bio.links).map((l) => ({
       label: l.label,
-      kind: l.source === "cc" ? `CC · ${l.kind}` : l.kind,
+      kind: l.kind,
       url: l.url,
+      source: l.source,
+      startTime: "startTime" in l ? l.startTime : undefined,
     }));
     if (previews.length) {
       panel.setDescriptionLinksAvailable(true, previews.length, previews);

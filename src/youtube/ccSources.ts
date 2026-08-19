@@ -80,7 +80,24 @@ const COUPON_STOP = new Set([
   "DISCOUNT",
 ]);
 
-const TLDS = "com|org|net|io|co|app|dev|ai|me|gg|tv|edu|info|us|uk|to|so|shop|store|online|cc|fm|xyz";
+/** TLDs we trust when someone actually says a site. Weak ones (so/online) are ASR noise. */
+const STRONG_TLDS = "com|org|net|io|co|app|dev|ai|edu|gg";
+const TLDS = STRONG_TLDS;
+const WEAK_TLDS = new Set([
+  "so",
+  "to",
+  "me",
+  "cc",
+  "fm",
+  "online",
+  "info",
+  "us",
+  "uk",
+  "tv",
+  "shop",
+  "store",
+  "xyz",
+]);
 
 const PROMO_HINT =
   /\b(sponsor|sponsored|partner|promo|promotion|coupon|discount|offer|deal|affiliate|use code|promo code)\b/i;
@@ -109,7 +126,11 @@ function spokenNormalize(s: string): string {
     .replace(/\b(slash)\b/gi, "/")
     .replace(/\b(dash|hyphen)\b/gi, "-")
     .replace(/\bwww\s+/gi, "www.")
-    .replace(/\s*\.\s*/g, ".")
+    // Only glue "site . com" — never "time. So" sentence periods
+    .replace(
+      new RegExp(String.raw`\s+\.\s+(${STRONG_TLDS})\b`, "gi"),
+      ".$1"
+    )
     .replace(/\s*\/\s*/g, "/")
     .replace(/\s*-\s*/g, "-")
     .replace(/\s+/g, " ")
@@ -117,13 +138,19 @@ function spokenNormalize(s: string): string {
 }
 
 function looksLikeHost(host: string): boolean {
-  if (!host || host.length < 4 || host.length > 80) return false;
+  if (!host || host.length < 4 || host.length > 64) return false;
   if (!host.includes(".")) return false;
-  const base = host.replace(/^www\./, "");
-  const first = base.split(".")[0] || "";
-  if (JUNK_LABELS.has(first)) return false;
+  const base = host.replace(/^www\./, "").toLowerCase();
+  const parts = base.split(".");
+  const tld = parts[parts.length - 1] || "";
+  const name = parts[0] || "";
+  if (JUNK_LABELS.has(name)) return false;
   if (!/^[a-z0-9][a-z0-9.-]+[a-z0-9]$/.test(base)) return false;
   if (SKIP_HOSTS.has(base) || SKIP_HOSTS.has(host)) return false;
+  if (WEAK_TLDS.has(tld)) return false;
+  // Glued caption sentences: "betterpreparednexttime.com"
+  if (name.length > 22 && !name.includes("-")) return false;
+  if ((name.match(/[aeiou]/g) || []).length < 1) return false;
   return true;
 }
 

@@ -326,22 +326,9 @@ export class HighlightsPane {
       }
     }
     if (panel) {
-      if (!on || !previews?.length) {
-        panel.hidden = true;
-        panel.innerHTML = "";
-      } else {
-        panel.hidden = false;
-        panel.innerHTML = previews
-          .slice(0, 6)
-          .map(
-            (p) =>
-              `<a class="vsa-lib-link-chip" href="${escapeAttr(p.url)}" target="_blank" rel="noopener noreferrer" title="${escapeAttr(p.url)}"><span class="vsa-lib-link-kind">${escapeAttr(p.kind)}</span><span class="vsa-lib-link-label">${escapeAttr(p.label || p.kind)}</span></a>`
-          )
-          .join("");
-        if (count > 6) {
-          panel.innerHTML += `<span class="vsa-lib-link-more">+${count - 6} more</span>`;
-        }
-      }
+      // Chips live in More → Sources so Notes stays short
+      panel.hidden = true;
+      panel.innerHTML = "";
     }
   }
 

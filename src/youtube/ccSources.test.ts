@@ -33,6 +33,22 @@ test("extracts spoken websites, coupons, and app-store mentions from CC", () => 
   assert.ok(!links.some((l) => /youtube\.com/i.test(l.url)));
 });
 
+test("does not treat sentence periods as domains", () => {
+  const links = extractSourcesFromCaptions([
+    {
+      startTime: 8,
+      text: "be better prepared next time. So let's start with Indian fund managers",
+    },
+    { startTime: 12, text: "IPO plans. Online delivery platform Zepto" },
+    { startTime: 16, text: "it takes time. So that is the idea" },
+  ]);
+  const labels = links.map((l) => l.label).join(" | ");
+  assert.ok(
+    !links.some((l) => /nexttime\.so|time\.so|plans\.online|ipoplans/i.test(l.url + l.label)),
+    labels
+  );
+});
+
 test("rebuilds 'dot com' speech into a URL", () => {
   const links = extractSourcesFromCaptions([
     { startTime: 8, text: "Visit three blue one brown" },
