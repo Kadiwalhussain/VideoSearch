@@ -33,6 +33,22 @@ test("extracts spoken websites, coupons, and app-store mentions from CC", () => 
   assert.ok(!links.some((l) => /youtube\.com/i.test(l.url)));
 });
 
+test("ignores okay.so / year.so caption leftovers", () => {
+  const links = extractSourcesFromCaptions([
+    { startTime: 59, text: "okay. So that is the plan" },
+    { startTime: 119, text: "lakhin 2026. So the year" },
+    { startTime: 196, text: "in your music category. So" },
+    { startTime: 316, text: "the same time period. So" },
+    { startTime: 499, text: "in India have changed. So" },
+    { startTime: 20, text: "Go to nordvpn.com/person and sign up" },
+  ]);
+  assert.ok(links.some((l) => /nordvpn\.com/i.test(l.url)), JSON.stringify(links));
+  assert.ok(
+    !links.some((l) => /\.so\b|okay\.|year\.|category\.|period\.|2026\./i.test(l.url)),
+    JSON.stringify(links)
+  );
+});
+
 test("does not treat sentence periods as domains", () => {
   const links = extractSourcesFromCaptions([
     {

@@ -111,22 +111,13 @@ function hashId(url: string): string {
   return `cc_${(h >>> 0).toString(36)}_${url.length.toString(36)}`;
 }
 
-function cleanHostPart(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/^www\./, "")
-    .replace(/[^a-z0-9.-]/g, "")
-    .replace(/^\.+|\.+$/g, "");
-}
-
 function spokenNormalize(s: string): string {
   return String(s || "")
     .replace(/[\[\]()<>]/g, " ")
-    .replace(/\b(dot)\b/gi, ".")
     .replace(/\b(slash)\b/gi, "/")
     .replace(/\b(dash|hyphen)\b/gi, "-")
     .replace(/\bwww\s+/gi, "www.")
-    // Only glue "site . com" — never "time. So" sentence periods
+    // "site . com" only — never "time. So"
     .replace(
       new RegExp(String.raw`\s+\.\s+(${STRONG_TLDS})\b`, "gi"),
       ".$1"
@@ -137,6 +128,51 @@ function spokenNormalize(s: string): string {
     .trim();
 }
 
+const SENTENCE_WORDS = new Set([
+  "okay",
+  "ok",
+  "year",
+  "years",
+  "time",
+  "times",
+  "period",
+  "category",
+  "changed",
+  "change",
+  "next",
+  "plan",
+  "plans",
+  "better",
+  "prepared",
+  "music",
+  "india",
+  "same",
+  "your",
+  "have",
+  "this",
+  "that",
+  "they",
+  "will",
+  "with",
+  "from",
+  "about",
+  "into",
+  "just",
+  "also",
+  "more",
+  "then",
+  "than",
+  "when",
+  "what",
+  "which",
+  "there",
+  "here",
+  "today",
+  "first",
+  "last",
+  "nexttime",
+]);
+
 function looksLikeHost(host: string): boolean {
   if (!host || host.length < 4 || host.length > 64) return false;
   if (!host.includes(".")) return false;
@@ -144,14 +180,36 @@ function looksLikeHost(host: string): boolean {
   const parts = base.split(".");
   const tld = parts[parts.length - 1] || "";
   const name = parts[0] || "";
-  if (JUNK_LABELS.has(name)) return false;
+  if (JUNK_LABELS.has(name) || SENTENCE_WORDS.has(name)) return false;
+  if (/^\d+$/.test(name)) return false;
   if (!/^[a-z0-9][a-z0-9.-]+[a-z0-9]$/.test(base)) return false;
   if (SKIP_HOSTS.has(base) || SKIP_HOSTS.has(host)) return false;
   if (WEAK_TLDS.has(tld)) return false;
-  // Glued caption sentences: "betterpreparednexttime.com"
   if (name.length > 22 && !name.includes("-")) return false;
   if ((name.match(/[aeiou]/g) || []).length < 1) return false;
   return true;
+}
+
+/** Drop leftover caption junk (okay.so, year.so) even if it was cached. */
+export function isKeepableSource(link: {
+  url?: string;
+  source?: string;
+  kind?: string;
+}): boolean {
+  const url = String(link.url || "").trim();
+  if (!url) return false;
+  const kind = (link.kind || "").toLowerCase().replace(/^cc\s*·\s*/, "");
+  if (kind === "coupon" || kind === "app") return true;
+  let host = "";
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return false;
+  }
+  if (link.source === "description" || link.source === "comment") {
+    return looksLikeHost(host) || host.includes("google.com") || host.includes("github.com");
+  }
+  return looksLikeHost(host);
 }
 
 function toHttps(hostPath: string): string | null {
@@ -240,13 +298,12 @@ function add(
 function pullUrls(text: string, startTime: number, map: Map<string, CcSource>, now: number): void {
   const spoken = spokenNormalize(text);
   const around = text;
-
-  const urlRe = new RegExp(
-    String.raw`(?:https?:\/\/|www\.)[a-z0-9][a-z0-9./?=&%#_-]{2,}|[a-z0-9][a-z0-9-]{1,40}\.(?:${TLDS})(?:\/[a-z0-9./?=&%#_-]*)?`,
-    "gi"
-  );
   let m: RegExpExecArray | null;
-  while ((m = urlRe.exec(spoken)) !== null) {
+
+  // 1) Real URL shapes only: https://… or www.…
+  const explicitRe =
+    /(?:https?:\/\/|www\.)[a-z0-9][a-z0-9./?=&%#_-]{3,}/gi;
+  while ((m = explicitRe.exec(spoken)) !== null) {
     const url = toHttps(m[0]);
     if (!url) continue;
     let host = "";
@@ -255,20 +312,55 @@ function pullUrls(text: string, startTime: number, map: Map<string, CcSource>, n
     } catch {
       continue;
     }
-    const kind = classifySpoken(url, around);
-    add(map, url, host, kind, startTime, now);
+    add(map, url, host, classifySpoken(url, around), startTime, now);
   }
 
-  const spokenHost = new RegExp(
-    String.raw`\b((?:[a-z0-9-]{2,24}\s+){0,3}[a-z0-9-]{2,24})\.(?:${TLDS})\b`,
+  // 2) Spoken “brand dot com” — never a sentence period + “so”
+  const spokenDot = new RegExp(
+    String.raw`\b((?:[a-z0-9-]{2,24}\s+){0,4}[a-z0-9-]{2,24})\s+dot\s+(${STRONG_TLDS})\b`,
     "gi"
   );
-  while ((m = spokenHost.exec(spoken)) !== null) {
-    const glued = m[0].replace(/\s+/g, "");
+  while ((m = spokenDot.exec(spoken)) !== null) {
+    const glued = `${m[1].replace(/\s+/g, "")}.${m[2]}`;
     const url = toHttps(glued);
     if (!url) continue;
-    const kind = classifySpoken(url, around);
-    add(map, url, glued.replace(/^www\./, ""), kind, startTime, now);
+    add(map, url, glued, classifySpoken(url, around), startTime, now);
+  }
+
+  // 3) host/path looks like a real URL (github.com/user/repo)
+  const pathRe = new RegExp(
+    String.raw`\b[a-z0-9][a-z0-9-]{1,30}\.(?:${STRONG_TLDS})\/[a-z0-9./?=&%#_-]{2,}`,
+    "gi"
+  );
+  while ((m = pathRe.exec(spoken)) !== null) {
+    const url = toHttps(m[0]);
+    if (!url) continue;
+    let host = "";
+    try {
+      host = new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      continue;
+    }
+    add(map, url, host, classifySpoken(url, around), startTime, now);
+  }
+
+  // 4) Bare host.com only if they said visit / sponsor nearby
+  if (VISIT_HINT.test(around) || PROMO_HINT.test(around)) {
+    const hinted = new RegExp(
+      String.raw`\b[a-z0-9][a-z0-9-]{1,30}\.(?:${STRONG_TLDS})(?:\/[a-z0-9./?=&%#_-]*)?`,
+      "gi"
+    );
+    while ((m = hinted.exec(spoken)) !== null) {
+      const url = toHttps(m[0]);
+      if (!url) continue;
+      let host = "";
+      try {
+        host = new URL(url).hostname.replace(/^www\./, "");
+      } catch {
+        continue;
+      }
+      add(map, url, host, classifySpoken(url, around), startTime, now);
+    }
   }
 }
 
@@ -356,8 +448,9 @@ export function extractSourcesFromCaptions(
   }
 
   return [...map.values()]
+    .filter(isKeepableSource)
     .sort((a, b) => a.startTime - b.startTime)
-    .slice(0, 40);
+    .slice(0, 24);
 }
 
 const memory = new Map<string, CcSource[]>();

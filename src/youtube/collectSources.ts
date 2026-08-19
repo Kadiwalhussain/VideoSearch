@@ -5,6 +5,7 @@ import {
 } from "./descriptionLinks";
 import {
   extractSourcesFromCaptions,
+  isKeepableSource,
   rememberCcSources,
   rememberedCcSources,
   type CcSource,
@@ -54,7 +55,11 @@ export function mergeVaultSources(
       });
     }
   }
-  return [...map.values()];
+  const rank = (s?: string) =>
+    s === "description" ? 0 : s === "comment" ? 1 : 2;
+  return [...map.values()]
+    .filter(isKeepableSource)
+    .sort((a, b) => rank(a.source) - rank(b.source) || (a.startTime || 0) - (b.startTime || 0));
 }
 
 /** YouTube watch id currently on the page (SPA-safe). */

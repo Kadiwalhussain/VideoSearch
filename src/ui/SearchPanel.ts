@@ -803,8 +803,21 @@ export class SearchPanel {
         '<div class="vsa-src-empty">No sources yet — sync bio or wait for captions.</div>';
       return;
     }
-    const bio = items.filter((p) => p.source !== "cc");
-    const spoken = items.filter((p) => p.source === "cc");
+    const keep = items.filter((p) => {
+      try {
+        const host = new URL(p.url).hostname.replace(/^www\./, "").toLowerCase();
+        if (/\.(so|online|xyz)$/.test(host)) return p.source !== "cc";
+        const name = host.split(".")[0] || "";
+        if (/^(okay|ok|year|time|period|category|changed|plans|nexttime|\d+)$/.test(name)) {
+          return p.source !== "cc";
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    const bio = keep.filter((p) => p.source !== "cc");
+    const spoken = keep.filter((p) => p.source === "cc");
     const block = (
       title: string,
       list: typeof items,
