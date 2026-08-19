@@ -4,7 +4,7 @@
  */
 
 import type { SourceLink } from "../youtube/descriptionLinks";
-import { isKeepableSource } from "../youtube/ccSources";
+import { keepVaultSource } from "../youtube/collectSources";
 
 const PREFIX = "vsa_sources_";
 
@@ -50,7 +50,7 @@ export async function loadSourceLinks(videoId: string): Promise<SourceLink[]> {
   const raw = await storageGet(key(videoId));
   if (!Array.isArray(raw)) return [];
   return (raw as SourceLink[]).filter(
-    (l) => l && typeof l.url === "string" && isKeepableSource(l)
+    (l) => l && typeof l.url === "string" && keepVaultSource(l)
   );
 }
 
@@ -61,6 +61,6 @@ export async function saveSourceLinks(
   if (!videoId) return;
   await storageSet(
     key(videoId),
-    links.filter(isKeepableSource).slice(0, 80)
+    links.filter(keepVaultSource).slice(0, 80)
   );
 }

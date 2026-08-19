@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractSourcesFromCaptions } from "./ccSources.ts";
+import {
+  extractSourcesFromCaptions,
+  isKeepableCcSource,
+} from "./ccSources.ts";
+import { isUsefulSourceLink } from "./descriptionLinks.ts";
 
 test("extracts spoken websites, coupons, and app-store mentions from CC", () => {
   const segs = [
@@ -62,6 +66,22 @@ test("does not treat sentence periods as domains", () => {
   assert.ok(
     !links.some((l) => /nexttime\.so|time\.so|plans\.online|ipoplans/i.test(l.url + l.label)),
     labels
+  );
+});
+
+test("bio hrefs stay, caption junk does not", () => {
+  assert.ok(isUsefulSourceLink("https://notion.so/abc", "notion"));
+  assert.ok(isUsefulSourceLink("https://www.nordvpn.com/", "link"));
+  assert.ok(isUsefulSourceLink("https://drive.google.com/file/d/x", "drive"));
+  assert.ok(
+    !isKeepableCcSource({
+      url: "https://okay.so",
+      source: "cc",
+      kind: "link",
+    })
+  );
+  assert.ok(
+    !isKeepableCcSource({ url: "https://year.so", source: "cc", kind: "link" })
   );
 });
 

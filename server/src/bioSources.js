@@ -237,7 +237,8 @@ export function isUsefulVaultSource(url, kind) {
   if (host.endsWith(".google.com")) return false;
 
   if (/\.(pdf|pptx?|docx?|xlsx?|zip|rar)(\?|$)/i.test(unwrapped)) return true;
-  if (path.length > 2 && path !== "/") return true;
+  if (path.length > 1 && path !== "/") return true;
+  if (host.includes(".") && host.length >= 5) return true;
   return false;
 }
 

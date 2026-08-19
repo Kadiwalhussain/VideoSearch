@@ -649,12 +649,28 @@ export const VSA_STYLES = `
   border-radius: 10px;
   background: rgba(255,255,255,0.03);
   color: var(--vsa-text);
-  text-decoration: none;
   margin-bottom: 6px;
   min-width: 0;
 }
 #videosearch-ai-panel .vsa-src-row:hover {
   border-color: var(--vsa-accent-border);
+}
+#videosearch-ai-panel .vsa-src-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  color: inherit;
+  text-decoration: none;
+}
+#videosearch-ai-panel .vsa-src-from {
+  flex-shrink: 0;
+  font-size: 9.5px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vsa-faint);
 }
 #videosearch-ai-panel .vsa-src-time {
   flex-shrink: 0;

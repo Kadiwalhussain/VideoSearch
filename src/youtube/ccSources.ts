@@ -190,8 +190,8 @@ function looksLikeHost(host: string): boolean {
   return true;
 }
 
-/** Drop leftover caption junk (okay.so, year.so) even if it was cached. */
-export function isKeepableSource(link: {
+/** Caption junk only. Bio/comment hrefs are curated separately. */
+export function isKeepableCcSource(link: {
   url?: string;
   source?: string;
   kind?: string;
@@ -200,17 +200,18 @@ export function isKeepableSource(link: {
   if (!url) return false;
   const kind = (link.kind || "").toLowerCase().replace(/^cc\s*·\s*/, "");
   if (kind === "coupon" || kind === "app") return true;
+  if (link.source && link.source !== "cc") return true;
   let host = "";
   try {
     host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
   } catch {
     return false;
   }
-  if (link.source === "description" || link.source === "comment") {
-    return looksLikeHost(host) || host.includes("google.com") || host.includes("github.com");
-  }
   return looksLikeHost(host);
 }
+
+/** @deprecated use isKeepableCcSource for captions */
+export const isKeepableSource = isKeepableCcSource;
 
 function toHttps(hostPath: string): string | null {
   let s = hostPath.trim().replace(/^[./]+/, "").replace(/[.,;:!?)]+$/g, "");
@@ -448,7 +449,7 @@ export function extractSourcesFromCaptions(
   }
 
   return [...map.values()]
-    .filter(isKeepableSource)
+    .filter(isKeepableCcSource)
     .sort((a, b) => a.startTime - b.startTime)
     .slice(0, 24);
 }

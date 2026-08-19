@@ -1,15 +1,26 @@
 import type { RawCaptionSegment } from "../types/schema";
 import {
   extractDescriptionLinks,
+  isUsefulSourceLink,
   type SourceLink,
 } from "./descriptionLinks";
 import {
   extractSourcesFromCaptions,
-  isKeepableSource,
+  isKeepableCcSource,
   rememberCcSources,
   rememberedCcSources,
   type CcSource,
 } from "./ccSources";
+
+export function keepVaultSource(link: {
+  url?: string;
+  source?: string;
+  kind?: string;
+}): boolean {
+  if (!link?.url) return false;
+  if (link.source === "cc") return isKeepableCcSource(link);
+  return isUsefulSourceLink(link.url, link.kind);
+}
 
 function keyOf(url: string): string {
   return String(url || "")
@@ -58,7 +69,7 @@ export function mergeVaultSources(
   const rank = (s?: string) =>
     s === "description" ? 0 : s === "comment" ? 1 : 2;
   return [...map.values()]
-    .filter(isKeepableSource)
+    .filter(keepVaultSource)
     .sort((a, b) => rank(a.source) - rank(b.source) || (a.startTime || 0) - (b.startTime || 0));
 }
 

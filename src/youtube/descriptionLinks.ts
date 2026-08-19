@@ -236,19 +236,19 @@ export function isUsefulSourceLink(url: string, kind?: string): boolean {
   const k = kind || classifyLink(url);
   if (RESOURCE_KINDS.has(k)) return true;
 
-  // Generic “link”: keep only if it looks like a real destination, not homepage spam
+  // Generic “link”: keep real hrefs from the bio (homepage of a unique host is OK)
   if (k === "link") {
-    // file-like or deep path
     if (/\.(pdf|pptx?|docx?|xlsx?|zip|rar|csv|txt)(\?|$)/i.test(url))
       return true;
-    if (path.length > 2 && path !== "/") return true;
-    // known short resource hosts
+    if (path.length > 1 && path !== "/") return true;
     if (
       host.includes("bit.ly") ||
       host.includes("tinyurl") ||
       host.includes("t.co")
     )
       return path.length > 1;
+    // Unique site named in the description (sponsor, personal site)
+    if (host.includes(".") && host.length >= 5) return true;
     return false;
   }
 

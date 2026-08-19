@@ -31,6 +31,8 @@ import { ChatPane } from "./ChatPane";
 import { HighlightsPane } from "./HighlightsPane";
 import { VSA_STYLES, VSA_FONT_HREF } from "./vsaStyles";
 import { iconHtml, iconSvg, type IconName } from "./icons";
+import { isKeepableCcSource } from "../youtube/ccSources";
+import { isUsefulSourceLink } from "../youtube/descriptionLinks";
 
 export type PanelStatus =
   | { kind: "idle" }
@@ -803,21 +805,18 @@ export class SearchPanel {
         '<div class="vsa-src-empty">No sources yet — sync bio or wait for captions.</div>';
       return;
     }
-    const keep = items.filter((p) => {
-      try {
-        const host = new URL(p.url).hostname.replace(/^www\./, "").toLowerCase();
-        if (/\.(so|online|xyz)$/.test(host)) return p.source !== "cc";
-        const name = host.split(".")[0] || "";
-        if (/^(okay|ok|year|time|period|category|changed|plans|nexttime|\d+)$/.test(name)) {
-          return p.source !== "cc";
-        }
-        return true;
-      } catch {
-        return false;
-      }
-    });
+    const keep = items.filter((p) =>
+      p.source === "cc"
+        ? isKeepableCcSource(p)
+        : isUsefulSourceLink(p.url, p.kind)
+    );
     const bio = keep.filter((p) => p.source !== "cc");
     const spoken = keep.filter((p) => p.source === "cc");
+    if (!keep.length) {
+      host.innerHTML =
+        '<div class="vsa-src-empty">No usable links yet. Open “Show more” on the description, then Sync bio.</div>';
+      return;
+    }
     const block = (
       title: string,
       list: typeof items,
@@ -830,18 +829,20 @@ export class SearchPanel {
           const t =
             spokenBlock && typeof p.startTime === "number"
               ? `<button type="button" class="vsa-src-time" data-src-seek="${p.startTime}">${formatTimestamp(p.startTime)}</button>`
-              : "";
-          return `<a class="vsa-src-row" href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer">
+              : `<span class="vsa-src-from">bio</span>`;
+          return `<div class="vsa-src-row">
             ${t}
-            <span class="vsa-src-kind">${escapeHtml(kind)}</span>
-            <span class="vsa-src-label">${escapeHtml(p.label || kind)}</span>
-          </a>`;
+            <a class="vsa-src-main" href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(p.url)}">
+              <span class="vsa-src-kind">${escapeHtml(kind)}</span>
+              <span class="vsa-src-label">${escapeHtml(p.label || kind)}</span>
+            </a>
+          </div>`;
         })
         .join("");
       return `<div class="vsa-src-block"><div class="vsa-src-h">${title} · ${list.length}</div>${rows}</div>`;
     };
     host.innerHTML =
-      block("From bio", bio, false) +
+      block("Description", bio, false) +
       block("Spoken in captions", spoken, true);
     host.querySelectorAll("[data-src-seek]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
