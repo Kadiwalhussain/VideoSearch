@@ -3,6 +3,7 @@ import { VideoCard } from "../components/VideoCard";
 import { EmptyState } from "../components/EmptyState";
 import { SessionLoader } from "../components/SessionLoader";
 import { useVault } from "../store/VaultContext";
+import { pinnedRows } from "../lib/vaultSelectors";
 import { Bookmark, Inbox, Library } from "lucide-react";
 
 type Filter = "all" | "saved";
@@ -10,10 +11,11 @@ type Filter = "all" | "saved";
 export function LibraryPage() {
   const { rows, loading, stats, saved } = useVault();
   const [filter, setFilter] = useState<Filter>("all");
+  const pinned = useMemo(() => pinnedRows(rows), [rows]);
 
   const list = useMemo(
-    () => (filter === "saved" ? saved : rows),
-    [filter, saved, rows]
+    () => (filter === "saved" ? saved : pinned),
+    [filter, saved, pinned]
   );
 
   return (
@@ -23,11 +25,9 @@ export function LibraryPage() {
           <Library size={22} /> Library
         </h1>
         <p className="view-sub">
-          {stats.videos} video{stats.videos === 1 ? "" : "s"} in your vault
-          {stats.saved > 0
-            ? ` · ${stats.saved} saved`
-            : ""}
-          . Watch, open notes, or delete videos you no longer need.
+          {pinned.length} saved, queued, or in a playlist
+          {stats.saved > 0 ? ` · ${stats.saved} bookmarked` : ""}.
+          Watching a video does not add it here.
         </p>
       </header>
 
@@ -37,7 +37,7 @@ export function LibraryPage() {
           className={`btn-notes ${filter === "all" ? "is-active" : ""}`}
           onClick={() => setFilter("all")}
         >
-          All ({rows.length})
+          All ({pinned.length})
         </button>
         <button
           type="button"
@@ -69,8 +69,8 @@ export function LibraryPage() {
       ) : (
         <EmptyState
           icon={Inbox}
-          title="No videos yet"
-          sub="Sync from the extension while signed in."
+          title="Nothing in library yet"
+          sub="Use Save, Watch later, or Playlist in the extension. Watching a video is not enough."
         />
       )}
     </div>

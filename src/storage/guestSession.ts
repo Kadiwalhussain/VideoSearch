@@ -150,16 +150,18 @@ export async function offerSaveLocalToCloud(opts?: {
   }
 
   opts?.onStatus?.(
-    `Saving ${counts.marks} mark(s) and ${counts.shots} shot(s) to your account…`
+    "Uploading Saved / Watch later / playlists. Other marks stay on this device."
   );
   try {
     const { pushAllLocalToCloud } = await import("../cloud/cloudSync");
     const result = await pushAllLocalToCloud({ onStatus: opts?.onStatus });
     if (!result.ok || result.failed) {
-      const { listLocalHighlightVideoIds } = await import("./highlightsStore");
+      const { listLibraryEntries } = await import("./libraryStore");
       const { enqueueVideoSync } = await import("../cloud/offlineSync");
-      for (const id of await listLocalHighlightVideoIds()) {
-        await enqueueVideoSync(id);
+      for (const e of await listLibraryEntries()) {
+        if (e.saved || e.watchLater || (e.playlists && e.playlists.length)) {
+          await enqueueVideoSync(e.videoId);
+        }
       }
       opts?.onStatus?.(
         `${result.message} Nothing was deleted — notes stay on this device and will retry.`,
@@ -170,7 +172,9 @@ export async function offerSaveLocalToCloud(opts?: {
     }
     await endGuestSession();
     opts?.onStatus?.(
-      "Saved to your account. Notes also stay on this device."
+      result.videos
+        ? "Saved lists are in your account. Unsaved marks stay on this device."
+        : "Signed in. Unsaved marks stay on this device until you Save, Watch later, or add to a playlist."
     );
     return "saved";
   } catch (err) {

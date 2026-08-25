@@ -333,8 +333,7 @@ export function scheduleAutoSync(
   const prev = autoSyncTimers.get(videoId);
   if (prev != null) window.clearTimeout(prev);
 
-  // Instant feedback: cloud pill switches to pending
-  opts.onStatus?.("Syncing soon…");
+  opts.onStatus?.("Saving on this device…");
 
   const timer = window.setTimeout(() => {
     autoSyncTimers.delete(videoId);
@@ -785,8 +784,6 @@ async function applyLocalLibraryAction(opts: {
       if (pl && !playlists.some((p) => p.toLowerCase() === pl.toLowerCase())) {
         playlists.push(pl);
       }
-      saved = true;
-      if (!savedAt) savedAt = now;
       break;
     case "remove_playlist":
       playlists = playlists.filter(
@@ -850,8 +847,6 @@ export async function importPlaylistToCloud(opts: {
       videoTitle: v.videoTitle,
       videoUrl:
         v.videoUrl || `https://www.youtube.com/watch?v=${v.videoId}`,
-      saved: true,
-      savedAt: prev?.savedAt || Date.now(),
       playlists,
     });
   }

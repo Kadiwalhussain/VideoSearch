@@ -50,6 +50,18 @@ export function savedRows(rows: VaultRow[]): VaultRow[] {
     .sort((a, b) => (b.payload?.savedAt || 0) - (a.payload?.savedAt || 0));
 }
 
+/** Saved, Watch later, or in a playlist — not raw watch History. */
+export function pinnedRows(rows: VaultRow[]): VaultRow[] {
+  return rows
+    .filter((r) => {
+      const p = r.payload;
+      return Boolean(
+        p?.saved || p?.watchLater || (p?.playlists && p.playlists.length)
+      );
+    })
+    .sort((a, b) => (rowActivityMs(b) || 0) - (rowActivityMs(a) || 0));
+}
+
 /** Sort playlist videos so the cover / “first” item is most recently active. */
 function sortPlaylistRows(list: VaultRow[]): VaultRow[] {
   return [...list].sort((a, b) => {

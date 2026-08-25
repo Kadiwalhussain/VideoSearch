@@ -823,8 +823,14 @@ async function flushSyncToVault(
       );
     }
   } catch (err) {
-    // Last resort: still enqueue offline
     try {
+      const { isPinnedToVault } = await import("../storage/libraryStore");
+      if (!(await isPinnedToVault(videoId))) {
+        panel.setVaultSyncMessage(
+          "On this device · Save, Watch later, or Playlist to keep in vault"
+        );
+        return;
+      }
       const { enqueueVideoSync } = await import("../cloud/offlineSync");
       const pending = await enqueueVideoSync(videoId, {
         title: videoTitleFromPage(videoId),
@@ -1008,8 +1014,6 @@ async function runLibraryAction(
           await applyLibraryFlags(videoId, {
             videoTitle: title,
             videoUrl,
-            saved: true,
-            savedAt: prev?.savedAt || Date.now(),
             playlists: list,
           });
         }
@@ -1100,6 +1104,8 @@ async function hydrateLocalVaultUi(
       lastLocalSaveAt: meta.lastLocalSaveAt,
       offline: isBrowserOffline(),
     });
+    await refreshLibraryUi(videoId, panel);
+    void loadPlaylistsForPanel(panel);
   } catch {
     /* optional */
   }

@@ -1415,9 +1415,6 @@ app.post("/api/vault/library", authMiddleware, async (req, res) => {
           const canonical = await resolveCanonicalName(plName);
           playlists.push(canonical);
         }
-        // already in list with add_playlist → no-op (still ok)
-        saved = true;
-        if (!savedAt) savedAt = now;
         break;
       }
       case "remove_playlist": {
@@ -1597,8 +1594,8 @@ app.post("/api/vault/playlist/import", authMiddleware, async (req, res) => {
         videoId,
         videoUrl: existing?.videoUrl || videoUrl,
         playlists,
-        saved: true,
-        savedAt: existing?.savedAt || now,
+        saved: Boolean(existing?.saved),
+        savedAt: existing?.savedAt || null,
       };
       if (!existing) $set.updatedAt = now;
 
