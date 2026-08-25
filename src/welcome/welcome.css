@@ -251,8 +251,8 @@ body {
   border-radius: 12px;
   margin-bottom: 14px;
 }
+.clerk-mount[hidden] { display: none !important; }
 .clerk-mount {
-  min-height: 280px;
   margin-bottom: 12px;
 }
 .clerk-user {
@@ -284,6 +284,7 @@ body {
 .mode.is-on { background: #252a36; color: var(--text); }
 
 .form { display: flex; flex-direction: column; gap: 10px; }
+.form[hidden] { display: none !important; }
 .field[hidden],
 [hidden] { display: none !important; }
 .field { display: flex; flex-direction: column; gap: 5px; }

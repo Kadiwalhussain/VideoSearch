@@ -28,7 +28,7 @@ import {
   resetPasswordWithCode,
   userIdFromToken,
 } from "./auth.js";
-import { mountGoogleAuth } from "./oauth.js";
+import { googleAuthEnabled, mountGoogleAuth } from "./oauth.js";
 import { mountClerkAuth } from "./clerkVerify.js";
 import {
   aiRateLimit,
@@ -203,6 +203,7 @@ app.get("/health", async (req, res) => {
       service: "videosearch-vault-api",
       auth: true,
       mongo: mongoOk ? "connected" : "down",
+      googleAuth: googleAuthEnabled(),
     });
   }
   res.json(await healthPayload());

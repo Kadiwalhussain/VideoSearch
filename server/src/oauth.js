@@ -49,7 +49,7 @@ function callbackUrl(req) {
 }
 
 export function googleAuthEnabled() {
-  return googleConfigured() || Boolean(process.env.CLERK_SECRET_KEY);
+  return googleConfigured();
 }
 
 async function syncClerkQuietly({ email, displayName, googleId }) {

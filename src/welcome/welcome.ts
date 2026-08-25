@@ -16,6 +16,7 @@ import {
   googleStartUrl,
   type CloudSettings,
 } from "../settings/cloudSettings";
+import { vaultHttp } from "../net/vaultHttp";
 import {
   completeOnboarding,
   loadOnboarding,
@@ -35,6 +36,8 @@ import {
 } from "./clerkClient";
 
 type Mode = "login" | "register" | "forgot" | "reset";
+
+let googleAvailable = false;
 
 const $ = <T extends HTMLElement>(sel: string) =>
   document.querySelector(sel) as T | null;
@@ -151,8 +154,13 @@ function setMode(mode: Mode): void {
       mode === "forgot" || mode === "reset" ? "Back to log in" : "Forgot password?";
     forgot.hidden = mode === "register";
   }
-  if (google) google.hidden = mode === "forgot" || mode === "reset";
-  if (or) or.hidden = mode === "forgot" || mode === "reset";
+  if (google) {
+    google.hidden =
+      !googleAvailable || mode === "forgot" || mode === "reset";
+  }
+  if (or) {
+    or.hidden = !googleAvailable || mode === "forgot" || mode === "reset";
+  }
   $("[data-form]")?.setAttribute("data-mode", mode);
 }
 
@@ -182,73 +190,34 @@ async function main(): Promise<void> {
 
   await markOnboardingSeen();
 
+  // Keep email + password visible. Clerk widgets hide those fields in
+  // Chrome extensions (Native API / CSP), so we never replace the form.
+  const googleBtn = $("[data-google]");
+  const orEl = document.querySelector(".or") as HTMLElement | null;
+  if (googleBtn) googleBtn.hidden = true;
+  if (orEl) orEl.hidden = true;
+
   if (clerkConfigured()) {
     try {
       const clerk = await loadClerk();
-      const mount = document.getElementById("clerk-mount") as HTMLDivElement | null;
-      const actions = $("[data-clerk-actions]");
       const userSlot = $("[data-clerk-user]");
       const userBtn = document.getElementById(
         "clerk-user-button"
       ) as HTMLDivElement | null;
-      const legacyModes = $("[data-legacy-modes]");
-      const form = $("[data-form]");
-      const google = $("[data-google]");
-      const or = document.querySelector(".or") as HTMLElement | null;
-      if (legacyModes) legacyModes.hidden = true;
-      if (form) form.hidden = true;
-      if (google) google.hidden = true;
-      if (or) or.hidden = true;
-      if (actions) actions.hidden = false;
-
-      const paintClerk = async () => {
-        if (!clerk || !mount) return;
-        if (clerk.isSignedIn) {
-          mount.hidden = true;
-          mount.innerHTML = "";
-          if (actions) actions.hidden = true;
-          if (userSlot) userSlot.hidden = false;
-          if (userBtn) {
-            userBtn.innerHTML = "";
-            clerk.mountUserButton(userBtn);
-          }
-          await syncClerkSessionToVault();
-          const s = await loadCloudSettings();
-          applySession(s);
-          await offerSaveLocalToCloud();
-          await completeOnboarding(false);
-        } else {
-          if (userSlot) userSlot.hidden = true;
-          if (actions) actions.hidden = false;
-          mount.hidden = false;
-          mount.innerHTML = "";
-          clerk.mountSignIn(mount);
+      if (clerk?.isSignedIn) {
+        if (userSlot) userSlot.hidden = false;
+        if (userBtn) {
+          userBtn.innerHTML = "";
+          clerk.mountUserButton(userBtn);
         }
-      };
-
-      $("[data-clerk-signin]")?.addEventListener("click", () => {
-        if (!clerk || !mount) return;
-        $("[data-clerk-signin]")?.classList.add("is-on");
-        $("[data-clerk-signup]")?.classList.remove("is-on");
-        mount.innerHTML = "";
-        mount.hidden = false;
-        clerk.mountSignIn(mount);
-      });
-      $("[data-clerk-signup]")?.addEventListener("click", () => {
-        if (!clerk || !mount) return;
-        $("[data-clerk-signup]")?.classList.add("is-on");
-        $("[data-clerk-signin]")?.classList.remove("is-on");
-        mount.innerHTML = "";
-        mount.hidden = false;
-        clerk.mountSignUp(mount);
-      });
-
-      clerk?.addListener(() => {
-        void paintClerk();
-      });
-      await paintClerk();
+        await syncClerkSessionToVault();
+        const s = await loadCloudSettings();
+        applySession(s);
+        await offerSaveLocalToCloud();
+        await completeOnboarding(false);
+      }
     } catch (err) {
-      console.warn("[VideoSearch AI] Clerk UI failed", err);
+      console.warn("[VideoSearch AI] Clerk session skipped", err);
     }
   }
 
@@ -267,6 +236,30 @@ async function main(): Promise<void> {
       ? "Cloud ready · no API key"
       : "Works on this device · no API key";
     chip.classList.toggle("is-offline", !online);
+  }
+  if (online) {
+    try {
+      const bases = [
+        session.projectUrl || DEFAULT_CLOUD_SETTINGS.projectUrl,
+        "http://127.0.0.1:8787",
+        "http://localhost:8787",
+      ];
+      for (const base of bases) {
+        const hr = await vaultHttp(`${base.replace(/\/$/, "")}/health`);
+        if (!hr.ok) continue;
+        const hj = (await hr.json().catch(() => ({}))) as {
+          googleAuth?: boolean;
+        };
+        if (hj.googleAuth) {
+          googleAvailable = true;
+          if (googleBtn) googleBtn.hidden = false;
+          if (orEl) orEl.hidden = false;
+        }
+        break;
+      }
+    } catch {
+      /* keep Google hidden */
+    }
   }
 
   if (session.enabled) {
@@ -333,7 +326,7 @@ async function main(): Promise<void> {
         if (counts.marks) bits.push(`${counts.marks} marks`);
         if (counts.shots) bits.push(`${counts.shots} shots`);
         const stash = bits.length ? bits.join(" · ") : "no marks yet";
-        guestCopy.textContent = `Not signed in · ${stash} · local for ${clock}. Deleted if you clear cache, use Incognito, or uninstall.`;
+        guestCopy.textContent = `Not signed in · ${stash} · local for ${clock}. Sign in to keep notes in your account. They vanish only if you clear Chrome data, use Incognito, or uninstall.`;
       }
     };
     if (guestWarn) guestWarn.hidden = false;
