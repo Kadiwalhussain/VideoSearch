@@ -91,6 +91,17 @@ export async function loadAllScreenshots(): Promise<VideoScreenshot[]> {
   return list;
 }
 
+export async function clearAllScreenshots(): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.objectStore(STORE).clear();
+  });
+  db.close();
+}
+
 export async function deleteScreenshot(id: string): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {

@@ -8,10 +8,14 @@ Account-based backend: **JWT auth**, **MongoDB** (users + notes/highlights), **C
 cd server
 cp .env.example .env   # fill secrets — never commit .env
 npm install
-npm run dev
+npm run start:always   # or: npm run dev
 ```
 
-API: `http://localhost:8787`
+API: `http://127.0.0.1:8787/health`  
+Studio: `http://127.0.0.1:8787/app/`
+
+Auth + merge rules: [../docs/AUTH_AND_DATA.md](../docs/AUTH_AND_DATA.md).  
+Optional Postgres copy: `sql/vault_supabase.sql` then `npm run sync:supabase`.
 
 ## Auth (required for vault)
 

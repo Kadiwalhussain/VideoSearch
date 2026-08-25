@@ -80,31 +80,35 @@
       <aside class="gate" data-gate>
         <div class="card" data-auth-card>
           <div class="card-kicker">Your account</div>
-          <h2 data-auth-title>Create your account</h2>
+          <div class="clerk-user" data-clerk-user hidden>
+            <div id="clerk-user-button"></div>
+          </div>
+          <h2 data-auth-title>Welcome back</h2>
           <p class="card-sub" data-auth-sub>
-            Optional — search, marks, and shots already work. An account syncs
-            them to Studio and your phone.
+            Email and password. Search still works if you skip this.
           </p>
 
-          <div class="modes" role="tablist">
-            <button type="button" class="mode is-on" data-mode="register">
+          <div class="clerk-actions" data-clerk-actions hidden>
+            <button type="button" class="mode is-on" data-clerk-signin>Log in</button>
+            <button type="button" class="mode" data-clerk-signup>Create account</button>
+          </div>
+          <div id="clerk-mount" class="clerk-mount" hidden></div>
+
+          <div class="modes" role="tablist" data-legacy-modes>
+            <button type="button" class="mode" data-mode="register">
               Create account
             </button>
-            <button type="button" class="mode" data-mode="login">Log in</button>
+            <button type="button" class="mode is-on" data-mode="login">Log in</button>
           </div>
 
+          <button type="button" class="google" data-google>
+            <span class="google-g" aria-hidden="true">G</span>
+            Continue with Google
+          </button>
+          <div class="or"><span>or</span></div>
+
           <form class="form" data-form autocomplete="on" novalidate>
-            <label class="field" data-name-wrap>
-              <span>Full name</span>
-              <input
-                type="text"
-                name="name"
-                data-name
-                autocomplete="name"
-                placeholder="Ada Lovelace"
-                maxlength="80"
-              />
-            </label>
+            <input type="hidden" data-url value="http://127.0.0.1:8787" />
             <label class="field">
               <span>Email</span>
               <input
@@ -116,25 +120,23 @@
                 required
               />
             </label>
-            <label class="field">
+            <label class="field" data-pass-wrap>
               <span>Password</span>
               <div class="pass-row">
                 <input
                   type="password"
                   name="password"
                   data-pass
-                  autocomplete="new-password"
-                  placeholder="At least 10 characters"
+                  autocomplete="current-password"
+                  placeholder="Password"
                   minlength="6"
-                  required
                 />
                 <button type="button" class="pass-toggle" data-pass-toggle title="Show password">
                   Show
                 </button>
               </div>
-              <em class="hint" data-pass-hint>Use letters and a number. 10+ characters to sign up.</em>
             </label>
-            <label class="field" data-confirm-wrap>
+            <label class="field" data-confirm-wrap hidden>
               <span>Confirm password</span>
               <input
                 type="password"
@@ -144,22 +146,28 @@
                 placeholder="Type it again"
               />
             </label>
+            <label class="field" data-code-wrap hidden>
+              <span>Reset code</span>
+              <input type="text" data-code autocomplete="one-time-code" placeholder="Code from vault" />
+            </label>
 
-            <details class="advanced">
-              <summary>Advanced · vault server</summary>
-              <label class="field">
-                <span>API URL</span>
-                <input type="url" data-url autocomplete="off" placeholder="http://127.0.0.1:8787" />
-              </label>
-            </details>
-
-            <button type="submit" class="submit" data-submit>Create account</button>
+            <button type="submit" class="submit" data-submit>Log in</button>
+            <button type="button" class="text-link" data-forgot>Forgot password?</button>
             <p class="msg" data-msg role="status"></p>
           </form>
 
           <button type="button" class="skip" data-skip>
             Start without an account
           </button>
+          <div class="guest-warn" data-guest-warn hidden>
+            <div class="guest-clock" data-guest-clock>00:00:00</div>
+            <p data-guest-copy>
+              Not signed in. Marks and shots stay in this browser only until you
+              create an account — sign-in uploads them; it does not delete them.
+              They disappear only if you clear Chrome data, use Incognito, or
+              uninstall VideoSearch.
+            </p>
+          </div>
           <p class="fine">
             No API key. Captions stay on this machine. Account only syncs notes,
             shots, bio, and sources.

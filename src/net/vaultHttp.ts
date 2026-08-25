@@ -42,6 +42,14 @@ function bodyToString(body?: BodyInit | null): string | null {
   return String(body);
 }
 
+function loopbackInit(init: RequestInit): RequestInit {
+  return {
+    ...init,
+    // Chrome 142+ Local Network Access — loopback to the vault on this machine
+    targetAddressSpace: "loopback",
+  } as RequestInit;
+}
+
 /**
  * Drop-in replacement for fetch() for vault API calls.
  */
@@ -64,9 +72,6 @@ export async function vaultHttp(
         body: method === "GET" || method === "HEAD" ? null : body,
       })) as ProxyOk | ProxyErr | undefined;
 
-      if (result && "error" in result && result.ok === false) {
-        throw new Error(result.error || "Vault proxy error");
-      }
       if (result && result.ok === true) {
         return new Response(result.body ?? "", {
           status: result.status,
@@ -74,25 +79,26 @@ export async function vaultHttp(
           headers: result.headers || {},
         });
       }
-      // undefined → no SW listener; fall through
+      // Policy errors should not fall through to a second blocked fetch
+      if (
+        result &&
+        result.ok === false &&
+        /not allowed by extension/i.test(result.error || "")
+      ) {
+        throw new Error(result.error);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // If SW missing, try direct; if SW returned real network error, rethrow
-      if (
-        /Receiving end does not exist|Could not establish connection|Extension context invalidated/i.test(
-          msg
-        )
-      ) {
-        // fall through to direct fetch
-      } else if (/Failed to fetch|NetworkError|Load failed|vault/i.test(msg)) {
-        throw err instanceof Error ? err : new Error(msg);
-      } else if (msg && !/undefined/i.test(msg)) {
-        // Proxy returned a specific error (e.g. not allowed)
+      if (/not allowed by extension/i.test(msg)) {
         throw err instanceof Error ? err : new Error(msg);
       }
+      // SW missing, asleep, or localhost blocked — try a direct fetch next
     }
   }
 
-  // Direct fetch (popup / options / when SW unavailable)
-  return fetch(url, init);
+  try {
+    return await fetch(url, loopbackInit(init));
+  } catch {
+    return fetch(url, init);
+  }
 }

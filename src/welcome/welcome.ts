@@ -10,6 +10,10 @@ import {
   probeVault,
   refreshSession,
   vaultAuth,
+  vaultForgotPassword,
+  vaultResetPassword,
+  applyVaultToken,
+  googleStartUrl,
   type CloudSettings,
 } from "../settings/cloudSettings";
 import {
@@ -17,8 +21,20 @@ import {
   loadOnboarding,
   markOnboardingSeen,
 } from "./onboardingStore";
+import {
+  countLocalUserData,
+  ensureGuestSession,
+  formatElapsed,
+  offerSaveLocalToCloud,
+} from "../storage/guestSession";
+import {
+  clerkConfigured,
+  clerkSignOut,
+  loadClerk,
+  syncClerkSessionToVault,
+} from "./clerkClient";
 
-type Mode = "login" | "register";
+type Mode = "login" | "register" | "forgot" | "reset";
 
 const $ = <T extends HTMLElement>(sel: string) =>
   document.querySelector(sel) as T | null;
@@ -74,41 +90,69 @@ function applySession(c: CloudSettings): void {
 
 function setMode(mode: Mode): void {
   document.querySelectorAll("[data-mode]").forEach((btn) => {
-    btn.classList.toggle("is-on", (btn as HTMLElement).dataset.mode === mode);
+    btn.classList.toggle(
+      "is-on",
+      (btn as HTMLElement).dataset.mode === mode ||
+        (mode === "forgot" && (btn as HTMLElement).dataset.mode === "login") ||
+        (mode === "reset" && (btn as HTMLElement).dataset.mode === "login")
+    );
   });
   const title = $("[data-auth-title]");
   const sub = $("[data-auth-sub]");
   const submit = $("[data-submit]") as HTMLButtonElement | null;
-  const nameWrap = $("[data-name-wrap]");
   const confirmWrap = $("[data-confirm-wrap]");
+  const passWrap = $("[data-pass-wrap]");
+  const codeWrap = $("[data-code-wrap]");
   const pass = $("[data-pass]") as HTMLInputElement | null;
-  const hint = $("[data-pass-hint]");
+  const forgot = $("[data-forgot]");
+  const google = $("[data-google]");
+  const or = document.querySelector(".or") as HTMLElement | null;
 
   if (title) {
     title.textContent =
-      mode === "register" ? "Create your account" : "Welcome back";
+      mode === "register"
+        ? "Create account"
+        : mode === "forgot" || mode === "reset"
+          ? "Reset password"
+          : "Welcome back";
   }
   if (sub) {
     sub.textContent =
       mode === "register"
-        ? "One account for Chrome, Studio, Android, and iPhone. Search still works if you skip this."
-        : "Sign in to sync marks, shots, bio, and sources. Search itself stays on this device.";
+        ? "Email and password. Search still works if you skip this."
+        : mode === "forgot"
+          ? "We’ll issue a reset code. On this computer it prints in the vault terminal."
+          : mode === "reset"
+            ? "Enter the code and a new password."
+            : "Email and password. Search still works if you skip this.";
   }
-  if (submit) submit.textContent = mode === "register" ? "Create account" : "Log in";
-  if (nameWrap) nameWrap.hidden = mode !== "register";
-  if (confirmWrap) confirmWrap.hidden = mode !== "register";
+  if (submit) {
+    submit.textContent =
+      mode === "register"
+        ? "Create account"
+        : mode === "forgot"
+          ? "Send reset code"
+          : mode === "reset"
+            ? "Set new password"
+            : "Log in";
+  }
+  if (confirmWrap) confirmWrap.hidden = mode !== "register" && mode !== "reset";
+  if (passWrap) passWrap.hidden = mode === "forgot";
+  if (codeWrap) codeWrap.hidden = mode !== "reset";
   if (pass) {
     pass.autocomplete =
-      mode === "register" ? "new-password" : "current-password";
+      mode === "register" || mode === "reset" ? "new-password" : "current-password";
     pass.placeholder =
-      mode === "register" ? "At least 10 characters" : "Your password";
+      mode === "register" || mode === "reset" ? "At least 10 characters" : "Password";
+    pass.required = mode !== "forgot";
   }
-  if (hint) {
-    hint.textContent =
-      mode === "register"
-        ? "Use letters and a number. 10+ characters to sign up."
-        : "The same password you used when you created the account.";
+  if (forgot) {
+    forgot.textContent =
+      mode === "forgot" || mode === "reset" ? "Back to log in" : "Forgot password?";
+    forgot.hidden = mode === "register";
   }
+  if (google) google.hidden = mode === "forgot" || mode === "reset";
+  if (or) or.hidden = mode === "forgot" || mode === "reset";
   $("[data-form]")?.setAttribute("data-mode", mode);
 }
 
@@ -138,6 +182,76 @@ async function main(): Promise<void> {
 
   await markOnboardingSeen();
 
+  if (clerkConfigured()) {
+    try {
+      const clerk = await loadClerk();
+      const mount = document.getElementById("clerk-mount") as HTMLDivElement | null;
+      const actions = $("[data-clerk-actions]");
+      const userSlot = $("[data-clerk-user]");
+      const userBtn = document.getElementById(
+        "clerk-user-button"
+      ) as HTMLDivElement | null;
+      const legacyModes = $("[data-legacy-modes]");
+      const form = $("[data-form]");
+      const google = $("[data-google]");
+      const or = document.querySelector(".or") as HTMLElement | null;
+      if (legacyModes) legacyModes.hidden = true;
+      if (form) form.hidden = true;
+      if (google) google.hidden = true;
+      if (or) or.hidden = true;
+      if (actions) actions.hidden = false;
+
+      const paintClerk = async () => {
+        if (!clerk || !mount) return;
+        if (clerk.isSignedIn) {
+          mount.hidden = true;
+          mount.innerHTML = "";
+          if (actions) actions.hidden = true;
+          if (userSlot) userSlot.hidden = false;
+          if (userBtn) {
+            userBtn.innerHTML = "";
+            clerk.mountUserButton(userBtn);
+          }
+          await syncClerkSessionToVault();
+          const s = await loadCloudSettings();
+          applySession(s);
+          await offerSaveLocalToCloud();
+          await completeOnboarding(false);
+        } else {
+          if (userSlot) userSlot.hidden = true;
+          if (actions) actions.hidden = false;
+          mount.hidden = false;
+          mount.innerHTML = "";
+          clerk.mountSignIn(mount);
+        }
+      };
+
+      $("[data-clerk-signin]")?.addEventListener("click", () => {
+        if (!clerk || !mount) return;
+        $("[data-clerk-signin]")?.classList.add("is-on");
+        $("[data-clerk-signup]")?.classList.remove("is-on");
+        mount.innerHTML = "";
+        mount.hidden = false;
+        clerk.mountSignIn(mount);
+      });
+      $("[data-clerk-signup]")?.addEventListener("click", () => {
+        if (!clerk || !mount) return;
+        $("[data-clerk-signup]")?.classList.add("is-on");
+        $("[data-clerk-signin]")?.classList.remove("is-on");
+        mount.innerHTML = "";
+        mount.hidden = false;
+        clerk.mountSignUp(mount);
+      });
+
+      clerk?.addListener(() => {
+        void paintClerk();
+      });
+      await paintClerk();
+    } catch (err) {
+      console.warn("[VideoSearch AI] Clerk UI failed", err);
+    }
+  }
+
   const urlInput = $("[data-url]") as HTMLInputElement | null;
   let session = await loadCloudSettings();
   if (urlInput) urlInput.value = session.projectUrl || DEFAULT_CLOUD_SETTINGS.projectUrl;
@@ -160,7 +274,23 @@ async function main(): Promise<void> {
   }
   applySession(session);
 
-  let mode: Mode = session.enabled ? "login" : "register";
+  const params = new URLSearchParams(location.search);
+  const oauthToken = params.get("token");
+  if (oauthToken) {
+    session = await applyVaultToken({
+      projectUrl: session.projectUrl || DEFAULT_CLOUD_SETTINGS.projectUrl,
+      token: oauthToken,
+      email: params.get("email") || undefined,
+      displayName: params.get("name") || undefined,
+    });
+    applySession(session);
+    history.replaceState({}, "", location.pathname);
+    const { offerSaveLocalToCloud } = await import("../storage/guestSession");
+    await offerSaveLocalToCloud();
+    await completeOnboarding(false);
+  }
+
+  let mode: Mode = "login";
   setMode(mode);
 
   document.querySelectorAll("[data-mode]").forEach((btn) => {
@@ -182,7 +312,39 @@ async function main(): Promise<void> {
     btn.textContent = show ? "Hide" : "Show";
   });
 
+  const guestWarn = $("[data-guest-warn]");
+  const guestClock = $("[data-guest-clock]");
+  const guestCopy = $("[data-guest-copy]");
+  let guestTick: number | null = null;
+
+  const runGuestClock = async () => {
+    if (session.enabled) {
+      if (guestWarn) guestWarn.hidden = true;
+      if (guestTick != null) window.clearInterval(guestTick);
+      return;
+    }
+    const g = await ensureGuestSession();
+    const counts = await countLocalUserData();
+    const paint = () => {
+      const clock = formatElapsed(Date.now() - g.startedAt);
+      if (guestClock) guestClock.textContent = clock;
+      if (guestCopy) {
+        const bits: string[] = [];
+        if (counts.marks) bits.push(`${counts.marks} marks`);
+        if (counts.shots) bits.push(`${counts.shots} shots`);
+        const stash = bits.length ? bits.join(" · ") : "no marks yet";
+        guestCopy.textContent = `Not signed in · ${stash} · local for ${clock}. Deleted if you clear cache, use Incognito, or uninstall.`;
+      }
+    };
+    if (guestWarn) guestWarn.hidden = false;
+    paint();
+    if (guestTick != null) window.clearInterval(guestTick);
+    guestTick = window.setInterval(paint, 1000);
+  };
+  void runGuestClock();
+
   $("[data-skip]")?.addEventListener("click", async () => {
+    await ensureGuestSession();
     await completeOnboarding(true);
     window.open("https://www.youtube.com", "_self");
   });
@@ -193,61 +355,110 @@ async function main(): Promise<void> {
   });
 
   $("[data-logout]")?.addEventListener("click", async () => {
+    await clerkSignOut();
     const cleared = await clearCloudSession();
     applySession(cleared);
     setMode("login");
     setMsg("Signed out");
+    window.location.reload();
+  });
+
+  $("[data-forgot]")?.addEventListener("click", () => {
+    mode = mode === "forgot" || mode === "reset" ? "login" : "forgot";
+    setMode(mode);
+    setMsg("");
+  });
+
+  $("[data-google]")?.addEventListener("click", () => {
+    const url =
+      ($("[data-url]") as HTMLInputElement | null)?.value.trim() ||
+      session.projectUrl ||
+      DEFAULT_CLOUD_SETTINGS.projectUrl;
+    const redirect = location.href.split("?")[0];
+    window.location.href = googleStartUrl(url, redirect);
   });
 
   $("[data-form]")?.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const name = ($("[data-name]") as HTMLInputElement | null)?.value.trim() || "";
     const email = ($("[data-email]") as HTMLInputElement)?.value.trim() || "";
     const password = ($("[data-pass]") as HTMLInputElement)?.value || "";
     const pass2 = ($("[data-pass2]") as HTMLInputElement | null)?.value;
+    const code = ($("[data-code]") as HTMLInputElement | null)?.value || "";
     const url =
       ($("[data-url]") as HTMLInputElement | null)?.value.trim() ||
       DEFAULT_CLOUD_SETTINGS.projectUrl;
     const submit = $("[data-submit]") as HTMLButtonElement | null;
 
-    if (mode === "register") {
-      if (name.length < 2) {
-        setMsg("Enter your full name", true);
-        $("[data-name]")?.focus();
-        return;
-      }
-      if (pass2 !== undefined && password !== pass2) {
-        setMsg("Passwords do not match", true);
-        return;
-      }
-    }
     if (!email.includes("@")) {
       setMsg("Enter a valid email address", true);
       return;
     }
+    if ((mode === "register" || mode === "reset") && pass2 !== undefined && password !== pass2) {
+      setMsg("Passwords do not match", true);
+      return;
+    }
 
     if (submit) submit.disabled = true;
-    setMsg(mode === "register" ? "Creating your account…" : "Signing in…");
     try {
-      const saved = await vaultAuth(mode, {
+      if (mode === "forgot") {
+        setMsg("Sending reset code…");
+        const msg = await vaultForgotPassword(url, email);
+        setMsg(msg);
+        mode = "reset";
+        setMode(mode);
+        return;
+      }
+      if (mode === "reset") {
+        setMsg("Updating password…");
+        const saved = await vaultResetPassword({
+          projectUrl: url,
+          email,
+          code,
+          password,
+        });
+        applySession(saved);
+        session = saved;
+        setMsg(`Signed in as ${saved.email}`);
+        const { offerSaveLocalToCloud } = await import(
+          "../storage/guestSession"
+        );
+        await offerSaveLocalToCloud({
+          onStatus: (m, isError) => setMsg(m, Boolean(isError)),
+        });
+        await completeOnboarding(false);
+        return;
+      }
+      setMsg(mode === "register" ? "Creating your account…" : "Signing in…");
+      const saved = await vaultAuth(mode === "register" ? "register" : "login", {
         projectUrl: url,
         email,
         password,
-        displayName: name,
+        displayName: email.split("@")[0],
       });
       const passEl = $("[data-pass]") as HTMLInputElement | null;
       const pass2El = $("[data-pass2]") as HTMLInputElement | null;
       if (passEl) passEl.value = "";
       if (pass2El) pass2El.value = "";
       applySession(saved);
-      await completeOnboarding(false);
+      session = saved;
       setMsg(`Signed in as ${saved.email}`);
+      const { offerSaveLocalToCloud } = await import(
+        "../storage/guestSession"
+      );
+      await offerSaveLocalToCloud({
+        onStatus: (msg, isError) => setMsg(msg, Boolean(isError)),
+      });
+      await completeOnboarding(false);
+      if (guestWarn) guestWarn.hidden = true;
+      if (guestTick != null) window.clearInterval(guestTick);
     } catch (err) {
       const raw = err instanceof Error ? err.message : "Could not sign in";
       const unreachable = /cannot reach vault|failed to fetch|network/i.test(raw);
+      await ensureGuestSession();
+      void runGuestClock();
       setMsg(
         unreachable
-          ? "Cloud is offline right now. You can still start without an account — search and marks work on this device."
+          ? "Account server is offline. You can still open YouTube — a timer will show how long notes stay in this browser’s cache. Sign in later to keep them, or they disappear if that cache is cleared."
           : raw,
         true
       );

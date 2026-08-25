@@ -139,7 +139,46 @@ export const VSA_STYLES = `
 #videosearch-ai-root.is-collapsed .vsa-panel-body,
 #videosearch-ai-root.is-collapsed .vsa-status,
 #videosearch-ai-root.is-collapsed .vsa-collapse-btn,
-#videosearch-ai-root.is-collapsed .vsa-account-chip { display: none !important; }
+#videosearch-ai-root.is-collapsed .vsa-account-chip,
+#videosearch-ai-root.is-collapsed .vsa-guest-bar { display: none !important; }
+
+#videosearch-ai-panel .vsa-guest-bar {
+  margin: 0 10px 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(230, 180, 80, 0.35);
+  background: rgba(230, 180, 80, 0.08);
+}
+#videosearch-ai-panel .vsa-guest-bar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#videosearch-ai-panel .vsa-guest-clock {
+  font-family: var(--vsa-mono);
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--vsa-warn);
+  letter-spacing: 0.04em;
+}
+#videosearch-ai-panel .vsa-guest-signin {
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-family: var(--vsa-font);
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+  background: var(--vsa-warn);
+  color: #1a1408;
+}
+#videosearch-ai-panel .vsa-guest-copy {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vsa-muted);
+}
 
 #videosearch-ai-root.is-collapsed .vsa-bar { padding: 0; gap: 0; }
 #videosearch-ai-root.is-collapsed .vsa-brand {
@@ -744,11 +783,37 @@ export const VSA_STYLES = `
   line-height: 1.4;
   margin: 0 0 10px;
 }
+#videosearch-ai-panel .vsa-field[hidden],
+#videosearch-ai-panel [hidden] { display: none !important; }
 #videosearch-ai-panel .vsa-field {
   display: flex;
   flex-direction: column;
   gap: 5px;
   margin-bottom: 10px;
+}
+#videosearch-ai-panel .vsa-google {
+  width: 100%;
+  margin: 0 0 10px;
+  border: 1px solid var(--vsa-border-strong);
+  background: #fff;
+  color: #1f1f1f;
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-family: var(--vsa-font);
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+#videosearch-ai-panel .vsa-forgot {
+  border: 0;
+  background: none;
+  color: var(--vsa-accent);
+  font-family: var(--vsa-font);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  padding: 2px 0 0;
+  text-align: left;
 }
 #videosearch-ai-panel .vsa-field > span {
   font-size: 10.5px;

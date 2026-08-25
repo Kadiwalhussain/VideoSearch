@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { attachSupabaseMirrors } from "./supabaseMirror.js";
 
 const highlightSchema = new mongoose.Schema(
   {
@@ -28,6 +29,7 @@ const screenshotMetaSchema = new mongoose.Schema(
     dataUrl: String,
     backupPath: String,
     filKey: String,
+    supabaseKey: String,
     cfImageId: String,
     cfImageUrl: String,
   },
@@ -160,7 +162,9 @@ export const User = mongoose.model(
         lowercase: true,
         trim: true,
       },
-      passwordHash: { type: String, required: true },
+      passwordHash: { type: String, default: "" },
+      googleId: { type: String, default: "", index: true },
+      authProvider: { type: String, default: "password" },
       displayName: { type: String, default: "" },
       lastSeenAt: { type: Date, default: Date.now },
       /** Bump on password change / reset to invalidate older JWTs */
@@ -177,3 +181,5 @@ export const User = mongoose.model(
     { timestamps: true }
   )
 );
+
+attachSupabaseMirrors({ User, VaultVideo, SharedCard });

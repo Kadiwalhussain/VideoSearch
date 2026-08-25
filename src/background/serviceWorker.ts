@@ -73,7 +73,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           msg.body != null && method !== "GET" && method !== "HEAD"
             ? msg.body
             : undefined,
-      });
+        // Chrome 142+ Local Network Access (loopback vault on this machine)
+        targetAddressSpace: "loopback",
+      } as RequestInit);
 
       const headers: Record<string, string> = {};
       res.headers.forEach((value, key) => {
@@ -116,6 +118,10 @@ function openWelcome(): void {
   const url = chrome.runtime.getURL("src/welcome/index.html");
   void chrome.tabs.create({ url });
 }
+
+chrome.runtime.onStartup?.addListener(() => {
+  console.info("[VideoSearch AI] background woke");
+});
 
 chrome.runtime.onInstalled.addListener((details) => {
   console.info("[VideoSearch AI] background ready (vault proxy)", details.reason);

@@ -8,10 +8,12 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "start:network": "HOST=0.0.0.0 node src/index.js",
-    "start:always": "bash scripts/start-vault.sh"
+    "start:always": "bash scripts/start-vault.sh",
+    "sync:supabase": "node scripts/push-mongo-to-supabase.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.758.0",
+    "@clerk/backend": "^3.16.12",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

@@ -524,6 +524,7 @@ async function addHighlightAtNow(
 
     // 3) Open Notes list + flash the row (note fully visible)
     panel.openHighlightsTab();
+    void refreshGuestCounts(panel);
     if (newest?.id) {
       window.setTimeout(() => panel.flashHighlight(newest.id), 80);
     }
@@ -607,6 +608,7 @@ async function captureFrameNow(
     panel.setVaultSyncMessage(
       note ? "Screenshot + note saved" : "Screenshot saved to Notes"
     );
+    void refreshGuestCounts(panel);
 
     // 4) Persist off the critical path (IndexedDB + timeline), then auto-sync
     const persist = async () => {
@@ -1719,6 +1721,79 @@ function mountEmergencyPill(videoId: string, reason: string): void {
 /** Keep panel instance so we can detect focus and avoid remounting mid-type. */
 let activePanel: SearchPanel | null = null;
 let activeVideoId: string | null = null;
+let guestClockTimer: number | null = null;
+let guestCountTimer: number | null = null;
+let guestStartedAt = 0;
+let guestCounts = { marks: 0, shots: 0 };
+
+function stopGuestTicker(): void {
+  if (guestClockTimer != null) {
+    window.clearInterval(guestClockTimer);
+    guestClockTimer = null;
+  }
+  if (guestCountTimer != null) {
+    window.clearInterval(guestCountTimer);
+    guestCountTimer = null;
+  }
+}
+
+function paintGuestBanner(panel: SearchPanel): void {
+  if (!guestStartedAt) return;
+  const { formatElapsed } = requireGuestFormat();
+  panel.setGuestBanner({
+    clock: formatElapsed(Date.now() - guestStartedAt),
+    marks: guestCounts.marks,
+    shots: guestCounts.shots,
+  });
+}
+
+function requireGuestFormat(): { formatElapsed: (ms: number) => string } {
+  // Inlined so the clock never waits on a dynamic import mid-tick
+  const formatElapsed = (ms: number) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  };
+  return { formatElapsed };
+}
+
+async function refreshGuestCounts(panel: SearchPanel): Promise<void> {
+  try {
+    const { countLocalUserData } = await import("../storage/guestSession");
+    const c = await countLocalUserData();
+    guestCounts = { marks: c.marks, shots: c.shots };
+    paintGuestBanner(panel);
+  } catch {
+    /* ignore */
+  }
+}
+
+function startGuestTicker(panel: SearchPanel): void {
+  stopGuestTicker();
+  void (async () => {
+    try {
+      const { loadCloudSettings } = await import("../settings/cloudSettings");
+      const s = await loadCloudSettings();
+      if (s.enabled) {
+        panel.setGuestBanner(null);
+        return;
+      }
+      const { ensureGuestSession } = await import("../storage/guestSession");
+      const g = await ensureGuestSession();
+      guestStartedAt = g.startedAt;
+      await refreshGuestCounts(panel);
+      paintGuestBanner(panel);
+      guestClockTimer = window.setInterval(() => paintGuestBanner(panel), 1000);
+      guestCountTimer = window.setInterval(() => {
+        void refreshGuestCounts(panel);
+      }, 8000);
+    } catch {
+      /* ignore */
+    }
+  })();
+}
 
 if (typeof window !== "undefined" && !(window as Window & { __vsaNetHook?: boolean }).__vsaNetHook) {
   (window as Window & { __vsaNetHook?: boolean }).__vsaNetHook = true;
@@ -1810,8 +1885,19 @@ function mountPanel(videoId: string): void {
         })();
       },
       onCloudSettingsSaved: () => {
-        // Login / signup succeeded → push every local mark to Studio vault
-        void pushAllMarksToVault(panel);
+        void (async () => {
+          const { offerSaveLocalToCloud } = await import(
+            "../storage/guestSession"
+          );
+          const result = await offerSaveLocalToCloud({
+            onStatus: (msg, isError) =>
+              panel.setVaultSyncMessage(msg, isError),
+          });
+          panel.setGuestBanner(null);
+          stopGuestTicker();
+          if (result === "empty") return;
+          await loadHighlightsForVideo(videoId, panel);
+        })();
       },
       onSaveYoutubePlaylist: () => {
         // Force re-import even if auto-import already ran
@@ -1993,6 +2079,7 @@ function mountPanel(videoId: string): void {
 
     panel.setStatus({ kind: "indexing", message: "Preparing…" });
     console.info(LOG, "Panel MOUNTED for", videoId);
+    startGuestTicker(panel);
 
     panel.setDescriptionLinksAvailable(false);
     void hydrateLocalVaultUi(videoId, panel);
@@ -2017,6 +2104,7 @@ function mountPanel(videoId: string): void {
 
 function removePanel(force = false): void {
   if (!force && activePanel?.isInputFocused()) return;
+  stopGuestTicker();
   document.getElementById(ROOT_ID)?.remove();
   activePanel = null;
   activeVideoId = null;

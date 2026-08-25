@@ -21,6 +21,9 @@ import {
 import {
   loadCloudSettings,
   vaultAuth,
+  vaultForgotPassword,
+  vaultResetPassword,
+  googleStartUrl,
   clearCloudSession,
   refreshSession,
   accountInitials,
@@ -140,7 +143,7 @@ export class SearchPanel {
   private paneSources: HTMLElement;
   private commentsEl: HTMLElement;
   private handlers: SearchPanelHandlers;
-  private authMode: "login" | "register" = "register";
+  private authMode: "login" | "register" | "forgot" | "reset" = "login";
   private cloudSession: CloudSettings = { ...DEFAULT_CLOUD_SETTINGS };
   private debounceTimer: number | null = null;
   private expanded = true;
@@ -199,6 +202,15 @@ export class SearchPanel {
             <span class="vsa-tab-txt">More</span>
           </button>
         </nav>
+        <div class="vsa-guest-bar" data-guest-bar hidden>
+          <div class="vsa-guest-bar-row">
+            <span class="vsa-guest-clock" data-guest-clock>00:00:00</span>
+            <button type="button" class="vsa-guest-signin" data-guest-signin>Sign in</button>
+          </div>
+          <p class="vsa-guest-copy" data-guest-copy>
+            Not signed in. Marks and shots are a local cache only — they are deleted if you clear this browser, use Incognito, or uninstall VideoSearch.
+          </p>
+        </div>
       </div>
       <div class="vsa-panel-body">
         <div class="vsa-pane vsa-pane-search" data-pane="search">
@@ -310,34 +322,33 @@ export class SearchPanel {
                 <p class="vsa-auth-sub" data-auth-sub>Optional. Search already works with no key. An account syncs notes &amp; shots.</p>
               </div>
               <div class="vsa-auth-modes">
-                <button type="button" class="vsa-auth-mode" data-auth-mode="login">Log in</button>
-                <button type="button" class="vsa-auth-mode is-on" data-auth-mode="register">Sign up</button>
+                <button type="button" class="vsa-auth-mode is-on" data-auth-mode="login">Log in</button>
+                <button type="button" class="vsa-auth-mode" data-auth-mode="register">Sign up</button>
               </div>
+              <button type="button" class="vsa-google" data-google>
+                Continue with Google
+              </button>
               <form class="vsa-auth-form" data-auth-form autocomplete="on">
-                <label class="vsa-field" data-auth-name-wrap><span>Full name</span>
-                  <input type="text" class="vsa-cloud-name" autocomplete="name" placeholder="Ada Lovelace" maxlength="80" />
-                </label>
+                <input type="hidden" class="vsa-cloud-url" value="http://127.0.0.1:8787" />
                 <label class="vsa-field"><span>Email</span>
                   <input type="email" class="vsa-cloud-email" placeholder="you@work.com" autocomplete="username" required />
                 </label>
-                <label class="vsa-field"><span>Password</span>
+                <label class="vsa-field" data-pass-wrap><span>Password</span>
                   <div class="vsa-pass-row">
-                    <input type="password" class="vsa-cloud-pass" placeholder="At least 10 characters" autocomplete="new-password" required minlength="6" />
+                    <input type="password" class="vsa-cloud-pass" placeholder="Password" autocomplete="current-password" required minlength="6" />
                     <button type="button" class="vsa-pass-toggle" data-pass-toggle title="Show password"></button>
                   </div>
                 </label>
-                <label class="vsa-field" data-auth-confirm-wrap><span>Confirm password</span>
+                <label class="vsa-field" data-auth-confirm-wrap hidden><span>Confirm</span>
                   <input type="password" class="vsa-cloud-pass2" autocomplete="new-password" placeholder="Type it again" />
                 </label>
+                <label class="vsa-field" data-code-wrap hidden><span>Reset code</span>
+                  <input type="text" class="vsa-cloud-code" autocomplete="one-time-code" placeholder="Code" />
+                </label>
                 <button type="submit" class="vsa-auth-submit" data-auth-submit>Log in</button>
+                <button type="button" class="vsa-forgot" data-forgot>Forgot password?</button>
                 <p class="vsa-cloud-msg" data-auth-msg role="status"></p>
               </form>
-              <details class="vsa-auth-advanced">
-                <summary>Server URL</summary>
-                <label class="vsa-field"><span>API</span>
-                  <input type="text" class="vsa-cloud-url" placeholder="http://localhost:8787" autocomplete="off" />
-                </label>
-              </details>
             </div>
             <div class="vsa-auth-profile" data-auth-profile hidden>
               <div class="vsa-profile-hero">
@@ -531,6 +542,12 @@ export class SearchPanel {
     });
 
     this.root.querySelector("[data-account-chip]")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!this.expanded) this.setExpanded(true);
+      this.switchTab("account");
+    });
+    this.root.querySelector("[data-guest-signin]")?.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       if (!this.expanded) this.setExpanded(true);
@@ -1499,22 +1516,46 @@ export class SearchPanel {
         this.handlers.onSyncCloud?.();
       });
 
-    this.setAuthMode("register");
+    this.root.querySelector("[data-forgot]")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.setAuthMode(
+        this.authMode === "forgot" || this.authMode === "reset"
+          ? "login"
+          : "forgot"
+      );
+      setMsg("");
+    });
+    this.root.querySelector("[data-google]")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const url =
+        (this.root.querySelector(".vsa-cloud-url") as HTMLInputElement | null)
+          ?.value.trim() || DEFAULT_CLOUD_SETTINGS.projectUrl;
+      const redirect = chrome.runtime.getURL("src/welcome/index.html");
+      window.open(googleStartUrl(url, redirect), "_blank", "noopener");
+    });
+    this.setAuthMode("login");
   }
 
-  private setAuthMode(mode: "login" | "register"): void {
+  private setAuthMode(mode: "login" | "register" | "forgot" | "reset"): void {
     this.authMode = mode;
     this.root.querySelectorAll("[data-auth-mode]").forEach((btn) => {
+      const id = (btn as HTMLElement).dataset.authMode;
       btn.classList.toggle(
         "is-on",
-        (btn as HTMLElement).dataset.authMode === mode
+        id === mode ||
+          ((mode === "forgot" || mode === "reset") && id === "login")
       );
     });
-    const nameWrap = this.root.querySelector(
-      "[data-auth-name-wrap]"
-    ) as HTMLElement | null;
     const confirmWrap = this.root.querySelector(
       "[data-auth-confirm-wrap]"
+    ) as HTMLElement | null;
+    const passWrap = this.root.querySelector(
+      "[data-pass-wrap]"
+    ) as HTMLElement | null;
+    const codeWrap = this.root.querySelector(
+      "[data-code-wrap]"
     ) as HTMLElement | null;
     const title = this.root.querySelector(
       "[data-auth-title]"
@@ -1528,27 +1569,48 @@ export class SearchPanel {
     const pass = this.root.querySelector(
       ".vsa-cloud-pass"
     ) as HTMLInputElement | null;
+    const forgot = this.root.querySelector("[data-forgot]") as HTMLElement | null;
+    const google = this.root.querySelector("[data-google]") as HTMLElement | null;
 
-    if (nameWrap) nameWrap.hidden = mode !== "register";
-    if (confirmWrap) confirmWrap.hidden = mode !== "register";
+    if (confirmWrap) confirmWrap.hidden = mode !== "register" && mode !== "reset";
+    if (passWrap) passWrap.hidden = mode === "forgot";
+    if (codeWrap) codeWrap.hidden = mode !== "reset";
     if (title) {
       title.textContent =
-        mode === "register" ? "Create your account" : "Welcome back";
+        mode === "register"
+          ? "Create account"
+          : mode === "forgot" || mode === "reset"
+            ? "Reset password"
+            : "Welcome back";
     }
     if (sub) {
       sub.textContent =
-        mode === "register"
-          ? "Optional. Search works now with no key. An account syncs notes, shots, and bio."
-          : "Welcome back. Search still works if you skip this — account is only for sync.";
+        mode === "forgot"
+          ? "A reset code prints in the vault terminal on this computer."
+          : "Email and password only.";
     }
     if (submit) {
       submit.textContent =
-        mode === "register" ? "Create account" : "Log in";
+        mode === "register"
+          ? "Create account"
+          : mode === "forgot"
+            ? "Send reset code"
+            : mode === "reset"
+              ? "Set new password"
+              : "Log in";
     }
     if (pass) {
       pass.autocomplete =
-        mode === "register" ? "new-password" : "current-password";
+        mode === "register" || mode === "reset"
+          ? "new-password"
+          : "current-password";
     }
+    if (forgot) {
+      forgot.textContent =
+        mode === "forgot" || mode === "reset" ? "Back to log in" : "Forgot password?";
+      forgot.hidden = mode === "register";
+    }
+    if (google) google.hidden = mode === "forgot" || mode === "reset";
   }
 
   private async submitAuth(
@@ -1564,39 +1626,60 @@ export class SearchPanel {
     const password = (
       this.root.querySelector(".vsa-cloud-pass") as HTMLInputElement
     ).value;
-    const displayName = (
-      this.root.querySelector(".vsa-cloud-name") as HTMLInputElement
-    ).value.trim();
     const pass2 = (
       this.root.querySelector(".vsa-cloud-pass2") as HTMLInputElement | null
     )?.value;
+    const code = (
+      this.root.querySelector(".vsa-cloud-code") as HTMLInputElement | null
+    )?.value.trim() || "";
 
-    if (this.authMode === "register") {
-      if (displayName.length < 2) {
-        setMsg("Enter your full name", true);
-        return;
-      }
-      if (pass2 !== undefined && password !== pass2) {
-        setMsg("Passwords do not match", true);
-        return;
-      }
+    if (
+      (this.authMode === "register" || this.authMode === "reset") &&
+      pass2 !== undefined &&
+      password !== pass2
+    ) {
+      setMsg("Passwords do not match", true);
+      return;
     }
 
     const submit = this.root.querySelector(
       "[data-auth-submit]"
     ) as HTMLButtonElement | null;
     if (submit) submit.disabled = true;
-    setMsg(
-      this.authMode === "login" ? "Signing in…" : "Creating account…"
-    );
 
     try {
-      const saved = await vaultAuth(this.authMode, {
-        projectUrl: url,
-        email,
-        password,
-        displayName,
-      });
+      if (this.authMode === "forgot") {
+        setMsg("Sending reset code…");
+        const msg = await vaultForgotPassword(url, email);
+        setMsg(msg);
+        this.setAuthMode("reset");
+        return;
+      }
+      if (this.authMode === "reset") {
+        setMsg("Updating password…");
+        const saved = await vaultResetPassword({
+          projectUrl: url,
+          email,
+          code,
+          password,
+        });
+        this.applyAuthSession(saved);
+        setMsg(`Signed in as ${saved.email}`);
+        this.handlers.onCloudSettingsSaved?.();
+        return;
+      }
+      setMsg(
+        this.authMode === "login" ? "Signing in…" : "Creating account…"
+      );
+      const saved = await vaultAuth(
+        this.authMode === "register" ? "register" : "login",
+        {
+          projectUrl: url,
+          email,
+          password,
+          displayName: email.split("@")[0],
+        }
+      );
       // Clear password fields after success
       const passEl = this.root.querySelector(
         ".vsa-cloud-pass"
@@ -1694,9 +1777,39 @@ export class SearchPanel {
     if (chipAv) chipAv.textContent = signedIn ? accountInitials(c) : "?";
 
     this.highlightsPane.setSyncMessage(
-      signedIn ? "Cloud ready" : "Saved on this device · no key needed",
+      signedIn ? "Cloud ready" : "Local cache only · sign in to keep it",
       false
     );
+    if (signedIn) this.setGuestBanner(null);
+  }
+
+  /**
+   * Live local-only warning while unsigned. Pass null to hide.
+   */
+  setGuestBanner(
+    state: {
+      clock: string;
+      marks: number;
+      shots: number;
+    } | null
+  ): void {
+    const bar = this.root.querySelector("[data-guest-bar]") as HTMLElement | null;
+    if (!bar) return;
+    if (!state) {
+      bar.hidden = true;
+      return;
+    }
+    bar.hidden = false;
+    const clock = this.root.querySelector("[data-guest-clock]");
+    const copy = this.root.querySelector("[data-guest-copy]");
+    if (clock) clock.textContent = state.clock;
+    if (copy) {
+      const bits: string[] = [];
+      if (state.marks) bits.push(`${state.marks} mark${state.marks === 1 ? "" : "s"}`);
+      if (state.shots) bits.push(`${state.shots} shot${state.shots === 1 ? "" : "s"}`);
+      const stash = bits.length ? bits.join(" · ") : "no marks yet";
+      copy.textContent = `Not signed in · ${stash} on this device for ${state.clock}. Deleted if you clear cache, use Incognito, or uninstall.`;
+    }
   }
 
   private fillSettingsForm(s: LlmSettings): void {

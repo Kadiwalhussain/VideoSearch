@@ -15,6 +15,7 @@ server/node_modules/
 coverage/
 server/.env
 server/data/shots/
+server/logs/
 
 # Flutter
 mobile/build/
@@ -33,3 +34,6 @@ mobile/ios/Flutter/ephemeral/
 # Local interview notes — do not publish
 INTERVIEW_STORY.md
 EXTENSION_HOW_IT_WORKS.md
+
+# Tester handoff with live secrets — never commit
+tester/

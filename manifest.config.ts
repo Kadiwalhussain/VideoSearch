@@ -1,4 +1,27 @@
+import { readFileSync } from "node:fs";
 import { defineManifest } from "@crxjs/vite-plugin";
+
+/** Clerk FAPI host from the publishable key. MV3 CSP forbids wildcards in script-src. */
+function clerkFrontendHost(): string {
+  try {
+    const env = readFileSync(new URL("./.env.local", import.meta.url), "utf8");
+    const m = env.match(
+      /^VITE_CLERK_PUBLISHABLE_KEY=pk_(?:test|live)_([A-Za-z0-9+/=]+)/m
+    );
+    if (m?.[1]) {
+      const decoded = Buffer.from(m[1], "base64")
+        .toString("utf8")
+        .replace(/\$+$/, "")
+        .trim();
+      if (decoded.endsWith(".clerk.accounts.dev")) return decoded;
+    }
+  } catch {
+    /* fallback below */
+  }
+  return "current-gopher-1484.clerk.accounts.dev";
+}
+
+const CLERK_HOST = clerkFrontendHost();
 
 /**
  * Chrome Manifest V3 — VideoSearch AI
@@ -43,12 +66,19 @@ export default defineManifest({
       description: "Capture this video frame",
     },
   },
-  permissions: ["storage", "clipboardWrite"],
+  permissions: ["storage", "clipboardWrite", "cookies"],
   // YouTube + model weight CDN + optional LLM providers (user API key)
   host_permissions: [
     "https://www.youtube.com/*",
     "https://youtube.com/*",
     "https://m.youtube.com/*",
+    "https://accounts.google.com/*",
+    "https://oauth2.googleapis.com/*",
+    "https://www.googleapis.com/*",
+    "https://api.clerk.com/*",
+    "https://*.clerk.accounts.dev/*",
+    "https://clerk.com/*",
+    "https://*.clerk.com/*",
     // Embedding model weights (downloaded once, then browser-cached)
     "https://huggingface.co/*",
     "https://cdn-lfs.huggingface.co/*",
@@ -75,6 +105,7 @@ export default defineManifest({
     // private IPs are also allow-listed in the background proxy)
     "http://192.168.0.105:8787/*",
     "https://*.supabase.co/*",
+    "https://*.storage.supabase.co/*",
   ],
   background: {
     service_worker: "src/background/serviceWorker.ts",
@@ -114,7 +145,27 @@ export default defineManifest({
     },
   ],
   content_security_policy: {
-    extension_pages:
-      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
+    // MV3 extension_pages: script-src may only be 'self' / 'wasm-unsafe-eval'.
+    // Remote Clerk JS is bundled; FAPI is connect-src + frame-src only.
+    extension_pages: [
+      "script-src 'self' 'wasm-unsafe-eval'",
+      "object-src 'self'",
+      `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://${CLERK_HOST}`,
+      `font-src 'self' https://fonts.gstatic.com https://${CLERK_HOST}`,
+      "img-src 'self' data: blob: https:",
+      [
+        "connect-src 'self'",
+        `https://${CLERK_HOST}`,
+        "https://api.clerk.com",
+        "http://127.0.0.1:8787",
+        "http://localhost:8787",
+        "http://[::1]:8787",
+        "https://accounts.google.com",
+        "https://oauth2.googleapis.com",
+        "https://xirnfdraklgdtleftcag.supabase.co",
+        "https://xirnfdraklgdtleftcag.storage.supabase.co",
+      ].join(" "),
+      `frame-src https://${CLERK_HOST} https://accounts.google.com`,
+    ].join("; "),
   },
 });

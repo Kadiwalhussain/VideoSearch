@@ -213,10 +213,6 @@ export async function vaultAuth(
     throw new Error("Password is required");
   }
   if (mode === "register") {
-    const name = (opts.displayName || "").trim();
-    if (name.length < 2) {
-      throw new Error("Enter your name");
-    }
     if (opts.password.length < 10) {
       throw new Error("Password must be at least 10 characters");
     }
@@ -233,7 +229,7 @@ export async function vaultAuth(
   const body = JSON.stringify({
     email,
     password: opts.password,
-    displayName: opts.displayName?.trim(),
+    displayName: opts.displayName?.trim() || email.split("@")[0],
   });
 
   let res: Response | null = null;
@@ -288,6 +284,112 @@ export async function vaultAuth(
     highlightCount: data.user.highlightCount ?? 0,
     screenshotCount: data.user.screenshotCount ?? 0,
   });
+}
+
+export async function applyVaultToken(opts: {
+  projectUrl: string;
+  token: string;
+  email?: string;
+  displayName?: string;
+}): Promise<CloudSettings> {
+  const base = normalizeVaultUrl(opts.projectUrl);
+  const saved = await saveCloudSettings({
+    projectUrl: base,
+    apiKey: opts.token,
+    email: opts.email || "",
+    displayName: opts.displayName || "",
+    enabled: true,
+  });
+  return refreshSession().catch(() => saved);
+}
+
+async function vaultJson(
+  projectUrl: string,
+  path: string,
+  body: unknown
+): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> {
+  const bases = vaultUrlAlternates(projectUrl);
+  let res: Response | null = null;
+  for (const base of bases) {
+    try {
+      res = await vaultHttp(`${base}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      break;
+    } catch {
+      res = null;
+    }
+  }
+  if (!res) throw new Error("Cannot reach the account server");
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  return { ok: res.ok, status: res.status, data };
+}
+
+export async function vaultForgotPassword(
+  projectUrl: string,
+  email: string
+): Promise<string> {
+  const clean = email.trim().toLowerCase();
+  if (!clean.includes("@")) throw new Error("Enter your email");
+  const { data } = await vaultJson(projectUrl, "/api/auth/forgot-password", {
+    email: clean,
+  });
+  return String(
+    data.message ||
+      "If that email exists, a reset code was sent. On this machine, check the vault terminal."
+  );
+}
+
+export async function vaultResetPassword(opts: {
+  projectUrl: string;
+  email: string;
+  code: string;
+  password: string;
+}): Promise<CloudSettings> {
+  const email = opts.email.trim().toLowerCase();
+  if (!email.includes("@")) throw new Error("Enter your email");
+  if (!opts.code.trim()) throw new Error("Enter the reset code");
+  if (opts.password.length < 10) {
+    throw new Error("Password must be at least 10 characters");
+  }
+  const { ok, status, data } = await vaultJson(
+    opts.projectUrl,
+    "/api/auth/reset-password",
+    { email, code: opts.code.trim(), password: opts.password }
+  );
+  const token = typeof data.token === "string" ? data.token : "";
+  const user = data.user as
+    | {
+        userId?: string;
+        email?: string;
+        displayName?: string;
+        videoCount?: number;
+        highlightCount?: number;
+        screenshotCount?: number;
+      }
+    | undefined;
+  if (!ok || !token || !user?.email) {
+    throw new Error(
+      String(data.message || authErrorMessage(status, undefined))
+    );
+  }
+  return saveCloudSettings({
+    projectUrl: normalizeVaultUrl(opts.projectUrl),
+    apiKey: token,
+    userId: user.userId || "",
+    email: user.email,
+    displayName: user.displayName || "",
+    videoCount: user.videoCount ?? 0,
+    highlightCount: user.highlightCount ?? 0,
+    screenshotCount: user.screenshotCount ?? 0,
+  });
+}
+
+export function googleStartUrl(projectUrl: string, redirect: string): string {
+  const base = normalizeVaultUrl(projectUrl);
+  return `${base}/api/auth/google/start?redirect=${encodeURIComponent(redirect)}`;
 }
 
 /** Validate stored JWT and refresh profile stats */

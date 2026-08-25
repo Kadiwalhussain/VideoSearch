@@ -86,10 +86,13 @@ npm run dev
 ```bash
 cp server/.env.example server/.env   # MONGODB_URI, JWT_SECRET
 cd server && npm install
-HOST=0.0.0.0 PORT=8787 node src/index.js
+npm run start:always
 ```
 
+Confirm `curl -sf http://127.0.0.1:8787/health` → `"ok": true`.  
 Open `http://127.0.0.1:8787/app/` — same email as the extension.
+
+Full local steps: [docs/SETUP.md](./docs/SETUP.md) · how login stores data: [docs/AUTH_AND_DATA.md](./docs/AUTH_AND_DATA.md)
 
 ### Android & iPhone
 
@@ -141,7 +144,8 @@ Used for richer topics, Ask, and Chat. **Search itself is local.**
 
 - Caption index never leaves Chrome.
 - Vault is opt-in. It stores marks, shots, bio, sources — not embeddings.
-- Shots can copy to R2 / Fil One if you set those keys.
+- Sign-in **merges** device notes into the account. It does not delete them.
+- Shots can copy to R2 / Fil One / Supabase Storage if you set those keys.
 - LLM calls send short excerpts only when you add a key.
 
 ---

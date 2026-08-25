@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { User } from "./models.js";
+import { logAuthEvent, upsertUser } from "./supabaseMirror.js";
 import {
   assertJwtSecret,
   assertPassword,
@@ -81,6 +82,9 @@ export async function registerUser({ email, password, displayName }) {
     tokenVersion: 0,
   });
 
+  void upsertUser(user).catch(() => {});
+  void logAuthEvent(user.userId, "register", "password").catch(() => {});
+
   return { user: publicUser(user), token: signToken(user) };
 }
 
@@ -101,6 +105,12 @@ export async function loginUser({ email, password }) {
     throw e;
   }
 
+  if (!user.passwordHash) {
+    const e = new Error("This account uses Google. Tap Continue with Google.");
+    e.status = 401;
+    throw e;
+  }
+
   const ok = await bcrypt.compare(pass, user.passwordHash);
   if (!ok) {
     const e = new Error(GENERIC_AUTH);
@@ -110,6 +120,8 @@ export async function loginUser({ email, password }) {
 
   user.lastSeenAt = new Date();
   await user.save();
+  void upsertUser(user).catch(() => {});
+  void logAuthEvent(user.userId, "login", "password").catch(() => {});
   return { user: publicUser(user), token: signToken(user) };
 }
 
@@ -205,6 +217,52 @@ export async function changePassword({ userId, currentPassword, newPassword }) {
   user.tokenVersion = (user.tokenVersion || 0) + 1;
   user.set("passwordReset", undefined);
   await user.save();
+  return { user: publicUser(user), token: signToken(user) };
+}
+
+/** Create or reuse a vault user after Google (or Clerk-backed Google). */
+export async function loginOrRegisterGoogle({
+  email,
+  displayName,
+  googleId,
+}) {
+  const clean = normalizeEmail(email);
+  if (!clean) {
+    const e = new Error("Google did not return an email");
+    e.status = 400;
+    throw e;
+  }
+  let user = await User.findOne({
+    $or: [{ email: clean }, googleId ? { googleId: String(googleId) } : { email: clean }],
+  });
+  let created = false;
+  if (!user) {
+    created = true;
+    user = await User.create({
+      userId: newUserId(),
+      email: clean,
+      passwordHash: "",
+      googleId: googleId ? String(googleId) : "",
+      authProvider: "google",
+      displayName:
+        sanitizeDisplayName(displayName) || clean.split("@")[0],
+      lastSeenAt: new Date(),
+      tokenVersion: 0,
+    });
+  } else {
+    if (googleId && !user.googleId) user.googleId = String(googleId);
+    if (displayName && !user.displayName) {
+      user.displayName = sanitizeDisplayName(displayName);
+    }
+    user.lastSeenAt = new Date();
+    await user.save();
+  }
+  void upsertUser(user).catch(() => {});
+  void logAuthEvent(
+    user.userId,
+    created ? "register" : "login",
+    "google"
+  ).catch(() => {});
   return { user: publicUser(user), token: signToken(user) };
 }
 

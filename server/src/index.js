@@ -10,6 +10,7 @@ import mongoose from "mongoose";
 import path from "path";
 import { fileURLToPath } from "url";
 import { User, VaultVideo, SharedCard } from "./models.js";
+import { supabaseStatus } from "./supabaseMirror.js";
 import {
   extractSourcesFromBio,
   isUsefulVaultSource,
@@ -27,6 +28,8 @@ import {
   resetPasswordWithCode,
   userIdFromToken,
 } from "./auth.js";
+import { mountGoogleAuth } from "./oauth.js";
+import { mountClerkAuth } from "./clerkVerify.js";
 import {
   aiRateLimit,
   apiRateLimit,
@@ -60,6 +63,12 @@ import {
   isFilConfigured,
   uploadFilJpeg,
 } from "./filone.js";
+import {
+  checkSupabaseS3,
+  getSupabaseObject,
+  isSupabaseS3Configured,
+  uploadSupabaseJpeg,
+} from "./supabaseS3.js";
 import {
   getLlmConfig,
   serverChatCompletions,
@@ -108,22 +117,26 @@ assertJwtSecret();
 
 const app = express();
 app.disable("x-powered-by");
+// Must run before cors() — Chrome's Local Network Access OPTIONS preflight
+// is answered by cors() and never reaches a later middleware.
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Private-Network", "true");
+  next();
+});
 app.use(
   cors({
     origin: corsOrigin,
     credentials: true,
-    allowedHeaders: ["Authorization", "Content-Type", "X-Requested-With"],
+    allowedHeaders: [
+      "Authorization",
+      "Content-Type",
+      "X-Requested-With",
+      "Access-Control-Request-Private-Network",
+    ],
     methods: ["GET", "POST", "DELETE", "OPTIONS"],
     maxAge: 600,
   })
 );
-// Chrome Private Network Access (HTTPS page → localhost): allow preflight
-app.use((req, res, next) => {
-  if (req.headers["access-control-request-private-network"] === "true") {
-    res.setHeader("Access-Control-Allow-Private-Network", "true");
-  }
-  next();
-});
 app.use(securityHeaders);
 app.use(express.json({ limit: "12mb" }));
 app.use(
@@ -165,6 +178,8 @@ async function healthPayload() {
     service: "videosearch-vault-api",
     auth: true,
     mongo: mongoose.connection.readyState === 1 ? "connected" : "down",
+    supabase: await supabaseStatus(),
+    supabaseStorage: await checkSupabaseS3(),
     r2: r2.ok
       ? { ok: true, bucket: r2.bucket }
       : { ok: false, message: IS_PROD ? "not configured" : r2.message || "not configured" },
@@ -179,7 +194,17 @@ async function healthPayload() {
   };
 }
 
-app.get("/health", async (_req, res) => {
+app.get("/health", async (req, res) => {
+  // Fast path for the extension probe — do not wait on R2 / S3
+  if (String(req.query.full || "") !== "1") {
+    const mongoOk = mongoose.connection.readyState === 1;
+    return res.json({
+      ok: mongoOk,
+      service: "videosearch-vault-api",
+      auth: true,
+      mongo: mongoOk ? "connected" : "down",
+    });
+  }
   res.json(await healthPayload());
 });
 
@@ -187,6 +212,8 @@ app.get("/health", async (_req, res) => {
 app.get("/", async (_req, res) => {
   const h = await healthPayload();
   const mongoOk = h.mongo === "connected";
+  const supabaseOk = Boolean(h.supabase?.ok);
+  const supabaseStorageOk = Boolean(h.supabaseStorage?.ok);
   const r2Ok = Boolean(h.r2?.ok);
   res.type("html").send(`<!DOCTYPE html>
 <html lang="en">
@@ -225,6 +252,8 @@ app.get("/", async (_req, res) => {
     <p class="sub">Account vault is running. This is the JSON API used by the Chrome extension and webapp — not the marketing site.</p>
     <div class="row"><span>Service</span><span class="ok">online</span></div>
     <div class="row"><span>MongoDB</span><span class="${mongoOk ? "ok" : "bad"}">${h.mongo}</span></div>
+    <div class="row"><span>Supabase</span><span class="${supabaseOk ? "ok" : "bad"}">${supabaseOk ? "mirroring" : (h.supabase?.message || "not configured")}</span></div>
+    <div class="row"><span>Supabase Storage</span><span class="${supabaseStorageOk ? "ok" : "bad"}">${supabaseStorageOk ? "S3 · " + (h.supabaseStorage.bucket || "vault-shots") : (h.supabaseStorage?.message || "not configured")}</span></div>
     <div class="row"><span>Cloudflare R2</span><span class="${r2Ok ? "ok" : "bad"}">${r2Ok ? "ready · " + (h.r2.bucket || "") : (h.r2.message || "down")}</span></div>
     <div class="row"><span>Auth</span><span class="ok">JWT accounts</span></div>
     <ul>
@@ -256,6 +285,9 @@ app.post("/api/auth/register", authLimit, async (req, res) => {
     res.status(status).json({ ok: false, message });
   }
 });
+
+mountGoogleAuth(app);
+mountClerkAuth(app);
 
 app.post("/api/auth/login", authLimit, async (req, res) => {
   try {
@@ -348,7 +380,14 @@ async function refreshUserStats(userId) {
 
 async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC_API_BASE) {
   if (!Array.isArray(screenshots)) {
-    return { list: [], uploaded: 0, r2Errors: 0, filUploaded: 0, localSaved: 0 };
+    return {
+      list: [],
+      uploaded: 0,
+      r2Errors: 0,
+      filUploaded: 0,
+      localSaved: 0,
+      supabaseUploaded: 0,
+    };
   }
 
   const existing = await VaultVideo.findOne({ userId, videoId }).lean();
@@ -360,6 +399,7 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
   let r2Errors = 0;
   let filUploaded = 0;
   let localSaved = 0;
+  let supabaseUploaded = 0;
   const list = [];
   const base = (apiBase || PUBLIC_API_BASE).replace(/\/$/, "");
 
@@ -372,6 +412,7 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
     let imageUrl = raw.imageUrl || prev?.imageUrl || "";
     let r2Key = raw.r2Key || prev?.r2Key || "";
     let filKey = raw.filKey || prev?.filKey || "";
+    let supabaseKey = raw.supabaseKey || prev?.supabaseKey || "";
     let backupPath = raw.backupPath || prev?.backupPath || "";
     let dataUrl = raw.dataUrl || prev?.dataUrl || "";
 
@@ -421,6 +462,26 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
           }
         }
 
+        if (isSupabaseS3Configured()) {
+          try {
+            const out = await uploadSupabaseJpeg({
+              userId,
+              videoId,
+              shotId: raw.id,
+              buffer,
+            });
+            supabaseKey = out.key;
+            imageUrl = out.publicUrl || imageUrl;
+            supabaseUploaded += 1;
+          } catch (err) {
+            console.warn(
+              "[vault-api] Supabase S3 upload failed",
+              raw.id,
+              err?.message
+            );
+          }
+        }
+
         if (isR2Configured()) {
           try {
             const out = await uploadJpeg({
@@ -431,7 +492,7 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
             });
             await getObjectStream(out.key);
             r2Key = out.key;
-            imageUrl = out.publicUrl || `${base}${out.proxyPath}`;
+            if (!imageUrl) imageUrl = out.publicUrl || `${base}${out.proxyPath}`;
             uploaded += 1;
           } catch (err) {
             r2Errors += 1;
@@ -454,12 +515,20 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
       imageUrl: imageUrl || undefined,
       r2Key: r2Key || undefined,
       filKey: filKey || undefined,
+      supabaseKey: supabaseKey || undefined,
       backupPath: backupPath || undefined,
       dataUrl: dataUrl && dataUrl.startsWith("data:") ? dataUrl : undefined,
     });
   }
 
-  return { list, uploaded, r2Errors, filUploaded, localSaved };
+  return {
+    list,
+    uploaded,
+    r2Errors,
+    filUploaded,
+    localSaved,
+    supabaseUploaded,
+  };
 }
 
 /**
@@ -493,6 +562,7 @@ function isSafeRedirectUrl(url) {
     if (u.username || u.password) return false;
     const host = u.hostname.toLowerCase();
     if (host === "localhost" || host === "127.0.0.1") return true;
+    if (host.endsWith(".supabase.co")) return true;
     if (/\.r2\.dev$/.test(host) || /\.r2\.cloudflarestorage\.com$/.test(host)) {
       return true;
     }
@@ -530,7 +600,10 @@ function mapScreenshotOut(
     createdAt: s.createdAt,
     imageUrl: external || mediaUrl || shotProxy || undefined,
     r2Key: s.r2Key,
-    hasImage: Boolean(s.dataUrl || s.r2Key || external || s.id),
+    supabaseKey: s.supabaseKey,
+    hasImage: Boolean(
+      s.dataUrl || s.r2Key || s.supabaseKey || external || s.id
+    ),
   };
 }
 
@@ -544,6 +617,30 @@ function mergeById(serverList, clientList) {
   }
   for (const item of clientList || []) {
     if (item?.id) map.set(String(item.id), item);
+  }
+  return [...map.values()];
+}
+
+/** Client wins on notes; never drop stored image bytes/keys. */
+function mergeScreenshots(serverList, clientList) {
+  const map = new Map();
+  for (const item of serverList || []) {
+    if (item?.id) map.set(String(item.id), item);
+  }
+  for (const item of clientList || []) {
+    if (!item?.id) continue;
+    const prev = map.get(String(item.id)) || {};
+    map.set(String(item.id), {
+      ...prev,
+      ...item,
+      dataUrl: item.dataUrl || prev.dataUrl,
+      imageUrl: item.imageUrl || prev.imageUrl,
+      r2Key: item.r2Key || prev.r2Key,
+      supabaseKey: item.supabaseKey || prev.supabaseKey,
+      filKey: item.filKey || prev.filKey,
+      backupPath: item.backupPath || prev.backupPath,
+      cfImageUrl: item.cfImageUrl || prev.cfImageUrl,
+    });
   }
   return [...map.values()];
 }
@@ -679,7 +776,7 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
     // Screenshots: merge by id; processed.list already includes R2 keys
     const nextScreenshots = replaceScreenshots
       ? processed.list
-      : mergeById(existing?.screenshots || [], processed.list);
+      : mergeScreenshots(existing?.screenshots || [], processed.list);
 
     // Description / bio source links — real materials only (not default Google/YT noise)
     const clientLinks = Array.isArray(sourceLinks)
@@ -788,19 +885,22 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
         (s.dataUrl && String(s.dataUrl).startsWith("data:")) ||
         s.r2Key ||
         s.filKey ||
+        s.supabaseKey ||
         s.backupPath
     ).length;
-    const r2Note = processed.filUploaded
-      ? ` · ${processed.filUploaded} backed up to Fil One`
-      : processed.uploaded
-        ? ` · ${processed.uploaded} in R2`
-        : processed.localSaved
-          ? ` · ${processed.localSaved} shots on disk`
-          : storedShots
-            ? ` · ${storedShots} shots stored`
-            : processed.r2Errors
-              ? " · shots saved in vault (cloud storage unavailable)"
-              : "";
+    const r2Note = processed.supabaseUploaded
+      ? ` · ${processed.supabaseUploaded} in Supabase Storage`
+      : processed.filUploaded
+        ? ` · ${processed.filUploaded} backed up to Fil One`
+        : processed.uploaded
+          ? ` · ${processed.uploaded} in R2`
+          : processed.localSaved
+            ? ` · ${processed.localSaved} shots on disk`
+            : storedShots
+              ? ` · ${storedShots} shots stored`
+              : processed.r2Errors
+                ? " · shots saved in vault (cloud storage unavailable)"
+                : "";
     const linkN = (doc.sourceLinks || []).length;
     const extractedN = extractedFromBio.length;
     const linkNote = linkN ? ` · ${linkN} sources` : "";
@@ -1061,7 +1161,20 @@ app.get("/api/vault/shot/:videoId/:shotId", async (req, res) => {
       console.warn("[vault-api] local shot read", shotId, e?.message);
     }
 
-    // 2) Fil One backup — only when we already stored a key there
+    // 2) Supabase Storage (S3) — primary cloud copy
+    if (shot.supabaseKey && isSupabaseS3Configured()) {
+      try {
+        const out = await getSupabaseObject(shot.supabaseKey);
+        if (out.Body?.transformToByteArray) {
+          const bytes = await out.Body.transformToByteArray();
+          return sendJpeg(bytes, out.ContentType || "image/jpeg");
+        }
+      } catch (e) {
+        console.warn("[vault-api] shot Supabase S3 miss", shotId, e?.message);
+      }
+    }
+
+    // 3) Fil One backup — only when we already stored a key there
     if (shot.filKey && isFilConfigured()) {
       try {
         const out = await getFilObject(shot.filKey);
@@ -1074,7 +1187,7 @@ app.get("/api/vault/shot/:videoId/:shotId", async (req, res) => {
       }
     }
 
-    // 3) Cloudflare R2
+    // 4) Cloudflare R2
     if (shot.r2Key && isR2Configured()) {
       try {
         const out = await getObjectStream(shot.r2Key);
@@ -2133,7 +2246,20 @@ app.get("/api/media/*", async (req, res) => {
       return res.status(404).json({ ok: false, message: "Not found" });
     }
 
-    const out = await getObjectStream(key);
+    let out = null;
+    if (isSupabaseS3Configured()) {
+      try {
+        out = await getSupabaseObject(key);
+      } catch {
+        out = null;
+      }
+    }
+    if (!out && isR2Configured()) {
+      out = await getObjectStream(key);
+    }
+    if (!out) {
+      return res.status(404).json({ ok: false, message: "Not found" });
+    }
     res.setHeader("Content-Type", out.ContentType || "image/jpeg");
     res.setHeader("Cache-Control", "private, max-age=86400");
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -2202,6 +2328,17 @@ async function main() {
   const r2 = await checkR2();
   if (r2.ok) console.log(`[vault-api] R2 ready · ${r2.bucket}`);
   else console.warn(`[vault-api] R2: ${r2.message}`);
+
+  const sb = await checkSupabaseS3();
+  if (sb.ok) console.log(`[vault-api] Supabase Storage ready · ${sb.bucket}`);
+  else console.warn(`[vault-api] Supabase Storage: ${sb.message}`);
+
+  const db = await supabaseStatus();
+  if (db.ok) console.log("[vault-api] Supabase DB mirroring on");
+  else
+    console.warn(
+      "[vault-api] Supabase DB off — set SUPABASE_SERVICE_ROLE_KEY in server/.env so new users/videos copy to project xirnfdraklgdtleftcag"
+    );
 
   // Dual-stack when HOST is 0.0.0.0/:: — Chrome often resolves "localhost" → ::1.
   // Binding only 0.0.0.0 makes http://localhost:8787 fail in the extension.
