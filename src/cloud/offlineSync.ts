@@ -226,10 +226,15 @@ export async function flushOfflineQueue(
     const idSet = new Set(q.videoIds);
 
     if (opts?.includeAllLocal) {
-      for (const id of await listLocalHighlightVideoIds()) idSet.add(id);
+      const { isPinnedToVault } = await import("../storage/libraryStore");
+      for (const id of await listLocalHighlightVideoIds()) {
+        if (await isPinnedToVault(id)) idSet.add(id);
+      }
       try {
         for (const s of await loadAllScreenshots()) {
-          if (s.videoId) idSet.add(s.videoId);
+          if (s.videoId && (await isPinnedToVault(s.videoId))) {
+            idSet.add(s.videoId);
+          }
         }
       } catch {
         /* ignore */
@@ -262,6 +267,11 @@ export async function flushOfflineQueue(
         `Syncing ${i + 1}/${videoIds.length} to cloud…`
       );
       try {
+        const { isPinnedToVault } = await import("../storage/libraryStore");
+        if (!(await isPinnedToVault(videoId))) {
+          await dequeueVideoSync(videoId);
+          continue;
+        }
         const highlights = await loadHighlights(videoId);
         const screenshots = await loadScreenshots(videoId);
         if (highlights.length === 0 && screenshots.length === 0) {

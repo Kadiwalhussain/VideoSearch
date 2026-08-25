@@ -531,7 +531,6 @@ async function addHighlightAtNow(
     panel.setVaultSyncMessage(
       noteText ? "Mark + note saved locally" : "Mark saved locally"
     );
-    // Immediate vault upload (not only debounced) so Studio always gets the mark
     await flushSyncToVault(videoId, panel);
     console.info(
       LOG,
@@ -743,6 +742,13 @@ async function flushSyncToVault(
   panel: SearchPanel
 ): Promise<void> {
   try {
+    const { isPinnedToVault } = await import("../storage/libraryStore");
+    if (!(await isPinnedToVault(videoId))) {
+      panel.setVaultSyncMessage(
+        "On this device · Save, Watch later, or Playlist to keep in vault"
+      );
+      return;
+    }
     const title = videoTitleFromPage(videoId);
     const channel = channelFromPage();
     const { loadHighlights } = await import("../storage/highlightsStore");
@@ -946,10 +952,18 @@ async function runLibraryAction(
       panel.setLibraryState(result.library);
       panel.setVaultSyncMessage(result.message);
       void loadPlaylistsForPanel(panel);
+      if (
+        result.library.saved ||
+        result.library.watchLater ||
+        (result.library.playlists && result.library.playlists.length > 0)
+      ) {
+        await flushSyncToVault(videoId, panel);
+      }
     } else if (result.ok) {
       await refreshLibraryUi(videoId, panel);
       panel.setVaultSyncMessage(result.message);
       void loadPlaylistsForPanel(panel);
+      await flushSyncToVault(videoId, panel);
     } else {
       panel.setVaultSyncMessage(result.message, true);
       // Local fallback when offline / not signed in
@@ -1215,7 +1229,17 @@ async function saveDescriptionLinksToVault(
 
     const { loadHighlights } = await import("../storage/highlightsStore");
     const { loadScreenshots } = await import("../storage/screenshotStore");
-    const { syncVideoToCloud } = await import("../cloud/cloudSync");
+    const { syncVideoToCloud, updateLibraryOnCloud } = await import(
+      "../cloud/cloudSync"
+    );
+    const title = videoTitleFromPage(videoId);
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    await updateLibraryOnCloud({
+      videoId,
+      videoTitle: title,
+      videoUrl,
+      action: "save",
+    });
     const highlights = await loadHighlights(videoId);
     const screenshots = await loadScreenshots(videoId);
     const channel = channelFromPage();
@@ -1283,35 +1307,37 @@ async function saveDescriptionLinksToVault(
 }
 
 /**
- * When user is in a YouTube playlist (watch?list= or /playlist),
- * import all visible playlist videos into the vault under that playlist name.
+ * Detect a YouTube playlist. Only write to the vault when the user taps
+ * “Save YT playlist” (opts.save). Watching a list does not dump it into History.
  */
 async function maybeImportYoutubePlaylist(
   panel?: SearchPanel | null,
-  force = false
+  opts: { save?: boolean; retry?: boolean } = {}
 ): Promise<void> {
   try {
     const { captureCurrentPlaylist, isPlaylistPage } = await import(
       "../youtube/playlistCapture"
     );
-    if (!isPlaylistPage()) return;
+    if (!isPlaylistPage()) {
+      panel?.setYoutubePlaylistAvailable(false);
+      return;
+    }
 
     const cap = captureCurrentPlaylist();
     if (!cap || cap.videos.length === 0) {
       panel?.setYoutubePlaylistAvailable(false);
-      // DOM may still be loading — retry once shortly
-      if (!force) {
+      if (!opts.retry && !opts.save) {
         window.setTimeout(() => {
-          void maybeImportYoutubePlaylist(panel, true);
+          void maybeImportYoutubePlaylist(panel, { retry: true });
         }, 1800);
       }
       return;
     }
 
     panel?.setYoutubePlaylistAvailable(true, cap.playlistName);
+    if (!opts.save) return;
 
     const key = `${cap.playlistId}::${cap.playlistName}`.toLowerCase();
-    if (!force && importedYtPlaylists.has(key)) return;
     importedYtPlaylists.add(key);
 
     panel?.setVaultSyncMessage(
@@ -1900,9 +1926,8 @@ function mountPanel(videoId: string): void {
         })();
       },
       onSaveYoutubePlaylist: () => {
-        // Force re-import even if auto-import already ran
         importedYtPlaylists.clear();
-        void maybeImportYoutubePlaylist(panel, true);
+        void maybeImportYoutubePlaylist(panel, { save: true });
       },
       onSaveDescriptionLinks: () => {
         void saveDescriptionLinksToVault(videoId, panel);
@@ -2085,7 +2110,7 @@ function mountPanel(videoId: string): void {
     void hydrateLocalVaultUi(videoId, panel);
 
     void indexVideo(videoId, panel);
-    // If this watch is part of a YT playlist, save the whole list into vault
+    // Detect a YouTube playlist so the user can tap “Save YT playlist”
     window.setTimeout(() => {
       void maybeImportYoutubePlaylist(panel);
     }, 1200);

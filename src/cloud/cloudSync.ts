@@ -98,9 +98,18 @@ export async function syncVideoToCloud(opts: {
   /** True only when the user is actually on this video’s watch page */
   watched?: boolean;
 }): Promise<SyncResult> {
+  const { isPinnedToVault } = await import("../storage/libraryStore");
+  if (!(await isPinnedToVault(opts.videoId))) {
+    return {
+      ok: true,
+      message:
+        "On this device · Save, Watch later, or a playlist to keep it in the vault",
+    };
+  }
+
   const settings = await loadCloudSettings();
   if (!settings.enabled || !settings.apiKey) {
-    // Still keep local data; queue for when user signs in + server is up
+    // Pinned videos wait for sign-in; unpinned stay local-only
     if (!opts.skipOfflineEnqueue) {
       const { enqueueVideoSync } = await import("./offlineSync");
       const pending = await enqueueVideoSync(opts.videoId, {
@@ -358,6 +367,17 @@ async function runAutoSync(
       const highlights = await loadHighlights(videoId);
       const screenshots = await loadScreenshots(videoId);
 
+      const { isPinnedToVault } = await import("../storage/libraryStore");
+      if (!(await isPinnedToVault(videoId))) {
+        opts.onStatus?.(
+          "On this device · Save, Watch later, or Playlist to keep in vault"
+        );
+        return {
+          ok: true,
+          message: "Local only until you save",
+        };
+      }
+
       if (!settings.enabled || !settings.apiKey) {
         const { enqueueVideoSync } = await import("./offlineSync");
         const pending = await enqueueVideoSync(videoId, { title });
@@ -506,6 +526,7 @@ export async function pushAllLocalToCloud(opts?: {
     "../storage/screenshotStore"
   );
 
+  const { isPinnedToVault } = await import("../storage/libraryStore");
   const idSet = new Set<string>(await listLocalHighlightVideoIds());
   try {
     const shots = await loadAllScreenshots();
@@ -516,12 +537,17 @@ export async function pushAllLocalToCloud(opts?: {
     /* ignore */
   }
 
-  const videoIds = [...idSet];
+  const videoIds: string[] = [];
+  for (const id of idSet) {
+    if (await isPinnedToVault(id)) videoIds.push(id);
+  }
   if (videoIds.length === 0) {
-    opts?.onStatus?.("No local marks to upload yet");
+    opts?.onStatus?.(
+      "Nothing to upload — only Saved, Watch later, and playlists go to the vault"
+    );
     return {
       ok: true,
-      message: "No local marks to upload",
+      message: "Nothing pinned for the vault",
       videos: 0,
       failed: 0,
     };
@@ -759,6 +785,8 @@ async function applyLocalLibraryAction(opts: {
       if (pl && !playlists.some((p) => p.toLowerCase() === pl.toLowerCase())) {
         playlists.push(pl);
       }
+      saved = true;
+      if (!savedAt) savedAt = now;
       break;
     case "remove_playlist":
       playlists = playlists.filter(

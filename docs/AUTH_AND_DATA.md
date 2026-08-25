@@ -32,11 +32,26 @@ Clerk (optional UI): set `VITE_CLERK_PUBLISHABLE_KEY` in `.env.local` and `CLERK
 ## What happens on login
 
 1. Guest notes stay in `chrome.storage` / IndexedDB until you sign in.
-2. After a successful login/register, the extension **uploads** local marks and shots (`pushAllLocalToCloud`).
-3. The vault **merges by id**. A new login cannot wipe another device’s marks.
-4. Screenshots keep existing `dataUrl` / R2 / Supabase keys if the client sends a thinner copy.
-5. If the vault is offline, ids go on the offline queue and **nothing is deleted**.
-6. Sign-in never runs “delete local notes”.
+2. After login, only videos you **Saved**, put in **Watch later**, or added to a **playlist** upload to the vault.
+3. Watching a video or making a mark does **not** create History by itself.
+4. The vault **merges by id**. A new login cannot wipe another device’s marks.
+5. Screenshots keep existing `dataUrl` / R2 / Supabase keys if the client sends a thinner copy.
+6. If the vault is offline, pinned videos queue and **nothing is deleted**.
+7. Sign-in never runs “delete local notes”.
+
+## Save / Watch later / Playlists
+
+| Action | Where it shows in Studio | Writes to vault |
+|--------|--------------------------|-----------------|
+| Watch only | nowhere | no |
+| Mark / shot only | this browser | no |
+| **Save** | Library | yes |
+| **Watch later** | Watch later | yes |
+| **Playlist** (name it) | Playlists | yes |
+| **Save YT playlist** | Playlists | yes, that list only |
+| **Sync bio** | Library + video bio | yes |
+
+History is videos you actually watched that were already in the vault. It is not a dump of every YouTube playlist you opened.
 
 Sign-out only clears the JWT in the extension. Marks on disk stay until you uninstall or clear site data.
 

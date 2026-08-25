@@ -152,7 +152,7 @@ export class HighlightsPane {
       <div class="vsa-hl-empty" hidden>
         <div class="vsa-hl-empty-ico" data-empty-ico></div>
         <strong>No marks yet</strong>
-        <p>Tap the red pen on the video, or Mark above. Notes auto-sync to the cloud.</p>
+        <p>Tap the red pen on the video, or Mark above. Notes stay on this device until you Save, Watch later, or add to a playlist.</p>
       </div>
       <div class="vsa-hl-list" role="list"></div>
     `;

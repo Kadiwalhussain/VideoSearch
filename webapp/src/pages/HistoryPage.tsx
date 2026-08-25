@@ -9,14 +9,16 @@ import { rowActivityMs } from "../lib/format";
 export function HistoryPage() {
   const { rows, loading } = useVault();
 
-  // Full vault history, newest activity first (not the 12-item “recent” slice)
+  // Watched videos only — Saved / Watch later / playlists have their own pages
   const list = useMemo(
     () =>
-      [...rows].sort((a, b) => {
-        const ta = rowActivityMs(a) || 0;
-        const tb = rowActivityMs(b) || 0;
-        return tb - ta;
-      }),
+      rows
+        .filter((r) => Boolean(r.payload?.lastViewedAt))
+        .sort((a, b) => {
+          const ta = rowActivityMs(a) || 0;
+          const tb = rowActivityMs(b) || 0;
+          return tb - ta;
+        }),
     [rows]
   );
 
@@ -27,8 +29,8 @@ export function HistoryPage() {
           <History size={22} /> History
         </h1>
         <p className="view-sub">
-          All vault videos by last watch, mark, or add · {list.length} total ·
-          vault sync does not move a video to “now”
+          Videos you actually watched · {list.length} total · Save, Watch later,
+          and playlists stay on their own pages
         </p>
       </header>
       {loading && !list.length ? (

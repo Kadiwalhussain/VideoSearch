@@ -89,6 +89,15 @@ export async function applyLibraryFlags(
   return upsertLibraryEntry({ videoId, ...flags });
 }
 
+/** Vault only for videos the user explicitly saved, queued, or listed. */
+export async function isPinnedToVault(videoId: string): Promise<boolean> {
+  const e = await getLibraryEntry(videoId);
+  if (!e) return false;
+  return Boolean(
+    e.saved || e.watchLater || (e.playlists && e.playlists.length > 0)
+  );
+}
+
 export async function listLocalPlaylistNames(): Promise<string[]> {
   const all = await listLibraryEntries();
   const set = new Set<string>();
