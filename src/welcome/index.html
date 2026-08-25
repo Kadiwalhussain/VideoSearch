@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VideoSearch AI</title>
+    <link rel="icon" type="image/png" href="/public/icons/logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,650;1,9..144,500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./welcome.css" />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <div class="orbs" aria-hidden="true">
+      <span class="orb orb-a"></span>
+      <span class="orb orb-b"></span>
+    </div>
+
+    <header class="top">
+      <div class="brand">
+        <img data-logo alt="" width="36" height="36" />
+        <span>VideoSearch<em>AI</em></span>
+      </div>
+      <p class="top-note" data-cloud-chip>Works on this device · no API key</p>
+    </header>
+
+    <main class="shell">
+      <section class="story">
+        <p class="eyebrow">Installed. Ready on YouTube.</p>
+        <h1>Search what was <em>said</em>, not what was titled.</h1>
+        <p class="lead">
+          Captions become a searchable library in your browser. Mark a moment.
+          Shoot a slide. Jump back to the second — Chrome, Studio, phone.
+        </p>
+
+        <ul class="glimpses">
+          <li>
+            <span class="g-kicker">Find</span>
+            <strong>Spoken search</strong>
+            <p>Type a concept. Ranked timestamps from the transcript. On-device.</p>
+          </li>
+          <li>
+            <span class="g-kicker">Keep</span>
+            <strong>Marks &amp; shots</strong>
+            <p>You pin the second. You capture the frame. Nothing is invented.</p>
+          </li>
+          <li>
+            <span class="g-kicker">Source</span>
+            <strong>Bio + captions</strong>
+            <p>Links spoken in CC and written in the description land in Sources.</p>
+          </li>
+          <li>
+            <span class="g-kicker">Rewatch</span>
+            <strong>One vault</strong>
+            <p>Same account on Studio, Android, and iPhone. Search stays local.</p>
+          </li>
+        </ul>
+
+        <figure class="shot">
+          <img data-hero alt="VideoSearch on a YouTube lecture — search and jump to the second" />
+          <figcaption>Lives on the watch page. No setup. No key for search.</figcaption>
+        </figure>
+
+        <div class="keys">
+          <div>
+            <kbd data-key-mark>⌘M</kbd>
+            <span>Mark this moment</span>
+          </div>
+          <div>
+            <kbd data-key-cap>⌘C</kbd>
+            <span>Capture the frame</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="gate" data-gate>
+        <div class="card" data-auth-card>
+          <div class="card-kicker">Your account</div>
+          <h2 data-auth-title>Create your account</h2>
+          <p class="card-sub" data-auth-sub>
+            Optional — search, marks, and shots already work. An account syncs
+            them to Studio and your phone.
+          </p>
+
+          <div class="modes" role="tablist">
+            <button type="button" class="mode is-on" data-mode="register">
+              Create account
+            </button>
+            <button type="button" class="mode" data-mode="login">Log in</button>
+          </div>
+
+          <form class="form" data-form autocomplete="on" novalidate>
+            <label class="field" data-name-wrap>
+              <span>Full name</span>
+              <input
+                type="text"
+                name="name"
+                data-name
+                autocomplete="name"
+                placeholder="Ada Lovelace"
+                maxlength="80"
+              />
+            </label>
+            <label class="field">
+              <span>Email</span>
+              <input
+                type="email"
+                name="email"
+                data-email
+                autocomplete="username"
+                placeholder="you@work.com"
+                required
+              />
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <div class="pass-row">
+                <input
+                  type="password"
+                  name="password"
+                  data-pass
+                  autocomplete="new-password"
+                  placeholder="At least 10 characters"
+                  minlength="6"
+                  required
+                />
+                <button type="button" class="pass-toggle" data-pass-toggle title="Show password">
+                  Show
+                </button>
+              </div>
+              <em class="hint" data-pass-hint>Use letters and a number. 10+ characters to sign up.</em>
+            </label>
+            <label class="field" data-confirm-wrap>
+              <span>Confirm password</span>
+              <input
+                type="password"
+                name="password2"
+                data-pass2
+                autocomplete="new-password"
+                placeholder="Type it again"
+              />
+            </label>
+
+            <details class="advanced">
+              <summary>Advanced · vault server</summary>
+              <label class="field">
+                <span>API URL</span>
+                <input type="url" data-url autocomplete="off" placeholder="http://127.0.0.1:8787" />
+              </label>
+            </details>
+
+            <button type="submit" class="submit" data-submit>Create account</button>
+            <p class="msg" data-msg role="status"></p>
+          </form>
+
+          <button type="button" class="skip" data-skip>
+            Start without an account
+          </button>
+          <p class="fine">
+            No API key. Captions stay on this machine. Account only syncs notes,
+            shots, bio, and sources.
+          </p>
+        </div>
+
+        <div class="card profile" data-profile hidden>
+          <div class="card-kicker">Signed in</div>
+          <div class="who">
+            <div class="av" data-av>—</div>
+            <div>
+              <strong data-profile-name>Account</strong>
+              <p data-profile-email></p>
+            </div>
+          </div>
+          <ul class="stats">
+            <li><b data-stat-videos>0</b><span>Videos</span></li>
+            <li><b data-stat-marks>0</b><span>Marks</span></li>
+            <li><b data-stat-shots>0</b><span>Shots</span></li>
+          </ul>
+          <a class="submit as-link" data-open-yt href="https://www.youtube.com">
+            Open YouTube
+          </a>
+          <button type="button" class="ghost" data-logout>Log out</button>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="foot">
+      <span>Chrome · Studio · Android · iPhone</span>
+      <a href="https://videosearchai.netlify.app/" target="_blank" rel="noopener">Product site</a>
+    </footer>
+
+    <script type="module" src="./welcome.ts"></script>
+  </body>
+</html>

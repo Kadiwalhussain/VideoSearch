@@ -160,6 +160,22 @@ export function maskKey(key: string): string {
   return `${key.slice(0, 6)}…${key.slice(-4)}`;
 }
 
+/** True when the vault API answers /health (account sync is available). */
+export async function probeVault(projectUrl?: string): Promise<boolean> {
+  const bases = vaultUrlAlternates(
+    projectUrl || DEFAULT_CLOUD_SETTINGS.projectUrl
+  );
+  for (const base of bases) {
+    try {
+      const res = await vaultHttp(`${base}/health`, { method: "GET" });
+      if (res.ok) return true;
+    } catch {
+      /* try next host */
+    }
+  }
+  return false;
+}
+
 export function accountInitials(c: CloudSettings): string {
   const src = (c.displayName || c.email || "?").trim();
   if (!src) return "?";
@@ -197,6 +213,10 @@ export async function vaultAuth(
     throw new Error("Password is required");
   }
   if (mode === "register") {
+    const name = (opts.displayName || "").trim();
+    if (name.length < 2) {
+      throw new Error("Enter your name");
+    }
     if (opts.password.length < 10) {
       throw new Error("Password must be at least 10 characters");
     }

@@ -97,33 +97,33 @@ export const VSA_STYLES = `
   width: auto;
   max-width: none;
 }
-/* Collapsed: docked in YT Like/Share row under the video */
+/*
+ * Collapsed pill always lives on <html> (fixed), never inside YouTube's
+ * Like/Share row — YouTube rebuilds that DOM and was destroying our button.
+ * JS sets top/left via placeCollapsed(); these are the fallback coords.
+ */
 #videosearch-ai-root.is-collapsed {
-  position: relative !important;
-  left: auto !important;
-  right: auto !important;
-  top: auto !important;
-  bottom: auto !important;
-  inset: auto !important;
+  position: fixed !important;
+  top: 64px;
+  right: 16px;
+  left: auto;
+  bottom: auto;
+  inset: auto;
   width: auto !important;
   max-width: none !important;
   max-height: none !important;
   display: inline-flex !important;
   align-items: center;
   vertical-align: middle;
-  margin: 0 0 0 8px !important;
+  margin: 0 !important;
   flex: 0 0 auto;
-  z-index: 3;
+  z-index: 2147483646 !important;
   overflow: visible !important;
   pointer-events: auto !important;
+  transform: none;
 }
 #videosearch-ai-root.is-collapsed[data-vsa-float="1"] {
   position: fixed !important;
-  left: 50% !important;
-  right: auto !important;
-  bottom: auto !important;
-  top: auto !important;
-  transform: translateX(-50%);
   margin: 0 !important;
 }
 #videosearch-ai-root.is-collapsed #videosearch-ai-panel {

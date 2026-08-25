@@ -3,6 +3,8 @@
  * ML code is lazy-loaded so model failures never hide the UI.
  */
 
+import "../dom/trustedHtml";
+import { matchWatchHotkey, type HotkeyAction } from "./hotkeys";
 import {
   SearchPanel,
   injectSearchPanelStyles,
@@ -221,12 +223,20 @@ async function loadComments(
 
 console.info(LOG, "content script evaluating", location.href);
 
+const YT_VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+
 function isWatchPage(): boolean {
   try {
-    return (
-      window.location.pathname === "/watch" &&
+    const path = window.location.pathname;
+    if (
+      path === "/watch" &&
       new URLSearchParams(window.location.search).has("v")
-    );
+    ) {
+      return true;
+    }
+    if (/^\/(shorts|live|embed)\//.test(path)) return true;
+    if (document.querySelector("ytd-watch-flexy[video-id]")) return true;
+    return false;
   } catch {
     return false;
   }
@@ -234,10 +244,34 @@ function isWatchPage(): boolean {
 
 function extractVideoId(): string | null {
   try {
-    return new URLSearchParams(window.location.search).get("v");
+    const url = new URL(window.location.href);
+    const v = url.searchParams.get("v")?.trim();
+    if (v && YT_VIDEO_ID_RE.test(v)) return v;
+    if (v) return v;
+
+    const path = url.pathname;
+    for (const re of [
+      /^\/shorts\/([A-Za-z0-9_-]{11})/,
+      /^\/live\/([A-Za-z0-9_-]{11})/,
+      /^\/embed\/([A-Za-z0-9_-]{11})/,
+    ]) {
+      const m = path.match(re);
+      if (m) return m[1];
+    }
   } catch {
-    return null;
+    /* ignore */
   }
+
+  try {
+    const flexy = document.querySelector("ytd-watch-flexy");
+    const id =
+      flexy?.getAttribute("video-id") || flexy?.getAttribute("videoId");
+    if (id && id.trim()) return id.trim();
+  } catch {
+    /* ignore */
+  }
+
+  return null;
 }
 
 function findActionsRow(): HTMLElement | null {
@@ -246,18 +280,40 @@ function findActionsRow(): HTMLElement | null {
     "ytd-watch-metadata #actions #top-level-buttons-computed",
     "#actions ytd-menu-renderer #top-level-buttons-computed",
     "ytd-watch-metadata #actions",
+    "#top-row #actions",
     "#below #actions",
     "#menu-container #top-level-buttons-computed",
+    "#owner-and-actions #actions",
+    "#actions",
   ];
   for (const sel of selectors) {
     const el = document.querySelector<HTMLElement>(sel);
-    if (el && el.isConnected) return el;
+    if (el && el.isConnected && visibleRect(el)) return el;
   }
   return null;
 }
 
-/** Expanded panel: overlay on the page so it can be large. */
-function placeRoot(wrap: HTMLElement): void {
+function visibleRect(el: Element): DOMRect | null {
+  try {
+    const r = el.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) return null;
+    if (r.bottom < 0 || r.top > window.innerHeight) return null;
+    if (r.right < 0 || r.left > window.innerWidth) return null;
+    return r;
+  } catch {
+    return null;
+  }
+}
+
+function clearInlinePlacement(wrap: HTMLElement): void {
+  wrap.style.removeProperty("top");
+  wrap.style.removeProperty("left");
+  wrap.style.removeProperty("right");
+  wrap.style.removeProperty("bottom");
+  wrap.style.removeProperty("transform");
+}
+
+function attachToHtml(wrap: HTMLElement): void {
   wrap.setAttribute("data-vsa-float", "1");
   wrap.removeAttribute("data-vsa-docked");
   if (wrap.parentElement !== document.documentElement) {
@@ -265,26 +321,103 @@ function placeRoot(wrap: HTMLElement): void {
   }
 }
 
-/** Collapsed pill: sit in the Like / Share / Save row under the video. */
-function dockToActions(wrap: HTMLElement): void {
-  const row = findActionsRow();
-  if (!row) {
-    placeRoot(wrap);
-    wrap.setAttribute("data-vsa-float", "1");
+/** Expanded panel: overlay on <html> so YouTube cannot destroy it. */
+function placeRoot(wrap: HTMLElement): void {
+  attachToHtml(wrap);
+  wrap.removeAttribute("data-vsa-anchor");
+  wrap.removeAttribute("data-vsa-place");
+  clearInlinePlacement(wrap);
+}
+
+function setFixedBox(
+  wrap: HTMLElement,
+  top: number,
+  left: number,
+  anchor: string
+): void {
+  const t = Math.round(top);
+  const l = Math.round(left);
+  const key = `${anchor}:${t}:${l}`;
+  if (
+    wrap.getAttribute("data-vsa-place") === key &&
+    wrap.parentElement === document.documentElement
+  ) {
     return;
   }
-  wrap.setAttribute("data-vsa-docked", "1");
-  wrap.removeAttribute("data-vsa-float");
-  if (wrap.parentElement !== row) {
-    row.appendChild(wrap);
+  wrap.setAttribute("data-vsa-anchor", anchor);
+  wrap.setAttribute("data-vsa-place", key);
+  wrap.style.setProperty("position", "fixed", "important");
+  wrap.style.setProperty("top", `${t}px`, "important");
+  wrap.style.setProperty("left", `${l}px`, "important");
+  wrap.style.setProperty("right", "auto", "important");
+  wrap.style.setProperty("bottom", "auto", "important");
+  wrap.style.setProperty("transform", "none", "important");
+}
+
+/**
+ * Collapsed pill stays on <html> (YouTube cannot wipe it) and is visually
+ * aligned with the watch-page actions / player. Fallback: under the masthead.
+ */
+function placeCollapsed(wrap: HTMLElement): void {
+  attachToHtml(wrap);
+  const pillW = wrap.offsetWidth || 156;
+  const pillH = wrap.offsetHeight || 36;
+  const margin = 12;
+  const maxLeft = Math.max(margin, window.innerWidth - pillW - margin);
+  const maxTop = Math.max(margin, window.innerHeight - pillH - margin);
+
+  if (document.fullscreenElement) {
+    setFixedBox(
+      wrap,
+      Math.max(margin, window.innerHeight - pillH - 80),
+      maxLeft,
+      "fullscreen"
+    );
+    return;
   }
+
+  const actions = findActionsRow();
+  const actionsRect = actions ? visibleRect(actions) : null;
+  if (actionsRect) {
+    let top = actionsRect.top + (actionsRect.height - pillH) / 2;
+    let left = actionsRect.left - pillW - 8;
+    if (left < margin) {
+      left = Math.min(maxLeft, actionsRect.right - pillW);
+      top = actionsRect.bottom + 6;
+    }
+    setFixedBox(
+      wrap,
+      Math.min(maxTop, Math.max(margin, top)),
+      Math.min(maxLeft, Math.max(margin, left)),
+      "actions"
+    );
+    return;
+  }
+
+  const player = document.querySelector<HTMLElement>(
+    "#movie_player, ytd-player, #player, #shorts-player"
+  );
+  const playerRect = player ? visibleRect(player) : null;
+  if (playerRect) {
+    const top = playerRect.bottom + 8;
+    const left = playerRect.right - pillW;
+    setFixedBox(
+      wrap,
+      Math.min(maxTop, Math.max(margin, top)),
+      Math.min(maxLeft, Math.max(margin, left)),
+      "player"
+    );
+    return;
+  }
+
+  setFixedBox(wrap, 64, maxLeft, "fallback");
 }
 
 function syncPanelPlacement(open: boolean): void {
   const wrap = document.getElementById(ROOT_ID);
   if (!wrap) return;
   if (open) placeRoot(wrap);
-  else dockToActions(wrap);
+  else placeCollapsed(wrap);
 }
 
 function seekTo(seconds: number): void {
@@ -1542,27 +1675,45 @@ async function runSearch(
 }
 
 function mountEmergencyPill(videoId: string, reason: string): void {
-  document.getElementById(ROOT_ID)?.remove();
-  injectSearchPanelStyles();
+  try {
+    document.getElementById(ROOT_ID)?.remove();
+    injectSearchPanelStyles();
 
-  const wrap = document.createElement("div");
-  wrap.id = ROOT_ID;
-  wrap.setAttribute("data-video-id", videoId);
-  wrap.setAttribute("data-vsa-float", "1");
-  wrap.innerHTML = `
-    <div id="videosearch-ai-panel">
-      <div class="vsa-bar">
-        <button type="button" class="vsa-toggle" data-state="error">
-          <span class="vsa-logo">⌕</span>
-          <span class="vsa-title">VideoSearch AI</span>
-          <span class="vsa-badge">!</span>
-        </button>
-        <div class="vsa-status">${reason}</div>
-      </div>
-    </div>
-  `;
-  document.documentElement.appendChild(wrap);
-  console.warn(LOG, "Emergency pill mounted:", reason);
+    const wrap = document.createElement("div");
+    wrap.id = ROOT_ID;
+    wrap.setAttribute("data-video-id", videoId);
+    wrap.setAttribute("data-vsa-float", "1");
+    wrap.classList.add("is-collapsed");
+
+    const panel = document.createElement("div");
+    panel.id = "videosearch-ai-panel";
+    panel.classList.add("is-collapsed");
+
+    const bar = document.createElement("div");
+    bar.className = "vsa-bar";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "vsa-brand";
+    btn.title = reason;
+    const title = document.createElement("span");
+    title.className = "vsa-title";
+    title.textContent = "VideoSearch";
+    btn.appendChild(title);
+
+    const status = document.createElement("div");
+    status.className = "vsa-status";
+    status.textContent = reason;
+
+    bar.append(btn, status);
+    panel.appendChild(bar);
+    wrap.appendChild(panel);
+    document.documentElement.appendChild(wrap);
+    placeCollapsed(wrap);
+    console.warn(LOG, "Emergency pill mounted:", reason);
+  } catch (err) {
+    console.error(LOG, "Emergency pill failed:", err);
+  }
 }
 
 /** Keep panel instance so we can detect focus and avoid remounting mid-type. */
@@ -1832,9 +1983,13 @@ function mountPanel(videoId: string): void {
     wrap.appendChild(panel.root);
     wrap.classList.add("is-collapsed");
     panel.root.classList.add("is-collapsed");
-    dockToActions(wrap);
-    window.setTimeout(() => dockToActions(wrap), 400);
-    window.setTimeout(() => dockToActions(wrap), 1400);
+    placeCollapsed(wrap);
+    window.setTimeout(() => {
+      if (document.getElementById(ROOT_ID) === wrap) placeCollapsed(wrap);
+    }, 400);
+    window.setTimeout(() => {
+      if (document.getElementById(ROOT_ID) === wrap) placeCollapsed(wrap);
+    }, 1400);
 
     panel.setStatus({ kind: "indexing", message: "Preparing…" });
     console.info(LOG, "Panel MOUNTED for", videoId);
@@ -1905,18 +2060,91 @@ function injectOrUpdate(): void {
   }
 }
 
-function startWatchers(): void {
-  let lastUrl = location.href;
+let watchersStarted = false;
 
-  const onNavigate = (): void => {
+function rootMissing(): boolean {
+  const root = document.getElementById(ROOT_ID);
+  return !root || !root.isConnected;
+}
+
+function ensureUi(): void {
+  if (!isWatchPage()) {
+    if (document.getElementById(ROOT_ID)) removePanel(true);
+    return;
+  }
+  if (rootMissing()) {
+    injectOrUpdate();
+    return;
+  }
+  const wrap = document.getElementById(ROOT_ID);
+  if (wrap?.classList.contains("is-collapsed")) placeCollapsed(wrap);
+}
+
+let shortcutLockUntil = 0;
+
+function fireShortcut(action: HotkeyAction, videoId: string, panel: SearchPanel): void {
+  if (action === "mark") void addHighlightAtNow(videoId, panel);
+  else void captureFrameNow(videoId, panel);
+}
+
+function runWatchShortcut(action: HotkeyAction): boolean {
+  if (!isWatchPage()) return false;
+  const now = Date.now();
+  if (now < shortcutLockUntil) return false;
+  shortcutLockUntil = now + 700;
+  if (rootMissing()) injectOrUpdate();
+  const videoId = extractVideoId();
+  const panel = activePanel;
+  if (videoId && panel) {
+    fireShortcut(action, videoId, panel);
+    return true;
+  }
+  window.setTimeout(() => {
+    const id = extractVideoId();
+    if (id && activePanel) fireShortcut(action, id, activePanel);
+  }, 80);
+  return Boolean(videoId);
+}
+
+function startWatchers(): void {
+  if (watchersStarted) return;
+  watchersStarted = true;
+
+  let lastUrl = location.href;
+  let raf = 0;
+  const schedule = (delayMs = 0): void => {
+    window.setTimeout(() => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        try {
+          ensureUi();
+        } catch (err) {
+          console.error(LOG, "ensureUi error:", err);
+        }
+      });
+    }, delayMs);
+  };
+
+  const onUrlMaybeChanged = (): void => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
-      window.setTimeout(injectOrUpdate, 300);
+      schedule(80);
+    } else {
+      schedule(0);
     }
   };
 
   try {
-    new MutationObserver(onNavigate).observe(document.documentElement, {
+    new MutationObserver(() => {
+      // YouTube rebuilds watch chrome constantly. Remount if our node vanished;
+      // otherwise just keep the collapsed pill aligned.
+      if (isWatchPage() && rootMissing()) {
+        onUrlMaybeChanged();
+        return;
+      }
+      if (location.href !== lastUrl) onUrlMaybeChanged();
+    }).observe(document.documentElement, {
       childList: true,
       subtree: true,
     });
@@ -1924,33 +2152,97 @@ function startWatchers(): void {
     console.warn(LOG, "MutationObserver failed", err);
   }
 
+  for (const ev of [
+    "yt-navigate-finish",
+    "yt-navigate-start",
+    "yt-page-data-updated",
+    "yt-player-updated",
+    "popstate",
+    "resize",
+    "fullscreenchange",
+  ] as const) {
+    window.addEventListener(ev, () => {
+      if (ev === "yt-navigate-finish") lastUrl = location.href;
+      schedule(ev.startsWith("yt-") ? 200 : 0);
+    });
+  }
+
   window.addEventListener("yt-navigate-finish", () => {
-    window.setTimeout(injectOrUpdate, 200);
     window.setTimeout(() => {
       void maybeImportYoutubePlaylist(activePanel);
     }, 1500);
-    window.setTimeout(() => {
-      const wrap = document.getElementById(ROOT_ID);
-      if (wrap?.classList.contains("is-collapsed")) dockToActions(wrap);
-    }, 800);
   });
-  window.addEventListener("popstate", onNavigate);
 
-  let tries = 0;
-  const boot = window.setInterval(() => {
-    tries += 1;
-    // Never remount while typing — that kills the cursor
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) schedule(50);
+  });
+  document.addEventListener(
+    "scroll",
+    () => {
+      const wrap = document.getElementById(ROOT_ID);
+      if (wrap?.classList.contains("is-collapsed")) schedule(0);
+    },
+    true
+  );
+
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      const action = matchWatchHotkey(e);
+      if (!action) return;
+      if (!runWatchShortcut(action)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    },
+    true
+  );
+
+  // Persistent heartbeat — YouTube can detach our node after the first
+  // 30s (the old boot interval used to give up). Never stop on a watch page.
+  window.setInterval(() => {
     if (activePanel?.isInputFocused()) return;
+    try {
+      ensureUi();
+    } catch (err) {
+      console.error(LOG, "heartbeat error:", err);
+    }
+  }, 1200);
 
-    if (isWatchPage() && !document.getElementById(ROOT_ID)) {
-      injectOrUpdate();
-    }
-    const root = document.getElementById(ROOT_ID);
-    if (isWatchPage() && root && !root.isConnected) {
-      injectOrUpdate();
-    }
-    if (tries > 80) window.clearInterval(boot);
-  }, 400);
+  try {
+    chrome.runtime?.onMessage?.addListener((message, _sender, sendResponse) => {
+      if (!message || typeof message !== "object") return false;
+      const type = (message as { type?: string }).type;
+      if (type === "VSA_PING") {
+        sendResponse({
+          ok: true,
+          watch: isWatchPage(),
+          videoId: extractVideoId(),
+        });
+        return true;
+      }
+      if (type === "VSA_OPEN") {
+        try {
+          injectOrUpdate();
+          activePanel?.setOpen(true);
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return true;
+      }
+      if (type === "VSA_MARK" || type === "VSA_CAPTURE") {
+        const ok = runWatchShortcut(type === "VSA_MARK" ? "mark" : "capture");
+        sendResponse({ ok });
+        return true;
+      }
+      return false;
+    });
+  } catch (err) {
+    console.warn(LOG, "onMessage hook failed", err);
+  }
 
   injectOrUpdate();
 }
@@ -1966,7 +2258,6 @@ try {
   startWatchers();
 } catch (err) {
   console.error(LOG, "startWatchers failed:", err);
-  // Last-ditch fixed green pill so user sees *something*
   try {
     const id = extractVideoId() ?? "unknown";
     mountEmergencyPill(id, "Boot error — open console");

@@ -5,6 +5,8 @@
  * Survives player rebuilds via MutationObserver.
  */
 
+import "../dom/trustedHtml";
+import { shortcutLabel } from "../content/hotkeys";
 import type { VideoHighlight } from "../storage/highlightsStore";
 import type { VideoScreenshot } from "../storage/screenshotStore";
 import { iconHtml } from "../ui/icons";
@@ -684,11 +686,11 @@ function ensureFloatingControls(): void {
     float.id = FLOAT_ID;
     float.setAttribute("data-vsa", "player-float-controls");
     float.innerHTML = `
-      <button type="button" class="vsa-float-ss" title="Screenshot" aria-label="Screenshot this frame">
+      <button type="button" class="vsa-float-ss" title="Screenshot · ${shortcutLabel("capture")}" aria-label="Screenshot this frame">
         <span class="vsa-float-label">Screenshot</span>
         ${iconHtml("camera", 20)}
       </button>
-      <button type="button" class="vsa-float-hl" title="Mark note" aria-label="Mark this moment">
+      <button type="button" class="vsa-float-hl" title="Mark note · ${shortcutLabel("mark")}" aria-label="Mark this moment">
         <span class="vsa-float-label">Mark</span>
         ${iconHtml("highlight", 18)}
       </button>
@@ -708,8 +710,14 @@ function ensureFloatingControls(): void {
 
   const ss = float.querySelector(".vsa-float-ss") as HTMLElement | null;
   const hlBtn = float.querySelector(".vsa-float-hl") as HTMLElement | null;
-  if (ss) wireButton(ss, () => onCaptureClick?.());
-  if (hlBtn) wireButton(hlBtn, () => onAddClick?.());
+  if (ss) {
+    ss.title = `Screenshot · ${shortcutLabel("capture")}`;
+    wireButton(ss, () => onCaptureClick?.());
+  }
+  if (hlBtn) {
+    hlBtn.title = `Mark note · ${shortcutLabel("mark")}`;
+    wireButton(hlBtn, () => onAddClick?.());
+  }
 }
 
 function removeChromeButtons(): void {

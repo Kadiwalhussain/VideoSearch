@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en" class="day">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy Policy — VideoSearch AI</title>
+  <meta name="description" content="How VideoSearch AI handles captions, accounts, and optional cloud sync." />
+  <meta name="theme-color" content="#F3EFE6" />
+  <link rel="icon" type="image/png" href="./assets/logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,650;1,9..144,500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css?v=privacy1" />
+  <style>
+    .legal { max-width: 720px; margin: 0 auto; padding: 48px 24px 80px; }
+    .legal h1 { font-family: var(--display); font-weight: 500; font-size: 42px; letter-spacing: -0.03em; margin: 0 0 8px; }
+    .legal .updated { color: var(--muted); font-size: 13px; margin-bottom: 32px; }
+    .legal h2 { font-size: 20px; margin: 28px 0 8px; }
+    .legal p, .legal li { color: var(--ink-soft); line-height: 1.6; }
+    .legal ul { padding-left: 1.2em; }
+  </style>
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="./">
+        <img class="brand-logo" src="./assets/logo.png" alt="" width="40" height="40" />
+        <span class="brand-text">VideoSearch<em>AI</em></span>
+      </a>
+      <nav class="nav-links">
+        <a href="./#install">Install</a>
+        <a href="./#privacy">Privacy</a>
+      </nav>
+    </div>
+  </header>
+  <main class="legal">
+    <h1>Privacy Policy</h1>
+    <p class="updated">Effective 25 August 2026 · VideoSearch AI Chrome extension, Studio, and mobile apps</p>
+
+    <p>
+      VideoSearch AI helps you search spoken words in YouTube captions, mark moments, and save frame shots.
+      Search runs on your device. An account is optional and only used to sync notes you choose to keep.
+    </p>
+
+    <h2>What stays on your device</h2>
+    <ul>
+      <li>YouTube captions fetched for the video you are watching</li>
+      <li>On-device embeddings used for search (IndexedDB in Chrome)</li>
+      <li>Local marks, shots, and settings until you sign in</li>
+      <li>An optional AI API key, if you paste one in Settings — stored only in Chrome storage on that computer</li>
+    </ul>
+    <p>Caption indexes and embeddings are not uploaded to VideoSearch servers.</p>
+
+    <h2>What you can choose to sync</h2>
+    <p>
+      If you create an account, we store the email, name, and a session token you provide, plus the
+      marks, screenshots, description/bio text, and source links you save. This vault is so Chrome,
+      Studio, Android, and iPhone can show the same notes.
+    </p>
+
+    <h2>What we do not do</h2>
+    <ul>
+      <li>We do not sell your data</li>
+      <li>We do not use your captions or notes for advertising</li>
+      <li>We do not require an API key to search</li>
+      <li>We do not strip YouTube ads or replace the official player on the YouTube website</li>
+    </ul>
+
+    <h2>Permissions (Chrome)</h2>
+    <ul>
+      <li><strong>storage</strong> — save settings, marks, shots, and the local caption index</li>
+      <li><strong>clipboardWrite</strong> — copy a timestamp or source link when you ask</li>
+      <li><strong>youtube.com</strong> — read captions and show the VideoSearch panel on watch pages</li>
+      <li><strong>Model CDNs (Hugging Face, jsDelivr)</strong> — download the on-device search model once</li>
+      <li><strong>Optional AI hosts</strong> — only if you set a Chat/Ask key in Settings</li>
+      <li><strong>localhost / your vault host</strong> — optional account sync to your vault</li>
+    </ul>
+
+    <h2>Account deletion</h2>
+    <p>
+      Sign out in the extension to drop the session on that device. To delete vault data, sign in to
+      Studio and remove videos, or contact us from the product site.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+      Product site: <a href="https://videosearchai.netlify.app/">videosearchai.netlify.app</a><br />
+      Source: <a href="https://github.com/Kadiwalhussain/VideoSearch">github.com/Kadiwalhussain/VideoSearch</a>
+    </p>
+  </main>
+</body>
+</html>

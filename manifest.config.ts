@@ -7,7 +7,7 @@ import { defineManifest } from "@crxjs/vite-plugin";
 export default defineManifest({
   manifest_version: 3,
   name: "VideoSearch AI",
-  version: "1.0.0",
+  version: "1.1.0",
   description:
     "Search what was said, not just what was titled — local semantic search over YouTube transcripts.",
   icons: {
@@ -15,11 +15,40 @@ export default defineManifest({
     "48": "public/icons/icon48.png",
     "128": "public/icons/icon128.png",
   },
+  action: {
+    default_title: "VideoSearch AI",
+    default_icon: {
+      "16": "public/icons/icon16.png",
+      "48": "public/icons/icon48.png",
+      "128": "public/icons/icon128.png",
+    },
+  },
+  options_ui: {
+    page: "src/welcome/index.html",
+    open_in_tab: true,
+  },
+  commands: {
+    "mark-moment": {
+      suggested_key: {
+        default: "Ctrl+Shift+M",
+        mac: "Command+Shift+M",
+      },
+      description: "Mark this moment on the video",
+    },
+    "capture-frame": {
+      suggested_key: {
+        default: "Ctrl+Shift+K",
+        mac: "Command+Shift+K",
+      },
+      description: "Capture this video frame",
+    },
+  },
   permissions: ["storage", "clipboardWrite"],
   // YouTube + model weight CDN + optional LLM providers (user API key)
   host_permissions: [
     "https://www.youtube.com/*",
     "https://youtube.com/*",
+    "https://m.youtube.com/*",
     // Embedding model weights (downloaded once, then browser-cached)
     "https://huggingface.co/*",
     "https://cdn-lfs.huggingface.co/*",
@@ -53,13 +82,21 @@ export default defineManifest({
   },
   content_scripts: [
     {
-      matches: ["https://www.youtube.com/*", "https://youtube.com/*"],
+      matches: [
+        "https://www.youtube.com/*",
+        "https://youtube.com/*",
+        "https://m.youtube.com/*",
+      ],
       js: ["src/content/pageBridge.ts"],
       run_at: "document_start",
       world: "MAIN",
     },
     {
-      matches: ["https://www.youtube.com/*", "https://youtube.com/*"],
+      matches: [
+        "https://www.youtube.com/*",
+        "https://youtube.com/*",
+        "https://m.youtube.com/*",
+      ],
       js: ["src/content/injectSearchUI.ts"],
       run_at: "document_idle",
     },
@@ -78,6 +115,6 @@ export default defineManifest({
   ],
   content_security_policy: {
     extension_pages:
-      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
+      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
   },
 });

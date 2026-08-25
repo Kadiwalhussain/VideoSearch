@@ -73,6 +73,10 @@ npm run build
 2. Open a captioned YouTube video
 3. Sign in. Mark, Shot, Sync bio. Search needs no API key.
 
+Shortcuts on a watch page: **⌘M / Ctrl+M** mark · **⌘C / Ctrl+C** capture (Copy still works if text is selected).
+
+Chrome Web Store upload: [docs/CHROME_WEB_STORE.md](./docs/CHROME_WEB_STORE.md)
+
 ```bash
 npm run dev
 ```

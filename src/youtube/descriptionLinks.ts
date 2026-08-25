@@ -3,6 +3,8 @@
  * optionally pinned comments — Drive, docs, PPT, PDFs, sources, etc.
  */
 
+import "../dom/trustedHtml";
+
 export type SourceLink = {
   id: string;
   url: string;

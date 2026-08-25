@@ -5,6 +5,8 @@
  * http://127.0.0.1 (Private Network Access). All vault HTTP goes through here.
  */
 
+import { loadOnboarding } from "../welcome/onboardingStore";
+
 export {};
 
 type VaultFetchMsg = {
@@ -102,6 +104,64 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onInstalled.addListener(() => {
-  console.info("[VideoSearch AI] background ready (vault proxy)");
+function openWelcome(): void {
+  try {
+    if (chrome.runtime.openOptionsPage) {
+      chrome.runtime.openOptionsPage();
+      return;
+    }
+  } catch {
+    /* fall through */
+  }
+  const url = chrome.runtime.getURL("src/welcome/index.html");
+  void chrome.tabs.create({ url });
+}
+
+chrome.runtime.onInstalled.addListener((details) => {
+  console.info("[VideoSearch AI] background ready (vault proxy)", details.reason);
+  if (details.reason === "install") {
+    openWelcome();
+    return;
+  }
+  if (details.reason === "update") {
+    void loadOnboarding().then((s) => {
+      if (!s.seenAt) openWelcome();
+    });
+  }
 });
+
+/**
+ * Toolbar icon. YouTube → in-page panel. Anywhere else → welcome / account.
+ */
+if (chrome.action?.onClicked) {
+  chrome.action.onClicked.addListener((tab) => {
+    const tabId = tab.id;
+    const url = tab.url || "";
+    if (tabId != null && /youtube\.com|youtu\.be/i.test(url)) {
+      chrome.tabs.sendMessage(tabId, { type: "VSA_OPEN" }, () => {
+        void chrome.runtime.lastError;
+      });
+      return;
+    }
+    openWelcome();
+  });
+}
+
+function sendToYoutubeTab(type: "VSA_MARK" | "VSA_CAPTURE"): void {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (!tab?.id) return;
+    const url = tab.url || "";
+    if (!/youtube\.com|youtu\.be/i.test(url)) return;
+    chrome.tabs.sendMessage(tab.id, { type }, () => {
+      void chrome.runtime.lastError;
+    });
+  });
+}
+
+if (chrome.commands?.onCommand) {
+  chrome.commands.onCommand.addListener((command) => {
+    if (command === "mark-moment") sendToYoutubeTab("VSA_MARK");
+    if (command === "capture-frame") sendToYoutubeTab("VSA_CAPTURE");
+  });
+}

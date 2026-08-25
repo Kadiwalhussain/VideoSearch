@@ -3,6 +3,7 @@
  * Only two video controls (camera + mark) live in timelineHighlights.
  */
 
+import "../dom/trustedHtml";
 import { iconHtml } from "./icons";
 
 const STYLE_ID = "vsa-capture-fx-style";

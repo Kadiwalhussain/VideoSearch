@@ -4,6 +4,7 @@
  * Only one section is open at a time so it doesn't eat the player.
  */
 
+import "../dom/trustedHtml";
 import type { RawCaptionSegment, SearchResult } from "../types/schema";
 import type { VideoTopic } from "../topics/extractTopics";
 import type { SentimentReport } from "../comments/analyzeSentiment";
@@ -29,7 +30,7 @@ import {
 import { LiveTranscript } from "./LiveTranscript";
 import { ChatPane } from "./ChatPane";
 import { HighlightsPane } from "./HighlightsPane";
-import { VSA_STYLES, VSA_FONT_HREF } from "./vsaStyles";
+import { VSA_STYLES } from "./vsaStyles";
 import { iconHtml, iconSvg, type IconName } from "./icons";
 import { isKeepableCcSource } from "../youtube/ccSources";
 import { isUsefulSourceLink } from "../youtube/descriptionLinks";
@@ -139,7 +140,7 @@ export class SearchPanel {
   private paneSources: HTMLElement;
   private commentsEl: HTMLElement;
   private handlers: SearchPanelHandlers;
-  private authMode: "login" | "register" = "login";
+  private authMode: "login" | "register" = "register";
   private cloudSession: CloudSettings = { ...DEFAULT_CLOUD_SETTINGS };
   private debounceTimer: number | null = null;
   private expanded = true;
@@ -278,10 +279,10 @@ export class SearchPanel {
         <div class="vsa-pane vsa-pane-settings" data-pane="settings" hidden>
           <button type="button" class="vsa-back" data-back="more"><span data-back-ico></span> More</button>
           <div class="vsa-settings">
-            <div class="vsa-settings-title">AI model</div>
-            <p class="vsa-settings-help">Key for Chat &amp; Ask. Embeddings stay on-device.</p>
-            <label class="vsa-field"><span>API key</span>
-              <input type="password" class="vsa-set-key" placeholder="••••••••" autocomplete="off" />
+            <div class="vsa-settings-title">Optional AI</div>
+            <p class="vsa-settings-help">Search, topics, marks, and shots work with no key. A key is only for Chat &amp; Ask.</p>
+            <label class="vsa-field"><span>API key <em>(optional)</em></span>
+              <input type="password" class="vsa-set-key" placeholder="Not required" autocomplete="off" />
             </label>
             <label class="vsa-field"><span>Endpoint</span>
               <input type="text" class="vsa-set-url" autocomplete="off" />
@@ -305,28 +306,28 @@ export class SearchPanel {
             <div class="vsa-auth-gate" data-auth-gate>
               <div class="vsa-auth-hero">
                 <div class="vsa-auth-mark" data-auth-mark></div>
-                <div class="vsa-auth-title" data-auth-title>Sign in</div>
-                <p class="vsa-auth-sub" data-auth-sub>Sync notes &amp; screenshots to your private vault.</p>
+                <div class="vsa-auth-title" data-auth-title>Create your account</div>
+                <p class="vsa-auth-sub" data-auth-sub>Optional. Search already works with no key. An account syncs notes &amp; shots.</p>
               </div>
               <div class="vsa-auth-modes">
-                <button type="button" class="vsa-auth-mode is-on" data-auth-mode="login">Log in</button>
-                <button type="button" class="vsa-auth-mode" data-auth-mode="register">Sign up</button>
+                <button type="button" class="vsa-auth-mode" data-auth-mode="login">Log in</button>
+                <button type="button" class="vsa-auth-mode is-on" data-auth-mode="register">Sign up</button>
               </div>
               <form class="vsa-auth-form" data-auth-form autocomplete="on">
-                <label class="vsa-field" data-auth-name-wrap hidden><span>Name</span>
-                  <input type="text" class="vsa-cloud-name" autocomplete="nickname" />
+                <label class="vsa-field" data-auth-name-wrap><span>Full name</span>
+                  <input type="text" class="vsa-cloud-name" autocomplete="name" placeholder="Ada Lovelace" maxlength="80" />
                 </label>
                 <label class="vsa-field"><span>Email</span>
-                  <input type="email" class="vsa-cloud-email" placeholder="you@example.com" autocomplete="username" required />
+                  <input type="email" class="vsa-cloud-email" placeholder="you@work.com" autocomplete="username" required />
                 </label>
                 <label class="vsa-field"><span>Password</span>
                   <div class="vsa-pass-row">
-                    <input type="password" class="vsa-cloud-pass" placeholder="Password" autocomplete="current-password" required minlength="6" />
+                    <input type="password" class="vsa-cloud-pass" placeholder="At least 10 characters" autocomplete="new-password" required minlength="6" />
                     <button type="button" class="vsa-pass-toggle" data-pass-toggle title="Show password"></button>
                   </div>
                 </label>
-                <label class="vsa-field" data-auth-confirm-wrap hidden><span>Confirm</span>
-                  <input type="password" class="vsa-cloud-pass2" autocomplete="new-password" />
+                <label class="vsa-field" data-auth-confirm-wrap><span>Confirm password</span>
+                  <input type="password" class="vsa-cloud-pass2" autocomplete="new-password" placeholder="Type it again" />
                 </label>
                 <button type="submit" class="vsa-auth-submit" data-auth-submit>Log in</button>
                 <p class="vsa-cloud-msg" data-auth-msg role="status"></p>
@@ -705,6 +706,14 @@ export class SearchPanel {
       el instanceof HTMLInputElement ||
       el instanceof HTMLTextAreaElement
     );
+  }
+
+  isOpen(): boolean {
+    return this.expanded;
+  }
+
+  setOpen(open: boolean): void {
+    this.setExpanded(open);
   }
 
   setChatMessages(messages: ChatMessage[]): void {
@@ -1490,7 +1499,7 @@ export class SearchPanel {
         this.handlers.onSyncCloud?.();
       });
 
-    this.setAuthMode("login");
+    this.setAuthMode("register");
   }
 
   private setAuthMode(mode: "login" | "register"): void {
@@ -1529,8 +1538,8 @@ export class SearchPanel {
     if (sub) {
       sub.textContent =
         mode === "register"
-          ? "One free account · notes & board shots stay private in your vault."
-          : "Sign in to sync notes, highlights & screenshots to your private vault.";
+          ? "Optional. Search works now with no key. An account syncs notes, shots, and bio."
+          : "Welcome back. Search still works if you skip this — account is only for sync.";
     }
     if (submit) {
       submit.textContent =
@@ -1562,9 +1571,15 @@ export class SearchPanel {
       this.root.querySelector(".vsa-cloud-pass2") as HTMLInputElement | null
     )?.value;
 
-    if (this.authMode === "register" && pass2 !== undefined && password !== pass2) {
-      setMsg("Passwords do not match", true);
-      return;
+    if (this.authMode === "register") {
+      if (displayName.length < 2) {
+        setMsg("Enter your full name", true);
+        return;
+      }
+      if (pass2 !== undefined && password !== pass2) {
+        setMsg("Passwords do not match", true);
+        return;
+      }
     }
 
     const submit = this.root.querySelector(
@@ -1679,8 +1694,8 @@ export class SearchPanel {
     if (chipAv) chipAv.textContent = signedIn ? accountInitials(c) : "?";
 
     this.highlightsPane.setSyncMessage(
-      signedIn ? "Cloud ready" : "Sign in (avatar) to auto-sync",
-      !signedIn
+      signedIn ? "Cloud ready" : "Saved on this device · no key needed",
+      false
     );
   }
 
@@ -2060,19 +2075,12 @@ export class SearchPanel {
 }
 
 export function injectSearchPanelStyles(): void {
-  document.getElementById("videosearch-ai-styles")?.remove();
-  document.getElementById("videosearch-ai-fonts")?.remove();
-
-  const fonts = document.createElement("link");
-  fonts.id = "videosearch-ai-fonts";
-  fonts.rel = "stylesheet";
-  fonts.href = VSA_FONT_HREF;
-  document.documentElement.appendChild(fonts);
+  if (document.getElementById("videosearch-ai-styles")) return;
 
   const style = document.createElement("style");
   style.id = "videosearch-ai-styles";
   style.textContent = VSA_STYLES;
-  document.documentElement.appendChild(style);
+  (document.head ?? document.documentElement).appendChild(style);
 }
 
 function formatTimestamp(seconds: number): string {
