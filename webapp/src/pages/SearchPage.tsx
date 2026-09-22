@@ -44,7 +44,6 @@ export function SearchPage() {
   useEffect(() => {
     setQ(initial);
     if (initial.trim()) {
-      setHits(search(initial));
       // Auto-run AI when arriving from global ⌘K search with a query
       if (mode === "ai" && session && initial.trim().length >= 2) {
         void (async () => {
@@ -61,12 +60,17 @@ export function SearchPage() {
           }
         })();
       }
-    } else {
-      setHits([]);
     }
     // only re-run when URL query changes, not every mode toggle
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial]);
+
+  // Recompute keyword hits whenever the committed query changes AND whenever
+  // the vault finishes loading — landing on /search?q=… before the vault
+  // fetch resolves must not leave hits stuck empty forever.
+  useEffect(() => {
+    setHits(initial.trim() ? search(initial) : []);
+  }, [initial, search]);
 
   const runKeyword = () => {
     setHits(search(q));

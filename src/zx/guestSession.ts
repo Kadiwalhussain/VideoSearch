@@ -121,7 +121,8 @@ export async function clearLocalUserData(): Promise<void> {
         k.startsWith("vsa_sync_meta_") ||
         k.startsWith("vsa_topics_") ||
         k === "vsa_library_v1" ||
-        k === "vsa_offline_sync_queue_v1"
+        k === "vsa_offline_sync_queue_v1" ||
+        k === "vsa_offline_ops_v1"
       ) {
         remove.push(k);
       }
@@ -143,17 +144,43 @@ export async function offerSaveLocalToCloud(opts?: {
   const cloud = await loadCloudSettings();
   if (!cloud.enabled) return "signed-out";
 
-  const counts = await countLocalUserData();
-  if (!hasLocalUserData(counts)) {
-    await endGuestSession();
-    return "empty";
-  }
-
-  opts?.onStatus?.(
-    "Uploading Saved / Watch later / playlists. Other marks stay on this device."
-  );
+  opts?.onStatus?.("Loading this account from the vault…");
   try {
-    const { pushAllLocalToCloud } = await import("../cloud/cloudSync");
+    const { hydrateLocalFromVault, pushAllLocalToCloud } = await import(
+      "../cloud/cloudSync"
+    );
+    const { enqueueOp, flushOfflineQueue } = await import(
+      "../cloud/offlineSync"
+    );
+
+    // Guest Save / Watch later / playlists become this account's, then replay
+    // queued changes before pulling so the vault copy already includes them.
+    const { adoptGuestLibrary } = await import("./libraryStore");
+    for (const e of await adoptGuestLibrary()) {
+      const meta = { videoId: e.videoId, videoTitle: e.videoTitle, videoUrl: e.videoUrl };
+      if (e.saved) await enqueueOp({ kind: "library", action: "save", ...meta });
+      if (e.watchLater) {
+        await enqueueOp({ kind: "library", action: "watch_later", ...meta });
+      }
+      for (const pl of e.playlists || []) {
+        await enqueueOp({ kind: "library", action: "add_playlist", playlist: pl, ...meta });
+      }
+      if (e.completed) await enqueueOp({ kind: "library", action: "complete", ...meta });
+    }
+    await flushOfflineQueue({ onStatus: opts?.onStatus });
+
+    const pulled = await hydrateLocalFromVault({ onStatus: opts?.onStatus });
+
+    const counts = await countLocalUserData();
+    if (!hasLocalUserData(counts)) {
+      await endGuestSession();
+      opts?.onStatus?.(pulled.message || "Signed in. Vault is ready.");
+      return pulled.videos ? "saved" : "empty";
+    }
+
+    opts?.onStatus?.(
+      "Uploading Saved / Watch later / playlists. Other marks stay on this device."
+    );
     const result = await pushAllLocalToCloud({ onStatus: opts?.onStatus });
     if (!result.ok || result.failed) {
       const { listLibraryEntries } = await import("./libraryStore");
@@ -173,8 +200,10 @@ export async function offerSaveLocalToCloud(opts?: {
     await endGuestSession();
     opts?.onStatus?.(
       result.videos
-        ? "Saved lists are in your account. Unsaved marks stay on this device."
-        : "Signed in. Unsaved marks stay on this device until you Save, Watch later, or add to a playlist."
+        ? `Account ready · ${pulled.videos} in vault · ${result.videos} uploaded from this device`
+        : pulled.videos
+          ? pulled.message
+          : "Signed in. Unsaved marks stay on this device until you Save, Watch later, or add to a playlist."
     );
     return "saved";
   } catch (err) {

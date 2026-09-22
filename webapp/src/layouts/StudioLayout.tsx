@@ -1,9 +1,10 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   BarChart3,
   Camera,
   Chrome,
   Clock,
+  GraduationCap,
   Highlighter,
   History,
   LayoutDashboard,
@@ -22,7 +23,8 @@ import { useSession } from "../store/SessionContext";
 import { useTheme } from "../store/ThemeContext";
 import { useVault } from "../store/VaultContext";
 import { initials } from "../lib/format";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { SessionLoader } from "../components/SessionLoader";
 
 const NAV: Array<{
   to: string;
@@ -37,6 +39,7 @@ const NAV: Array<{
   { to: "/search", label: "AI Search", icon: Sparkles },
   { to: "/history", label: "History", icon: History },
   { to: "/notes", label: "Notes", icon: Highlighter },
+  { to: "/study", label: "Study", icon: GraduationCap },
   { to: "/shots", label: "Shots", icon: Camera },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/extension", label: "Extension", icon: Puzzle },
@@ -60,8 +63,9 @@ const MOBILE_NAV: Array<{
 export function StudioLayout() {
   const { session, logout } = useSession();
   const { toggle, theme } = useTheme();
-  const { stats, refresh, loading } = useVault();
+  const { stats, refresh, loading, error, rows } = useVault();
   const nav = useNavigate();
+  const { pathname } = useLocation();
   const [q, setQ] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -269,7 +273,33 @@ export function StudioLayout() {
         </header>
 
         <main className="view-host" id="viewHost">
-          <Outlet />
+          {/* Dashboard shows its own error card; elsewhere cached rows would look current */}
+          {error && rows.length > 0 && pathname !== "/" ? (
+            <div
+              className="empty"
+              role="status"
+              style={{ marginBottom: 16, borderColor: "rgba(248,113,113,0.4)" }}
+            >
+              Vault is offline · showing your last saved copy. Reconnecting
+              automatically — changes made in the extension will appear when it
+              is back.{" "}
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => void refresh({ force: true })}
+              >
+                Retry now
+              </button>
+            </div>
+          ) : null}
+          {/* Routes are code-split; keep the shell painted while one loads. */}
+          <Suspense
+            fallback={
+              <SessionLoader variant="inline" title="Loading" sub="One moment…" />
+            }
+          >
+            <Outlet />
+          </Suspense>
         </main>
       </div>
 

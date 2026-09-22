@@ -75,7 +75,8 @@ npm run build
 
 Shortcuts on a watch page: **⌘M / Ctrl+M** mark · **⌘C / Ctrl+C** capture (Copy still works if text is selected).
 
-Chrome Web Store upload: [docs/CHROME_WEB_STORE.md](./docs/CHROME_WEB_STORE.md)
+**Publish on the Chrome Web Store** (full process, $5 account → zip → listing → review):  
+[docs/CHROME_WEB_STORE.md](./docs/CHROME_WEB_STORE.md)
 
 ```bash
 npm run dev
@@ -93,6 +94,10 @@ Confirm `curl -sf http://127.0.0.1:8787/health` → `"ok": true`.
 Open `http://127.0.0.1:8787/app/` — same email as the extension.
 
 Full local steps: [docs/SETUP.md](./docs/SETUP.md) · how login stores data: [docs/AUTH_AND_DATA.md](./docs/AUTH_AND_DATA.md)
+
+### Early testers (paid)
+
+You get a private `tester/` folder (not on GitHub). Drop it in this repo and paste the prompt in [docs/TESTERS.md](./docs/TESTERS.md) into Grok / Claude / Cursor. The CLI links every API key and starts the vault.
 
 ### Android & iPhone
 

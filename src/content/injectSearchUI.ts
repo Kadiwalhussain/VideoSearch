@@ -15,14 +15,15 @@ import type { RawCaptionSegment, VideoIndex } from "../types/schema";
 import type { SentimentReport } from "../comments/analyzeSentiment";
 // Type-only — do NOT value-import chatRag (it pulls MiniLM into the UI bundle)
 import type { ChatMessage } from "../qa/chatRag";
-import type { VideoHighlight } from "../storage/highlightsStore";
-import type { VideoScreenshot } from "../storage/screenshotStore";
+import type { VideoHighlight } from "../zx/highlightsStore";
+import type { VideoScreenshot } from "../zx/screenshotStore";
 
 function newMessageId(): string {
   return `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
 const ROOT_ID = "videosearch-ai-root";
+const SLOT_ID = "videosearch-ai-actions-slot";
 const LOG = "[VideoSearch AI]";
 
 const sessionIndex = new Map<string, VideoIndex>();
@@ -293,6 +294,91 @@ function findActionsRow(): HTMLElement | null {
   return null;
 }
 
+function findTopRow(): HTMLElement | null {
+  const selectors = [
+    "ytd-watch-metadata #top-row",
+    "#above-the-fold #top-row",
+    "#top-row.ytd-watch-metadata",
+    "ytd-watch-metadata #owner-and-actions",
+    "#owner-and-actions",
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector<HTMLElement>(sel);
+    if (el && el.isConnected && visibleRect(el)) return el;
+  }
+  return null;
+}
+
+function removeActionsSlot(): void {
+  document.getElementById(SLOT_ID)?.remove();
+}
+
+function hideActionsSlot(): void {
+  const slot = document.getElementById(SLOT_ID);
+  if (!slot) return;
+  slot.style.setProperty("width", "0", "important");
+  slot.style.setProperty("min-width", "0", "important");
+  slot.style.setProperty("max-width", "0", "important");
+  slot.style.setProperty("flex", "0 0 0px", "important");
+  slot.style.setProperty("margin", "0", "important");
+  slot.style.setProperty("height", "0", "important");
+  slot.style.setProperty("min-height", "0", "important");
+}
+
+/** Reserve space in YouTube's owner | actions row so Like/Share are not covered. */
+function ensureActionsSlot(pillW: number, pillH: number): HTMLElement | null {
+  const w = Math.max(132, Math.round(pillW));
+  const h = Math.max(36, Math.round(pillH));
+  let slot = document.getElementById(SLOT_ID) as HTMLElement | null;
+  if (!slot) {
+    slot = document.createElement("div");
+    slot.id = SLOT_ID;
+    slot.setAttribute("aria-hidden", "true");
+  }
+  const applySize = () => {
+    slot!.style.setProperty("flex", `0 0 ${w}px`, "important");
+    slot!.style.setProperty("width", `${w}px`, "important");
+    slot!.style.setProperty("min-width", `${w}px`, "important");
+    slot!.style.setProperty("max-width", `${w}px`, "important");
+    slot!.style.setProperty("height", `${h}px`, "important");
+    slot!.style.setProperty("min-height", `${h}px`, "important");
+    slot!.style.setProperty("margin", "0 8px", "important");
+    slot!.style.setProperty("padding", "0", "important");
+    slot!.style.setProperty("border", "0", "important");
+    slot!.style.setProperty("align-self", "center", "important");
+    slot!.style.setProperty("pointer-events", "none", "important");
+    slot!.style.setProperty("visibility", "hidden", "important");
+    slot!.style.setProperty("display", "block", "important");
+    slot!.style.setProperty("box-sizing", "border-box", "important");
+    slot!.style.setProperty("overflow", "hidden", "important");
+    slot!.style.setProperty("flex-shrink", "0", "important");
+    slot!.style.setProperty("flex-grow", "0", "important");
+  };
+  applySize();
+
+  const topRow = findTopRow();
+  const actionsInRow =
+    topRow?.querySelector<HTMLElement>(":scope > #actions") ||
+    topRow?.querySelector<HTMLElement>("#actions");
+  if (topRow && actionsInRow) {
+    if (slot.parentElement !== topRow || slot.nextElementSibling !== actionsInRow) {
+      topRow.insertBefore(slot, actionsInRow);
+    }
+    applySize();
+    return slot;
+  }
+
+  const buttons = findActionsRow();
+  if (buttons) {
+    if (slot.parentElement !== buttons || slot !== buttons.firstElementChild) {
+      buttons.insertBefore(slot, buttons.firstChild);
+    }
+    applySize();
+    return slot;
+  }
+  return null;
+}
+
 function visibleRect(el: Element): DOMRect | null {
   try {
     const r = el.getBoundingClientRect();
@@ -323,6 +409,7 @@ function attachToHtml(wrap: HTMLElement): void {
 
 /** Expanded panel: overlay on <html> so YouTube cannot destroy it. */
 function placeRoot(wrap: HTMLElement): void {
+  hideActionsSlot();
   attachToHtml(wrap);
   wrap.removeAttribute("data-vsa-anchor");
   wrap.removeAttribute("data-vsa-place");
@@ -355,8 +442,9 @@ function setFixedBox(
 }
 
 /**
- * Collapsed pill stays on <html> (YouTube cannot wipe it) and is visually
- * aligned with the watch-page actions / player. Fallback: under the masthead.
+ * Collapsed pill stays on <html> (YouTube rebuilds Like/Share and would
+ * destroy a docked node). A hidden spacer in #top-row between #owner and
+ * #actions reserves the same width so YT buttons shift instead of colliding.
  */
 function placeCollapsed(wrap: HTMLElement): void {
   attachToHtml(wrap);
@@ -367,6 +455,7 @@ function placeCollapsed(wrap: HTMLElement): void {
   const maxTop = Math.max(margin, window.innerHeight - pillH - margin);
 
   if (document.fullscreenElement) {
+    hideActionsSlot();
     setFixedBox(
       wrap,
       Math.max(margin, window.innerHeight - pillH - 80),
@@ -376,20 +465,27 @@ function placeCollapsed(wrap: HTMLElement): void {
     return;
   }
 
-  const actions = findActionsRow();
-  const actionsRect = actions ? visibleRect(actions) : null;
-  if (actionsRect) {
-    let top = actionsRect.top + (actionsRect.height - pillH) / 2;
-    let left = actionsRect.left - pillW - 8;
-    if (left < margin) {
-      left = Math.min(maxLeft, actionsRect.right - pillW);
-      top = actionsRect.bottom + 6;
-    }
+  const slot = ensureActionsSlot(pillW, pillH);
+  const slotRect = slot ? visibleRect(slot) : null;
+  if (slotRect && slotRect.width >= 80) {
+    const top = slotRect.top + (slotRect.height - pillH) / 2;
     setFixedBox(
       wrap,
       Math.min(maxTop, Math.max(margin, top)),
-      Math.min(maxLeft, Math.max(margin, left)),
-      "actions"
+      Math.min(maxLeft, Math.max(margin, slotRect.left)),
+      "slot"
+    );
+    return;
+  }
+
+  const topRow = findTopRow();
+  const topRect = topRow ? visibleRect(topRow) : null;
+  if (topRect) {
+    setFixedBox(
+      wrap,
+      Math.min(maxTop, Math.max(margin, topRect.bottom + 8)),
+      Math.min(maxLeft, Math.max(margin, topRect.left)),
+      "below-row"
     );
     return;
   }
@@ -399,12 +495,10 @@ function placeCollapsed(wrap: HTMLElement): void {
   );
   const playerRect = player ? visibleRect(player) : null;
   if (playerRect) {
-    const top = playerRect.bottom + 8;
-    const left = playerRect.right - pillW;
     setFixedBox(
       wrap,
-      Math.min(maxTop, Math.max(margin, top)),
-      Math.min(maxLeft, Math.max(margin, left)),
+      Math.min(maxTop, Math.max(margin, playerRect.bottom + 8)),
+      Math.min(maxLeft, Math.max(margin, playerRect.left)),
       "player"
     );
     return;
@@ -471,8 +565,8 @@ async function loadHighlightsForVideo(
   panel: SearchPanel
 ): Promise<void> {
   try {
-    const { loadHighlights } = await import("../storage/highlightsStore");
-    const { loadScreenshots } = await import("../storage/screenshotStore");
+    const { loadHighlights } = await import("../zx/highlightsStore");
+    const { loadScreenshots } = await import("../zx/screenshotStore");
     const items = await loadHighlights(videoId);
     const shots = await loadScreenshots(videoId);
     sessionScreenshots.set(videoId, shots);
@@ -492,7 +586,7 @@ async function addHighlightAtNow(
   try {
     const { getCurrentTime, getDuration } = await import("../player/seekTo");
     const { addHighlightWithMeta, updateHighlight } = await import(
-      "../storage/highlightsStore"
+      "../zx/highlightsStore"
     );
     const { showMarkNotePopup } = await import("../ui/captureFx");
 
@@ -564,9 +658,9 @@ async function captureFrameNow(
       "../ui/captureFx"
     );
     const { newScreenshotId, saveScreenshot } = await import(
-      "../storage/screenshotStore"
+      "../zx/screenshotStore"
     );
-    const { addHighlight } = await import("../storage/highlightsStore");
+    const { addHighlight } = await import("../zx/highlightsStore");
 
     // 1) Flash first (feels instant), capture lighter JPEG for smooth UI
     playShutterFlash();
@@ -742,7 +836,7 @@ async function flushSyncToVault(
   panel: SearchPanel
 ): Promise<void> {
   try {
-    const { isPinnedToVault } = await import("../storage/libraryStore");
+    const { isPinnedToVault } = await import("../zx/libraryStore");
     if (!(await isPinnedToVault(videoId))) {
       panel.setVaultSyncMessage(
         "On this device · Save, Watch later, or Playlist to keep in vault"
@@ -751,8 +845,8 @@ async function flushSyncToVault(
     }
     const title = videoTitleFromPage(videoId);
     const channel = channelFromPage();
-    const { loadHighlights } = await import("../storage/highlightsStore");
-    const { loadScreenshots } = await import("../storage/screenshotStore");
+    const { loadHighlights } = await import("../zx/highlightsStore");
+    const { loadScreenshots } = await import("../zx/screenshotStore");
     const { syncVideoToCloud } = await import("../cloud/cloudSync");
     const highlights = await loadHighlights(videoId);
     const screenshots = await loadScreenshots(videoId);
@@ -799,7 +893,7 @@ async function flushSyncToVault(
     );
     try {
       const { touchCloudSync, touchLocalSave, isBrowserOffline } = await import(
-        "../storage/syncMetaStore"
+        "../zx/syncMetaStore"
       );
       if (result.ok && !result.offlineQueued) {
         const t = await touchCloudSync(videoId);
@@ -824,7 +918,7 @@ async function flushSyncToVault(
     }
   } catch (err) {
     try {
-      const { isPinnedToVault } = await import("../storage/libraryStore");
+      const { isPinnedToVault } = await import("../zx/libraryStore");
       if (!(await isPinnedToVault(videoId))) {
         panel.setVaultSyncMessage(
           "On this device · Save, Watch later, or Playlist to keep in vault"
@@ -900,6 +994,38 @@ function ensureOfflineSyncWatcher(panel: SearchPanel): void {
         id === activeVideoId ? videoTitleFromPage(id) : id,
     });
   });
+  // Bring Studio / other-device changes down while the user is on YouTube
+  void import("../cloud/cloudSync").then(({ startVaultPuller }) => {
+    startVaultPuller(
+      () => {
+        const videoId = activeVideoId;
+        if (activePanel !== panel || !videoId) return;
+        void loadHighlightsForVideo(videoId, panel);
+        void refreshLibraryUi(videoId, panel);
+      },
+      () => currentVideoSnapshot(activeVideoId)
+    );
+  });
+}
+
+/** What the panel shows for one video — used to skip needless repaints. */
+async function currentVideoSnapshot(videoId: string | null): Promise<string> {
+  if (!videoId) return "";
+  try {
+    const { loadHighlights } = await import("../zx/highlightsStore");
+    const { loadScreenshots } = await import("../zx/screenshotStore");
+    const { getLibraryEntry } = await import("../zx/libraryStore");
+    const hs = await loadHighlights(videoId);
+    const shots = await loadScreenshots(videoId);
+    const e = await getLibraryEntry(videoId);
+    return JSON.stringify([
+      hs.map((h) => [h.id, h.note, h.startTime]),
+      shots.map((x) => [x.id, x.note]),
+      [e?.saved, e?.watchLater, e?.playlists],
+    ]);
+  } catch {
+    return "";
+  }
 }
 
 async function refreshLibraryUi(
@@ -907,7 +1033,7 @@ async function refreshLibraryUi(
   panel: SearchPanel
 ): Promise<void> {
   try {
-    const { getLibraryEntry } = await import("../storage/libraryStore");
+    const { getLibraryEntry } = await import("../zx/libraryStore");
     const entry = await getLibraryEntry(videoId);
     panel.setLibraryState({
       saved: Boolean(entry?.saved),
@@ -975,7 +1101,7 @@ async function runLibraryAction(
       // Local fallback when offline / not signed in
       if (/offline|sign in/i.test(result.message)) {
         const { getLibraryEntry, applyLibraryFlags } = await import(
-          "../storage/libraryStore"
+          "../zx/libraryStore"
         );
         const prev = await getLibraryEntry(videoId);
         if (action === "toggle_watch_later") {
@@ -1036,8 +1162,8 @@ async function syncVaultCloud(
   panel.setVaultSyncMessage("Syncing to cloud…");
   try {
     const { syncVideoToCloud } = await import("../cloud/cloudSync");
-    const { loadHighlights } = await import("../storage/highlightsStore");
-    const { loadScreenshots } = await import("../storage/screenshotStore");
+    const { loadHighlights } = await import("../zx/highlightsStore");
+    const { loadScreenshots } = await import("../zx/screenshotStore");
     const { collectPageSources } = await import("../youtube/collectSources");
     const highlights = await loadHighlights(videoId);
     const screenshots = await loadScreenshots(videoId);
@@ -1079,9 +1205,9 @@ async function hydrateLocalVaultUi(
   panel: SearchPanel
 ): Promise<void> {
   try {
-    const { loadSourceLinks } = await import("../storage/sourceLinksStore");
+    const { loadSourceLinks } = await import("../zx/sourceLinksStore");
     const { loadSyncMeta, isBrowserOffline } = await import(
-      "../storage/syncMetaStore"
+      "../zx/syncMetaStore"
     );
     const local = await loadSourceLinks(videoId);
     if (activeVideoId !== videoId) return;
@@ -1125,9 +1251,9 @@ async function persistSourcesForVideo(
 ): Promise<void> {
   if (!videoId || !links.length) return;
   try {
-    const { saveSourceLinks } = await import("../storage/sourceLinksStore");
+    const { saveSourceLinks } = await import("../zx/sourceLinksStore");
     await saveSourceLinks(videoId, links);
-    const { touchLocalSave } = await import("../storage/syncMetaStore");
+    const { touchLocalSave } = await import("../zx/syncMetaStore");
     await touchLocalSave(videoId);
   } catch {
     /* ignore */
@@ -1233,8 +1359,8 @@ async function saveDescriptionLinksToVault(
         "…"
     );
 
-    const { loadHighlights } = await import("../storage/highlightsStore");
-    const { loadScreenshots } = await import("../storage/screenshotStore");
+    const { loadHighlights } = await import("../zx/highlightsStore");
+    const { loadScreenshots } = await import("../zx/screenshotStore");
     const { syncVideoToCloud, updateLibraryOnCloud } = await import(
       "../cloud/cloudSync"
     );
@@ -1281,7 +1407,7 @@ async function saveDescriptionLinksToVault(
       panel.setVaultSyncMessage(msg, Boolean(result.offlineQueued));
       setBioSyncBarStatus("ok", "Synced");
       const { touchCloudSync, touchLocalSave, isBrowserOffline } = await import(
-        "../storage/syncMetaStore"
+        "../zx/syncMetaStore"
       );
       if (result.offlineQueued) {
         const t = await touchLocalSave(videoId);
@@ -1793,7 +1919,7 @@ function requireGuestFormat(): { formatElapsed: (ms: number) => string } {
 
 async function refreshGuestCounts(panel: SearchPanel): Promise<void> {
   try {
-    const { countLocalUserData } = await import("../storage/guestSession");
+    const { countLocalUserData } = await import("../zx/guestSession");
     const c = await countLocalUserData();
     guestCounts = { marks: c.marks, shots: c.shots };
     paintGuestBanner(panel);
@@ -1812,7 +1938,7 @@ function startGuestTicker(panel: SearchPanel): void {
         panel.setGuestBanner(null);
         return;
       }
-      const { ensureGuestSession } = await import("../storage/guestSession");
+      const { ensureGuestSession } = await import("../zx/guestSession");
       const g = await ensureGuestSession();
       guestStartedAt = g.startedAt;
       await refreshGuestCounts(panel);
@@ -1919,7 +2045,7 @@ function mountPanel(videoId: string): void {
       onCloudSettingsSaved: () => {
         void (async () => {
           const { offerSaveLocalToCloud } = await import(
-            "../storage/guestSession"
+            "../zx/guestSession"
           );
           const result = await offerSaveLocalToCloud({
             onStatus: (msg, isError) =>
@@ -1927,8 +2053,9 @@ function mountPanel(videoId: string): void {
           });
           panel.setGuestBanner(null);
           stopGuestTicker();
-          if (result === "empty") return;
           await loadHighlightsForVideo(videoId, panel);
+          await refreshLibraryUi(videoId, panel);
+          if (result === "empty") return;
         })();
       },
       onSaveYoutubePlaylist: () => {
@@ -1942,7 +2069,7 @@ function mountPanel(videoId: string): void {
       onHighlightNote: (id, note) => {
         void (async () => {
           const { updateHighlight } = await import(
-            "../storage/highlightsStore"
+            "../zx/highlightsStore"
           );
           const list = await updateHighlight(videoId, id, { note });
           await paintHighlights(videoId, panel, list);
@@ -1952,19 +2079,24 @@ function mountPanel(videoId: string): void {
       onDeleteHighlight: (id) => {
         void (async () => {
           const { deleteHighlight } = await import(
-            "../storage/highlightsStore"
+            "../zx/highlightsStore"
           );
           const list = await deleteHighlight(videoId, id);
           await paintHighlights(videoId, panel, list);
+          // Sync merges by id, so the vault needs an explicit delete
+          const { runOrQueueOp } = await import("../cloud/offlineSync");
+          void runOrQueueOp({ kind: "delete_mark", videoId, itemId: id });
           queueAutoSync(videoId, panel, 500);
         })();
       },
       onDeleteScreenshot: (id) => {
         void (async () => {
           const { deleteScreenshot, loadScreenshots } = await import(
-            "../storage/screenshotStore"
+            "../zx/screenshotStore"
           );
           await deleteScreenshot(id);
+          const { runOrQueueOp } = await import("../cloud/offlineSync");
+          void runOrQueueOp({ kind: "delete_shot", videoId, itemId: id });
           const shots = await loadScreenshots(videoId);
           sessionScreenshots.set(videoId, shots);
           panel.setScreenshots(shots);
@@ -1975,7 +2107,7 @@ function mountPanel(videoId: string): void {
       onScreenshotNote: (id, note) => {
         void (async () => {
           const { updateScreenshot, loadScreenshots } = await import(
-            "../storage/screenshotStore"
+            "../zx/screenshotStore"
           );
           await updateScreenshot(id, { note });
           const shots = await loadScreenshots(videoId);
@@ -2037,6 +2169,30 @@ function mountPanel(videoId: string): void {
     void loadHighlightsForVideo(videoId, panel);
     void refreshLibraryUi(videoId, panel);
     void loadPlaylistsForPanel(panel);
+    // Break button next to the time + resume where the user left off
+    void import("../player/resumePoint").then((m) =>
+      m.startResumeTracking(videoId, {
+        getTitle: () => videoTitleFromPage(videoId),
+        getChannel: () => channelFromPage(),
+      })
+    );
+    window.setTimeout(() => {
+      if (activeVideoId !== videoId) return;
+      void (async () => {
+        try {
+          const { recordWatchToCloud } = await import("../cloud/cloudSync");
+          const ch = channelFromPage();
+          await recordWatchToCloud({
+            videoId,
+            videoTitle: videoTitleFromPage(videoId),
+            channelTitle: ch.channelTitle,
+            channelUrl: ch.channelUrl,
+          });
+        } catch {
+          /* history is best-effort */
+        }
+      })();
+    }, 1200);
     // Offline queue watcher + soft sync of current video
     ensureOfflineSyncWatcher(panel);
     void (async () => {
@@ -2136,9 +2292,11 @@ function mountPanel(videoId: string): void {
 function removePanel(force = false): void {
   if (!force && activePanel?.isInputFocused()) return;
   stopGuestTicker();
+  removeActionsSlot();
   document.getElementById(ROOT_ID)?.remove();
   activePanel = null;
   activeVideoId = null;
+  void import("../player/resumePoint").then((m) => m.stopResumeTracking());
   void import("../youtube/descriptionLinks")
     .then((m) => m.removeDescriptionLinksChip())
     .catch(() => undefined);
@@ -2169,6 +2327,7 @@ function injectOrUpdate(): void {
         });
         timelineReady = false;
       }
+      removeActionsSlot();
       document.getElementById(ROOT_ID)?.remove();
       activePanel = null;
       activeVideoId = null;
@@ -2228,6 +2387,8 @@ function runWatchShortcut(action: HotkeyAction): boolean {
 function startWatchers(): void {
   if (watchersStarted) return;
   watchersStarted = true;
+
+  void import("../youtube/playlistTicks").then((m) => m.startPlaylistTicks());
 
   let lastUrl = location.href;
   let raf = 0;

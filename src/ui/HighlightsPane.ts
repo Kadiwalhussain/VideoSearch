@@ -2,12 +2,12 @@
  * Notes pane — premium marks + screenshots with live cloud status.
  */
 
-import type { VideoHighlight } from "../storage/highlightsStore";
-import type { VideoScreenshot } from "../storage/screenshotStore";
+import type { VideoHighlight } from "../zx/highlightsStore";
+import type { VideoScreenshot } from "../zx/screenshotStore";
 import { formatTimestamp } from "../player/seekTo";
 import { iconHtml } from "./icons";
 import { flashNoteSaved } from "./captureFx";
-import { formatSyncAgo } from "../storage/syncMetaStore";
+import { formatSyncAgo } from "../zx/syncMetaStore";
 
 export type CloudSyncState =
   | "idle"

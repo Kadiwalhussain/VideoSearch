@@ -27,7 +27,7 @@ import {
   ensureGuestSession,
   formatElapsed,
   offerSaveLocalToCloud,
-} from "../storage/guestSession";
+} from "../zx/guestSession";
 import {
   clerkConfigured,
   clerkSignOut,
@@ -213,7 +213,9 @@ async function main(): Promise<void> {
         await syncClerkSessionToVault();
         const s = await loadCloudSettings();
         applySession(s);
-        await offerSaveLocalToCloud();
+        await offerSaveLocalToCloud({
+          onStatus: (m, isError) => setMsg(m, Boolean(isError)),
+        });
         await completeOnboarding(false);
       }
     } catch (err) {
@@ -278,7 +280,7 @@ async function main(): Promise<void> {
     });
     applySession(session);
     history.replaceState({}, "", location.pathname);
-    const { offerSaveLocalToCloud } = await import("../storage/guestSession");
+    const { offerSaveLocalToCloud } = await import("../zx/guestSession");
     await offerSaveLocalToCloud();
     await completeOnboarding(false);
   }
@@ -413,7 +415,7 @@ async function main(): Promise<void> {
         session = saved;
         setMsg(`Signed in as ${saved.email}`);
         const { offerSaveLocalToCloud } = await import(
-          "../storage/guestSession"
+          "../zx/guestSession"
         );
         await offerSaveLocalToCloud({
           onStatus: (m, isError) => setMsg(m, Boolean(isError)),
@@ -436,7 +438,7 @@ async function main(): Promise<void> {
       session = saved;
       setMsg(`Signed in as ${saved.email}`);
       const { offerSaveLocalToCloud } = await import(
-        "../storage/guestSession"
+        "../zx/guestSession"
       );
       await offerSaveLocalToCloud({
         onStatus: (msg, isError) => setMsg(msg, Boolean(isError)),
