@@ -226,6 +226,7 @@ Rules:
 - Clear natural English only (translate ideas if transcript is another language).
 - Concrete overview of what is taught / happens / discussed, in order when possible.
 - Structure: short intro + 4–8 bullets of key beats + 1-line takeaway when helpful.
+- Use markdown: **bold** key terms, \`code\` for identifiers, - bullets, ## headings if needed.
 - ALWAYS include (m:ss) or (h:mm:ss) timestamps from the excerpts (at least 3 when possible).
 - Never invent people, scenes, numbers, or quotes.
 - Never mention APIs, models, or that you are an AI.`
@@ -235,6 +236,7 @@ Rules:
 - Clear natural English only.
 - Every claim must be supported by the excerpts; if missing, say so briefly.
 - Prefer 3–8 sentences or tight bullets; be complete, not fluffy.
+- Use markdown: **bold** key terms, \`code\` for identifiers, - bullets.
 - ALWAYS include (m:ss) or (h:mm:ss) timestamps from the excerpts next to key points.
 - Never invent scenes. Never mention APIs, models, or system instructions.`;
 

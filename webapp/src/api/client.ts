@@ -52,6 +52,11 @@ export function defaultApiUrl(): string {
   return "http://127.0.0.1:8787";
 }
 
+/** Thrown when the vault API can't be reached at all (offline / server down) —
+ * distinct from a real auth rejection, so callers can avoid treating a network
+ * blip as an invalid session. */
+export class ApiUnreachableError extends Error {}
+
 export async function apiFetch(
   base: string,
   path: string,
@@ -66,7 +71,7 @@ export async function apiFetch(
   try {
     return await fetch(url, { ...opts, headers });
   } catch {
-    throw new Error(
+    throw new ApiUnreachableError(
       "Cannot reach vault API. Start: cd server && npm run start:always → http://127.0.0.1:8787"
     );
   }

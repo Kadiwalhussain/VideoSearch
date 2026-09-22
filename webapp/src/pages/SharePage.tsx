@@ -14,6 +14,7 @@ import { defaultApiUrl } from "../api/client";
 import { fetchSharedCard } from "../api/vault";
 import { formatTime, ytThumb, ytWatchUrl } from "../lib/format";
 import { isUsefulSource } from "../lib/sourceFilter";
+import { SharedPlaylist } from "../components/SharedPlaylist";
 
 function kindLabel(kind?: string): string {
   const map: Record<string, string> = {
@@ -83,7 +84,9 @@ export function SharePage() {
         <header className="share-top">
           <div className="share-brand">
             <Share2 size={16} />
-            <span>VideoSearch · Shared card</span>
+            <span>
+              VideoSearch · Shared {data?.kind === "playlist" ? "playlist" : "card"}
+            </span>
           </div>
           <Link className="btn-notes" to="/login">
             Open Studio
@@ -104,6 +107,13 @@ export function SharePage() {
               Go to Studio
             </Link>
           </div>
+        ) : snap && data?.kind === "playlist" ? (
+          <SharedPlaylist
+            name={snap.playlistName || "Playlist"}
+            sharedBy={snap.sharedBy}
+            videos={snap.videos || []}
+            expiresAt={data.expiresAt}
+          />
         ) : snap ? (
           <article
             className={`share-card glass-card share-card-pro ${ready ? "is-in" : ""}`}

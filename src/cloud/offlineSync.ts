@@ -59,9 +59,312 @@ async function writeQueue(state: QueueState): Promise<void> {
   });
 }
 
+// ── Pending operations (library flags, history, playlist imports) ──────────
+// The video-id queue above only re-uploads marks/shots. These ops carry the
+// things that have no marks behind them. Actions are stored absolute (never
+// toggles) so a replay is idempotent even if a request landed but its
+// response was lost.
+
+const OPS_KEY = "vsa_offline_ops_v1";
+const MAX_OPS = 500;
+
+export type AbsoluteLibraryAction =
+  | "save"
+  | "unsave"
+  | "watch_later"
+  | "unwatch_later"
+  | "add_playlist"
+  | "remove_playlist"
+  | "complete"
+  | "uncomplete";
+
+type OpBase = {
+  id: string;
+  /** Account the op belongs to; "" = made as guest, claimed by next sign-in */
+  userId: string;
+  at: number;
+};
+
+export type PendingOp =
+  | (OpBase & {
+      kind: "library";
+      videoId: string;
+      action: AbsoluteLibraryAction;
+      playlist?: string;
+      videoTitle?: string;
+      videoUrl?: string;
+    })
+  | (OpBase & {
+      kind: "view";
+      videoId: string;
+      videoTitle?: string;
+      channelTitle?: string;
+      channelUrl?: string;
+      viewedAt: number;
+    })
+  | (OpBase & {
+      kind: "progress";
+      videoId: string;
+      position: number;
+      duration: number;
+      progressKind: "break" | "auto";
+      /** When the position was recorded (older replays never win) */
+      recordedAt: number;
+      /** Full break log for the video (merged by id on the vault) */
+      breaks?: Array<{
+        id: string;
+        position: number;
+        startedAt: number;
+        endedAt: number | null;
+      }>;
+      videoTitle?: string;
+      channelTitle?: string;
+      channelUrl?: string;
+    })
+  | (OpBase & { kind: "delete_mark"; videoId: string; itemId: string })
+  | (OpBase & { kind: "delete_shot"; videoId: string; itemId: string })
+  | (OpBase & {
+      kind: "playlist_import";
+      playlistName: string;
+      playlistId?: string;
+      videos: Array<{
+        videoId: string;
+        videoTitle?: string;
+        channelTitle?: string;
+        channelUrl?: string;
+        videoUrl?: string;
+      }>;
+    });
+
+type NewOp = PendingOp extends infer T
+  ? T extends PendingOp
+    ? Omit<T, "id" | "userId" | "at">
+    : never
+  : never;
+
+/** Ops with the same slot replace each other (last intent wins). */
+function opSlot(op: PendingOp | NewOp): string {
+  switch (op.kind) {
+    case "library": {
+      const a = op.action;
+      if (a === "save" || a === "unsave") return `lib:${op.videoId}:save`;
+      if (a === "watch_later" || a === "unwatch_later") {
+        return `lib:${op.videoId}:wl`;
+      }
+      if (a === "complete" || a === "uncomplete") {
+        return `lib:${op.videoId}:done`;
+      }
+      return `lib:${op.videoId}:pl:${(op.playlist || "").toLowerCase()}`;
+    }
+    case "view":
+      return `view:${op.videoId}`;
+    case "progress":
+      return `progress:${op.videoId}`;
+    case "delete_mark":
+    case "delete_shot":
+      return `${op.kind}:${op.itemId}`;
+    case "playlist_import":
+      return `import:${(op.playlistId || op.playlistName).toLowerCase()}`;
+  }
+}
+
+async function readOps(): Promise<PendingOp[]> {
+  try {
+    const data = await chrome.storage.local.get(OPS_KEY);
+    const raw = data[OPS_KEY];
+    if (Array.isArray(raw)) return raw.filter((o) => o && o.kind && o.id);
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+async function writeOps(ops: PendingOp[]): Promise<void> {
+  await chrome.storage.local.set({ [OPS_KEY]: ops.slice(-MAX_OPS) });
+}
+
+async function currentUserId(): Promise<string> {
+  const s = await loadCloudSettings();
+  return s.enabled && s.userId ? s.userId : "";
+}
+
+/** Ops the signed-in user (or a not-yet-claimed guest) is waiting on. */
+function opsForUser(ops: PendingOp[], userId: string): PendingOp[] {
+  return ops.filter((o) => o.userId === userId || o.userId === "");
+}
+
+/** Queue a vault write to replay once the API is reachable. */
+export async function enqueueOp(op: NewOp): Promise<number> {
+  const userId = await currentUserId();
+  const slot = opSlot(op);
+  const ops = (await readOps()).filter(
+    (o) => !(o.userId === userId && opSlot(o) === slot)
+  );
+  ops.push({
+    ...op,
+    id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+    userId,
+    at: Date.now(),
+  } as PendingOp);
+  await writeOps(ops);
+  return getPendingSyncCount();
+}
+
+async function removeOp(id: string): Promise<void> {
+  await writeOps((await readOps()).filter((o) => o.id !== id));
+}
+
+/** Mark / shot ids deleted on this device but not yet confirmed by the vault. */
+export async function listPendingDeletedIds(): Promise<Set<string>> {
+  const userId = await currentUserId();
+  const out = new Set<string>();
+  for (const o of opsForUser(await readOps(), userId)) {
+    if (o.kind === "delete_mark" || o.kind === "delete_shot") out.add(o.itemId);
+  }
+  return out;
+}
+
+/** Videos whose library flags still have an un-replayed local change. */
+export async function listPendingLibraryVideoIds(): Promise<Set<string>> {
+  const userId = await currentUserId();
+  const out = new Set<string>();
+  for (const o of opsForUser(await readOps(), userId)) {
+    if (o.kind === "library") out.add(o.videoId);
+  }
+  return out;
+}
+
+type ReplayOutcome = "done" | "drop" | "stop_offline" | "stop_auth";
+
+async function replayOp(op: PendingOp, token: string): Promise<ReplayOutcome> {
+  const settings = await loadCloudSettings();
+  let path: string;
+  let body: unknown;
+  let method = "POST";
+  if (op.kind === "delete_mark" || op.kind === "delete_shot") {
+    method = "DELETE";
+    body = undefined;
+    const kind = op.kind === "delete_mark" ? "highlights" : "screenshots";
+    path = `/api/vault/${encodeURIComponent(op.videoId)}/${kind}/${encodeURIComponent(op.itemId)}`;
+  } else if (op.kind === "progress") {
+    path = "/api/vault/progress";
+    body = {
+      videoId: op.videoId,
+      position: op.position,
+      duration: op.duration,
+      kind: op.progressKind,
+      at: op.recordedAt,
+      breaks: op.breaks,
+      videoTitle: op.videoTitle,
+      channelTitle: op.channelTitle,
+      channelUrl: op.channelUrl,
+    };
+  } else if (op.kind === "library") {
+    path = "/api/vault/library";
+    body = {
+      videoId: op.videoId,
+      videoTitle: op.videoTitle,
+      videoUrl:
+        op.videoUrl || `https://www.youtube.com/watch?v=${op.videoId}`,
+      action: op.action,
+      playlist: op.playlist,
+    };
+  } else if (op.kind === "view") {
+    path = "/api/vault/view";
+    body = {
+      videoId: op.videoId,
+      videoTitle: op.videoTitle,
+      videoUrl: `https://www.youtube.com/watch?v=${op.videoId}`,
+      channelTitle: op.channelTitle,
+      channelUrl: op.channelUrl,
+      watched: true,
+      lastViewedAt: op.viewedAt,
+    };
+  } else {
+    path = "/api/vault/playlist/import";
+    body = {
+      playlistName: op.playlistName,
+      playlistId: op.playlistId,
+      videos: op.videos.slice(0, 250),
+    };
+  }
+
+  for (const base of vaultUrlAlternates(settings.projectUrl)) {
+    let res: Response;
+    try {
+      res = await vaultHttp(`${base}${path}`, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch {
+      continue; // try the next alternate base
+    }
+    if (res.ok) return "done";
+    // Already gone from the vault — the delete has nothing left to do
+    if (method === "DELETE" && res.status === 404) return "done";
+    if (res.status === 401 || res.status === 403) return "stop_auth";
+    if (res.status >= 500 || res.status === 429) return "stop_offline";
+    // Other 4xx: the payload itself is bad — retrying will never succeed
+    return "drop";
+  }
+  return "stop_offline";
+}
+
+/**
+ * Send one op now if signed in and reachable; otherwise queue it.
+ * Returns true when the vault confirmed it.
+ */
+export async function runOrQueueOp(op: NewOp): Promise<boolean> {
+  const settings = await loadCloudSettings();
+  if (settings.enabled && settings.apiKey) {
+    const userId = await currentUserId();
+    const outcome = await replayOp(
+      { ...op, id: "now", userId, at: Date.now() } as PendingOp,
+      settings.apiKey
+    );
+    if (outcome === "done" || outcome === "drop") return outcome === "done";
+  }
+  await enqueueOp(op);
+  return false;
+}
+
+/**
+ * Replay queued library / history / playlist ops in order.
+ * Stops at the first network or auth failure so order is preserved.
+ */
+async function replayPendingOps(
+  token: string,
+  onStatus?: (msg: string, isError?: boolean) => void
+): Promise<{ replayed: number; stopped: ReplayOutcome | null }> {
+  const userId = await currentUserId();
+  const mine = opsForUser(await readOps(), userId);
+  if (!mine.length) return { replayed: 0, stopped: null };
+
+  onStatus?.(
+    `Vault back online · replaying ${mine.length} offline change${mine.length === 1 ? "" : "s"}…`
+  );
+  let replayed = 0;
+  for (const op of mine) {
+    const outcome = await replayOp(op, token);
+    if (outcome === "done" || outcome === "drop") {
+      await removeOp(op.id);
+      if (outcome === "done") replayed += 1;
+      continue;
+    }
+    return { replayed, stopped: outcome };
+  }
+  return { replayed, stopped: null };
+}
+
 export async function getPendingSyncCount(): Promise<number> {
   const q = await readQueue();
-  return q.videoIds.length;
+  const userId = await currentUserId();
+  const ops = opsForUser(await readOps(), userId);
+  return q.videoIds.length + ops.length;
 }
 
 export async function getPendingSyncIds(): Promise<string[]> {
@@ -214,19 +517,39 @@ export async function flushOfflineQueue(
 
   flushing = true;
   try {
+    // Library flags / history / playlist imports first, so the rows exist
+    // with the right flags before marks are merged into them.
+    const ops = await replayPendingOps(settings.apiKey, handlers.onStatus);
+    if (ops.stopped) {
+      const pending = await getPendingSyncCount();
+      const message =
+        ops.stopped === "stop_auth"
+          ? `Session expired · ${pending} change${pending === 1 ? "" : "s"} kept on this device — log in again`
+          : `Vault offline · ${pending} change${pending === 1 ? "" : "s"} saved on this device`;
+      handlers.onStatus?.(message, true);
+      return {
+        ok: false,
+        synced: ops.replayed,
+        failed: 0,
+        pending,
+        message,
+        wasOffline: ops.stopped === "stop_offline",
+      };
+    }
+
     const { syncVideoToCloud } = await import("./cloudSync");
     const { listLocalHighlightVideoIds, loadHighlights } = await import(
-      "../storage/highlightsStore"
+      "../zx/highlightsStore"
     );
     const { loadAllScreenshots, loadScreenshots } = await import(
-      "../storage/screenshotStore"
+      "../zx/screenshotStore"
     );
 
     const q = await readQueue();
     const idSet = new Set(q.videoIds);
 
     if (opts?.includeAllLocal) {
-      const { isPinnedToVault } = await import("../storage/libraryStore");
+      const { isPinnedToVault } = await import("../zx/libraryStore");
       for (const id of await listLocalHighlightVideoIds()) {
         if (await isPinnedToVault(id)) idSet.add(id);
       }
@@ -243,13 +566,16 @@ export async function flushOfflineQueue(
 
     const videoIds = [...idSet];
     if (videoIds.length === 0) {
-      handlers.onStatus?.("Everything is synced");
+      const message = ops.replayed
+        ? `Cloud sync complete · ${ops.replayed} offline change${ops.replayed === 1 ? "" : "s"} uploaded`
+        : "Everything is synced";
+      handlers.onStatus?.(message);
       return {
         ok: true,
-        synced: 0,
+        synced: ops.replayed,
         failed: 0,
         pending: 0,
-        message: "Everything is synced",
+        message,
         wasOffline: false,
       };
     }
@@ -258,7 +584,7 @@ export async function flushOfflineQueue(
       `Vault back online · syncing ${videoIds.length} video${videoIds.length === 1 ? "" : "s"}…`
     );
 
-    let synced = 0;
+    let synced = ops.replayed;
     let failed = 0;
 
     for (let i = 0; i < videoIds.length; i++) {
@@ -267,7 +593,7 @@ export async function flushOfflineQueue(
         `Syncing ${i + 1}/${videoIds.length} to cloud…`
       );
       try {
-        const { isPinnedToVault } = await import("../storage/libraryStore");
+        const { isPinnedToVault } = await import("../zx/libraryStore");
         if (!(await isPinnedToVault(videoId))) {
           await dequeueVideoSync(videoId);
           continue;

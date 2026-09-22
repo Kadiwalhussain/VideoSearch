@@ -229,88 +229,31 @@ export async function analyzeComments(
   };
 }
 
-/** Sync wrapper kept for any legacy callers — prefer analyzeComments. */
-export function analyzeCommentsSync(
-  comments: YtComment[],
-  meta?: { totalReported?: number | null; truncated?: boolean; videoId?: string }
-): SentimentReport {
-  const videoId = meta?.videoId ?? "unknown";
-  const unique = dedupeComments(comments);
-  const scored = unique.map((c) => {
-    const s = lexiconScore(c.text);
-    return {
-      id: c.id,
-      author: c.author,
-      text: c.text,
-      likes: c.likes,
-      publishedText: c.publishedText,
-      score: s.score,
-      label: s.label,
-      source: "lexicon" as const,
-    };
-  });
-  return finalizeSync(videoId, scored, meta);
-}
+/** Sync wrapper — unused; live path is analyzeComments (async + ML). */
+// export function analyzeCommentsSync(
+//   comments: YtComment[],
+//   meta?: { totalReported?: number | null; truncated?: boolean; videoId?: string }
+// ): SentimentReport {
+//   const videoId = meta?.videoId ?? "unknown";
+//   const unique = dedupeComments(comments);
+//   const scored = unique.map((c) => {
+//     const s = lexiconScore(c.text);
+//     return {
+//       id: c.id,
+//       author: c.author,
+//       text: c.text,
+//       likes: c.likes,
+//       publishedText: c.publishedText,
+//       score: s.score,
+//       label: s.label,
+//       source: "lexicon" as const,
+//     };
+//   });
+//   return finalizeSync(videoId, scored, meta);
+// }
 
-function finalizeSync(
-  videoId: string,
-  scored: ScoredComment[],
-  meta?: { totalReported?: number | null; truncated?: boolean }
-): SentimentReport {
-  let positive = 0;
-  let negative = 0;
-  let neutral = 0;
-  let sum = 0;
-  for (const c of scored) {
-    sum += c.score;
-    if (c.label === "positive") positive += 1;
-    else if (c.label === "negative") negative += 1;
-    else neutral += 1;
-  }
-  const n = scored.length || 1;
-  const overallScore = sum / n;
-  const overallLabel = labelFromScore(overallScore, 0.06);
-  const positivePct = Math.round((positive / n) * 100);
-  const negativePct = Math.round((negative / n) * 100);
-  const neutralPct = Math.max(0, 100 - positivePct - negativePct);
-  const themes = extractThemes(scored, 8);
-  return {
-    videoId,
-    totalAnalyzed: scored.length,
-    totalReported: meta?.totalReported ?? null,
-    truncated: Boolean(meta?.truncated),
-    positive,
-    negative,
-    neutral,
-    positivePct,
-    negativePct,
-    neutralPct,
-    overallScore,
-    overallLabel,
-    summary: buildSummary({
-      overallLabel,
-      positivePct,
-      negativePct,
-      neutralPct,
-      themes,
-      total: scored.length,
-      engine: "lexicon",
-    }),
-    themes,
-    topPositive: [...scored]
-      .filter((c) => c.label === "positive")
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5),
-    topNegative: [...scored]
-      .filter((c) => c.label === "negative")
-      .sort((a, b) => a.score - b.score)
-      .slice(0, 5),
-    samples: pickSamples(scored, 6),
-    fingerprint: buildFingerprint(videoId, scored),
-    engine: "lexicon",
-    analyzedAt: Date.now(),
-  };
-}
+// unused — only called by analyzeCommentsSync (commented out)
+// function finalizeSync(...) { ... }
 
 function dedupeComments(comments: YtComment[]): YtComment[] {
   const seen = new Set<string>();

@@ -1,6 +1,6 @@
 # Local setup (Chrome + vault)
 
-For a private tester pack with filled keys, use a local `tester/` folder (gitignored). This page is the public path.
+Early paying testers: private `tester/` folder + paste the prompt in [TESTERS.md](./TESTERS.md) into a coding CLI. This page is the public path (no live keys).
 
 ## Requirements
 

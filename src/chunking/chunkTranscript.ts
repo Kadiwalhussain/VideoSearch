@@ -156,32 +156,5 @@ function buildChunk(
   };
 }
 
-/** Convenience stats for console verification. */
-export function summarizeChunks(chunks: TranscriptChunk[]): {
-  count: number;
-  avgDurationSec: number;
-  minDurationSec: number;
-  maxDurationSec: number;
-  totalTextChars: number;
-} {
-  if (chunks.length === 0) {
-    return {
-      count: 0,
-      avgDurationSec: 0,
-      minDurationSec: 0,
-      maxDurationSec: 0,
-      totalTextChars: 0,
-    };
-  }
-
-  const durations = chunks.map((c) => Math.max(0, c.endTime - c.startTime));
-  const sum = durations.reduce((a, b) => a + b, 0);
-
-  return {
-    count: chunks.length,
-    avgDurationSec: sum / durations.length,
-    minDurationSec: Math.min(...durations),
-    maxDurationSec: Math.max(...durations),
-    totalTextChars: chunks.reduce((n, c) => n + c.text.length, 0),
-  };
-}
+/** Unused debug helper — live indexing does not call this. */
+// export function summarizeChunks(chunks: TranscriptChunk[]): { ... }

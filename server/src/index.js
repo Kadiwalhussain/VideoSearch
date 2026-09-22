@@ -8,8 +8,10 @@ import cors from "cors";
 import morgan from "morgan";
 import mongoose from "mongoose";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
-import { User, VaultVideo, SharedCard } from "./models.js";
+import { User, VaultVideo, SharedCard, StudyCard } from "./models.js";
+import { mountStudy } from "./study.js";
 import { supabaseStatus } from "./supabaseMirror.js";
 import {
   extractSourcesFromBio,
@@ -36,6 +38,7 @@ import {
   assertJwtSecret,
   authRateLimit,
   clientError,
+  configureCsp,
   corsOrigin,
   IS_PROD,
   MAX_SHOT_BYTES,
@@ -117,6 +120,20 @@ assertJwtSecret();
 
 const app = express();
 app.disable("x-powered-by");
+
+// Only trust X-Forwarded-* when this vault actually sits behind a proxy you
+// control. Left off, every client behind a proxy shares one rate-limit bucket;
+// turned on without a proxy, clients can spoof their IP past the limiter.
+const TRUST_PROXY = process.env.TRUST_PROXY || "";
+if (TRUST_PROXY && TRUST_PROXY !== "0" && TRUST_PROXY !== "false") {
+  app.set("trust proxy", /^\d+$/.test(TRUST_PROXY) ? Number(TRUST_PROXY) : TRUST_PROXY);
+}
+
+// Media routes accept ?token= for <img> tags — keep it out of access logs.
+morgan.token("url", (req) => {
+  const raw = req.originalUrl || req.url || "";
+  return raw.replace(/([?&](?:token|key)=)[^&]+/gi, "$1[redacted]");
+});
 // Must run before cors() — Chrome's Local Network Access OPTIONS preflight
 // is answered by cors() and never reaches a later middleware.
 app.use((req, res, next) => {
@@ -145,6 +162,19 @@ app.use(
   })
 );
 app.use("/api", apiRateLimit());
+
+// Hash the SPA's inline scripts (the pre-paint theme setter) so CSP can stay
+// strict. Re-run on every boot, so rebuilding the webapp can't break it.
+try {
+  const indexHtml = fs.readFileSync(path.join(WEBAPP_DIR, "index.html"), "utf8");
+  const n = configureCsp(indexHtml);
+  console.info(`[vault-api] CSP active · ${n} inline script hash(es) allowed`);
+} catch {
+  configureCsp("");
+  console.warn(
+    "[vault-api] webapp/dist/index.html not found — CSP active without inline script hashes (run: npm run studio:build)"
+  );
+}
 
 // Full vault UI — React SPA (vite build → webapp/dist)
 app.use(
@@ -562,7 +592,9 @@ function isSafeRedirectUrl(url) {
     const u = new URL(url);
     if (u.username || u.password) return false;
     const host = u.hostname.toLowerCase();
-    if (host === "localhost" || host === "127.0.0.1") return true;
+    // Loopback is a dev convenience only — in production it would let a stored
+    // imageUrl bounce a viewer at their own machine.
+    if (!IS_PROD && (host === "localhost" || host === "127.0.0.1")) return true;
     if (host.endsWith(".supabase.co")) return true;
     if (/\.r2\.dev$/.test(host) || /\.r2\.cloudflarestorage\.com$/.test(host)) {
       return true;
@@ -769,15 +801,23 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
       apiBaseFromReq(req)
     );
 
+    const deadMarks = new Set((existing?.deletedHighlightIds || []).map(String));
+    const deadShots = new Set((existing?.deletedScreenshotIds || []).map(String));
+    const alive = (dead) => (item) => item?.id && !dead.has(String(item.id));
+
     const clientHighlights = Array.isArray(highlights) ? highlights : [];
-    const nextHighlights = replaceHighlights
-      ? clientHighlights
-      : mergeById(existing?.highlights || [], clientHighlights);
+    const nextHighlights = (
+      replaceHighlights
+        ? clientHighlights
+        : mergeById(existing?.highlights || [], clientHighlights)
+    ).filter(alive(deadMarks));
 
     // Screenshots: merge by id; processed.list already includes R2 keys
-    const nextScreenshots = replaceScreenshots
-      ? processed.list
-      : mergeScreenshots(existing?.screenshots || [], processed.list);
+    const nextScreenshots = (
+      replaceScreenshots
+        ? processed.list
+        : mergeScreenshots(existing?.screenshots || [], processed.list)
+    ).filter(alive(deadShots));
 
     // Description / bio source links — real materials only (not default Google/YT noise)
     const clientLinks = Array.isArray(sourceLinks)
@@ -1061,9 +1101,24 @@ function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
         ? new Date(r.watchLaterAt).getTime()
         : null,
       playlists: Array.isArray(r.playlists) ? r.playlists : [],
+      completed: Boolean(r.completed),
+      completedAt: r.completedAt ? new Date(r.completedAt).getTime() : null,
       updatedAt: updatedMs,
       lastViewedAt: viewedMs,
       createdAt: createdMs,
+      deletedHighlightIds: r.deletedHighlightIds || [],
+      deletedScreenshotIds: r.deletedScreenshotIds || [],
+      durationSec: r.durationSec || r.progress?.duration || 0,
+      breaks: cleanBreaks(r.breaks),
+      progress:
+        r.progress?.updatedAt && r.progress.position > 0
+          ? {
+              position: r.progress.position,
+              duration: r.progress.duration || r.durationSec || 0,
+              kind: r.progress.kind === "break" ? "break" : "auto",
+              updatedAt: new Date(r.progress.updatedAt).getTime(),
+            }
+          : null,
     },
   };
 }
@@ -1241,7 +1296,8 @@ app.get("/api/vault/shot/:videoId/:shotId", async (req, res) => {
  *   videoId, videoTitle?, videoUrl?,
  *   action: 'save' | 'unsave' | 'watch_later' | 'unwatch_later'
  *         | 'toggle_save' | 'toggle_watch_later'
- *         | 'add_playlist' | 'remove_playlist',
+ *         | 'add_playlist' | 'remove_playlist'
+ *         | 'complete' | 'uncomplete' | 'toggle_complete',
  *   playlist?: string
  * }
  */
@@ -1258,13 +1314,57 @@ app.post("/api/vault/view", authMiddleware, async (req, res) => {
       return res.status(400).json({ ok: false, message: e.message });
     }
     const existing = await VaultVideo.findOne({ userId, videoId }).lean();
-    if (!existing) {
-      return res.json({ ok: true, skipped: true, message: "Video not in vault" });
-    }
     const viewedAt = nextLastViewedAt(existing, {
       watched: true,
       lastViewedAt: req.body?.lastViewedAt,
     });
+    const title = String(req.body?.videoTitle || "").trim();
+    const channelTitle = String(req.body?.channelTitle || "").trim();
+    const channelUrl = String(req.body?.channelUrl || "").trim();
+    const videoUrl =
+      String(req.body?.videoUrl || "").trim() ||
+      `https://www.youtube.com/watch?v=${videoId}`;
+
+    if (!existing) {
+      const when = viewedAt || new Date();
+      await VaultVideo.findOneAndUpdate(
+        { userId, videoId },
+        {
+          $setOnInsert: {
+            userId,
+            videoId,
+            highlights: [],
+            screenshots: [],
+            sourceLinks: [],
+            saved: false,
+            watchLater: false,
+            playlists: [],
+          },
+          $set: {
+            videoTitle: title || videoId,
+            videoUrl,
+            channelTitle,
+            channelUrl,
+            lastViewedAt: when,
+            updatedAt: when,
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      await refreshUserStats(userId);
+      if (title === videoId || !title) {
+        setImmediate(() => {
+          backfillUserTitles(userId, 4).catch(() => undefined);
+        });
+      }
+      return res.json({
+        ok: true,
+        created: true,
+        videoId,
+        lastViewedAt: when.getTime(),
+      });
+    }
+
     if (!viewedAt) {
       return res.json({
         ok: true,
@@ -1274,9 +1374,14 @@ app.post("/api/vault/view", authMiddleware, async (req, res) => {
           : null,
       });
     }
+    const $set = { lastViewedAt: viewedAt };
+    if (title && title !== videoId) $set.videoTitle = title;
+    if (channelTitle) $set.channelTitle = channelTitle;
+    if (channelUrl) $set.channelUrl = channelUrl;
+    if (videoUrl) $set.videoUrl = videoUrl;
     await VaultVideo.updateOne(
       { userId, videoId },
-      { $set: { lastViewedAt: viewedAt } },
+      { $set },
       { timestamps: false }
     );
     res.json({
@@ -1292,6 +1397,177 @@ app.post("/api/vault/view", authMiddleware, async (req, res) => {
     });
   }
 });
+
+const MAX_BREAKS_PER_VIDEO = 30;
+
+/** Valid break entries only, oldest first, capped. */
+function cleanBreaks(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const b of list.slice(0, 200)) {
+    const id = String(b?.id || "").slice(0, 60);
+    const position = Number(b?.position);
+    const startedAt = Number(b?.startedAt);
+    const endedAt = Number(b?.endedAt);
+    if (!id || !Number.isFinite(position) || position < 0 || position > 86400) continue;
+    if (!Number.isFinite(startedAt) || startedAt <= 0) continue;
+    out.push({
+      id,
+      position,
+      startedAt,
+      endedAt: Number.isFinite(endedAt) && endedAt >= startedAt ? endedAt : null,
+    });
+  }
+  return out
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .slice(-MAX_BREAKS_PER_VIDEO);
+}
+
+/** Union by id; a closed copy of a break wins over an open one. */
+function mergeBreaks(stored, incoming) {
+  const byId = new Map();
+  for (const e of [...cleanBreaks(stored), ...cleanBreaks(incoming)]) {
+    const prev = byId.get(e.id);
+    if (!prev) {
+      byId.set(e.id, e);
+      continue;
+    }
+    byId.set(e.id, {
+      ...prev,
+      ...(e.startedAt > prev.startedAt ? e : {}),
+      endedAt:
+        prev.endedAt && e.endedAt
+          ? Math.max(prev.endedAt, e.endedAt)
+          : prev.endedAt ?? e.endedAt,
+    });
+  }
+  return cleanBreaks([...byId.values()]);
+}
+
+/**
+ * Resume point + video length. POST /api/vault/progress
+ * { videoId, position, duration, kind: "break"|"auto", at?, breaks?, videoTitle?, … }
+ * Older writes (an offline replay) never overwrite a newer resume point.
+ * breaks[] is merged by id, even when the position itself is older.
+ */
+app.post("/api/vault/progress", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const b = req.body || {};
+    let videoId;
+    try {
+      videoId = requireVideoId(String(b.videoId || ""));
+    } catch (e) {
+      return res.status(400).json({ ok: false, message: e.message });
+    }
+    const position = Number(b.position);
+    const duration = Number(b.duration) || 0;
+    if (!Number.isFinite(position) || position < 0 || position > 86400) {
+      return res.status(400).json({ ok: false, message: "position (seconds) required" });
+    }
+    if (duration < 0 || duration > 86400) {
+      return res.status(400).json({ ok: false, message: "duration out of range" });
+    }
+    const kind = b.kind === "break" ? "break" : "auto";
+    const at = parseViewedAt(b.at) || new Date();
+
+    const existing = await VaultVideo.findOne({ userId, videoId })
+      .select("progress durationSec lastViewedAt breaks")
+      .lean();
+    const breaks = Array.isArray(b.breaks)
+      ? mergeBreaks(existing?.breaks, b.breaks)
+      : null;
+    const prevAt = existing?.progress?.updatedAt
+      ? new Date(existing.progress.updatedAt).getTime()
+      : 0;
+    if (prevAt && at.getTime() <= prevAt) {
+      if (breaks) {
+        await VaultVideo.updateOne(
+          { userId, videoId },
+          { $set: { breaks } },
+          { timestamps: false }
+        );
+      }
+      return res.json({ ok: true, skipped: true, breaks: breaks || undefined });
+    }
+
+    const $set = {
+      progress: { position, duration, kind, updatedAt: at },
+    };
+    if (breaks) $set.breaks = breaks;
+    if (duration > 0) $set.durationSec = Math.round(duration);
+    const viewedAt = nextLastViewedAt(existing, { watched: true, lastViewedAt: at });
+    if (viewedAt) $set.lastViewedAt = viewedAt;
+    const title = String(b.videoTitle || "").trim();
+    if (!existing) {
+      $set.videoTitle = title || videoId;
+      $set.videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      $set.channelTitle = String(b.channelTitle || "").trim();
+      $set.channelUrl = String(b.channelUrl || "").trim();
+    }
+
+    await VaultVideo.updateOne(
+      { userId, videoId },
+      {
+        $set,
+        $setOnInsert: {
+          userId,
+          videoId,
+          highlights: [],
+          screenshots: [],
+          sourceLinks: [],
+          saved: false,
+          watchLater: false,
+          playlists: [],
+          createdAt: at,
+        },
+      },
+      { upsert: true, timestamps: false }
+    );
+    if (!existing) await refreshUserStats(userId);
+    res.json({
+      ok: true,
+      progress: { position, duration, kind, updatedAt: at.getTime() },
+      breaks: breaks || undefined,
+    });
+  } catch (err) {
+    console.error("progress error", err);
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Progress update failed",
+    });
+  }
+});
+
+/** Just the resume point — cheap enough to ask on every video open. */
+app.get("/api/vault/progress/:videoId", authMiddleware, async (req, res) => {
+  try {
+    const videoId = requireVideoId(req.params.videoId);
+    const r = await VaultVideo.findOne({ userId: req.user.userId, videoId })
+      .select("progress durationSec breaks")
+      .lean();
+    const p = r?.progress;
+    res.json({
+      ok: true,
+      durationSec: r?.durationSec || 0,
+      breaks: cleanBreaks(r?.breaks),
+      progress:
+        p?.updatedAt && p.position > 0
+          ? {
+              position: p.position,
+              duration: p.duration || r.durationSec || 0,
+              kind: p.kind === "break" ? "break" : "auto",
+              updatedAt: new Date(p.updatedAt).getTime(),
+            }
+          : null,
+    });
+  } catch (err) {
+    const { status, message } = clientError(err, "Progress lookup failed");
+    res.status(status).json({ ok: false, message });
+  }
+});
+
+mountStudy(app, { authMiddleware });
 
 app.post("/api/vault/library", authMiddleware, async (req, res) => {
   try {
@@ -1339,6 +1615,8 @@ app.post("/api/vault/library", authMiddleware, async (req, res) => {
     let watchLater = Boolean(existing?.watchLater);
     let savedAt = existing?.savedAt || null;
     let watchLaterAt = existing?.watchLaterAt || null;
+    let completed = Boolean(existing?.completed);
+    let completedAt = existing?.completedAt || null;
 
     const plName =
       typeof playlist === "string" ? playlist.trim().slice(0, 120) : "";
@@ -1400,6 +1678,18 @@ app.post("/api/vault/library", authMiddleware, async (req, res) => {
         watchLater = !watchLater;
         watchLaterAt = watchLater ? now : null;
         break;
+      case "complete":
+        completed = true;
+        completedAt = completedAt || now;
+        break;
+      case "uncomplete":
+        completed = false;
+        completedAt = null;
+        break;
+      case "toggle_complete":
+        completed = !completed;
+        completedAt = completed ? now : null;
+        break;
       case "add_playlist":
       case "toggle_playlist": {
         if (!plName) {
@@ -1442,6 +1732,8 @@ app.post("/api/vault/library", authMiddleware, async (req, res) => {
     set.savedAt = savedAt;
     set.watchLaterAt = watchLaterAt;
     set.playlists = playlists;
+    set.completed = completed;
+    set.completedAt = completedAt;
 
     const doc = await VaultVideo.findOneAndUpdate(
       { userId, videoId },
@@ -1469,6 +1761,10 @@ app.post("/api/vault/library", authMiddleware, async (req, res) => {
           ? new Date(doc.watchLaterAt).getTime()
           : null,
         playlists: doc.playlists || [],
+        completed: Boolean(doc.completed),
+        completedAt: doc.completedAt
+          ? new Date(doc.completedAt).getTime()
+          : null,
       },
     });
   } catch (err) {
@@ -1505,6 +1801,10 @@ function libraryActionMessage(action, playlist, doc) {
         : `Removed from “${playlist}”`;
     case "remove_playlist":
       return `Removed from “${playlist}”`;
+    case "complete":
+    case "uncomplete":
+    case "toggle_complete":
+      return doc.completed ? "Marked as watched" : "Marked as not watched";
     default:
       return "Library updated";
   }
@@ -1659,6 +1959,96 @@ app.post("/api/vault/playlist/import", authMiddleware, async (req, res) => {
   }
 });
 
+/** Section names are short labels; casing follows the first use. */
+function cleanSectionName(raw) {
+  return String(raw || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40);
+}
+
+function sectionsPayload(user) {
+  const list = (user?.playlistSections || []).filter(
+    (s) => s?.playlist && s?.section
+  );
+  const names = [];
+  for (const s of list) {
+    if (!names.some((n) => n.toLowerCase() === s.section.toLowerCase())) {
+      names.push(s.section);
+    }
+  }
+  return {
+    sections: list.map((s) => ({ playlist: s.playlist, section: s.section })),
+    names: names.sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+/** Playlist → section map for the signed-in user */
+app.get("/api/library/sections", authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findOne({ userId: req.user.userId })
+      .select("playlistSections")
+      .lean();
+    res.json({ ok: true, ...sectionsPayload(user) });
+  } catch (err) {
+    const { status, message } = clientError(err, "Sections failed");
+    res.status(status).json({ ok: false, message });
+  }
+});
+
+/**
+ * Put a playlist in a section. POST /api/library/sections
+ * { playlist, section } — an empty section takes it out of any section.
+ */
+app.post("/api/library/sections", authMiddleware, async (req, res) => {
+  try {
+    const playlist = String(req.body?.playlist || "").trim().slice(0, 120);
+    let section = cleanSectionName(req.body?.section);
+    if (!playlist) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "playlist name required" });
+    }
+    const user = await User.findOne({ userId: req.user.userId }).select(
+      "playlistSections"
+    );
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+    const list = (user.playlistSections || [])
+      .map((s) => ({ playlist: s.playlist, section: s.section }))
+      .filter(
+        (s) =>
+          s.playlist && String(s.playlist).toLowerCase() !== playlist.toLowerCase()
+      );
+    if (section) {
+      // "education" joins an existing "Education" section
+      const same = list.find(
+        (s) => String(s.section).toLowerCase() === section.toLowerCase()
+      );
+      if (same) section = same.section;
+      if (list.length >= 500) {
+        return res
+          .status(400)
+          .json({ ok: false, message: "Too many sorted playlists" });
+      }
+      list.push({ playlist, section });
+    }
+    user.playlistSections = list;
+    await user.save();
+    res.json({
+      ok: true,
+      message: section
+        ? `“${playlist}” is in ${section}`
+        : `“${playlist}” removed from its section`,
+      ...sectionsPayload(user),
+    });
+  } catch (err) {
+    const { status, message } = clientError(err, "Section update failed");
+    res.status(status).json({ ok: false, message });
+  }
+});
+
 app.get("/api/library/playlists", authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -1666,12 +2056,12 @@ app.get("/api/library/playlists", authMiddleware, async (req, res) => {
       userId,
       playlists: { $exists: true, $ne: [] },
     })
-      .select("playlists videoId videoTitle")
+      .select("playlists videoId videoTitle completed")
       .lean();
 
     // Merge case-insensitive + truncated-name duplicates under the longest title
     const counts = new Map(); // lower -> { name, count, videoIds }
-    const attach = (name, videoId) => {
+    const attach = (name, videoId, completed) => {
       const key = String(name).toLowerCase();
       let matchKey = key;
       for (const [k, cur] of counts) {
@@ -1693,21 +2083,39 @@ app.get("/api/library/playlists", authMiddleware, async (req, res) => {
         name,
         count: 0,
         videoIds: [],
+        completedIds: [],
       };
       if (String(name).length > String(cur.name).length) cur.name = name;
       cur.count += 1;
       if (videoId) cur.videoIds.push(videoId);
+      if (videoId && completed) cur.completedIds.push(videoId);
       counts.set(matchKey, cur);
     };
     for (const r of rows) {
       for (const name of r.playlists || []) {
         if (!name) continue;
-        attach(name, r.videoId);
+        attach(name, r.videoId, Boolean(r.completed));
       }
     }
 
+    const owner = await User.findOne({ userId })
+      .select("playlistSections")
+      .lean();
+    const sectionOf = new Map(
+      (owner?.playlistSections || []).map((s) => [
+        String(s.playlist).toLowerCase(),
+        s.section,
+      ])
+    );
     const playlists = [...counts.values()]
-      .map(({ name, count, videoIds }) => ({ name, count, videoIds }))
+      .map(({ name, count, videoIds, completedIds }) => ({
+        name,
+        count,
+        videoIds,
+        completedIds,
+        completedCount: completedIds.length,
+        section: sectionOf.get(String(name).toLowerCase()) || "",
+      }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
     const watchLaterCount = await VaultVideo.countDocuments({
@@ -1758,6 +2166,7 @@ app.delete("/api/vault/:videoId", authMiddleware, async (req, res) => {
       userId: req.user.userId,
       videoId,
     });
+    await StudyCard.deleteMany({ userId: req.user.userId, videoId });
     await refreshUserStats(req.user.userId);
     res.json({
       ok: true,
@@ -1775,6 +2184,14 @@ app.delete("/api/vault/:videoId", authMiddleware, async (req, res) => {
     });
   }
 });
+
+const MAX_TOMBSTONES = 2000;
+
+function addTombstone(doc, field, id) {
+  const list = (doc[field] || []).map(String).filter((x) => x !== id);
+  list.push(id);
+  doc[field] = list.slice(-MAX_TOMBSTONES);
+}
 
 /**
  * Delete one mark/highlight from a video.
@@ -1805,11 +2222,13 @@ app.delete(
         (h) => String(h.id) !== highlightId
       );
       const removed = before - doc.highlights.length;
+      // Record even when absent: an offline device may upload it later
+      addTombstone(doc, "deletedHighlightIds", highlightId);
+      doc.updatedAt = new Date();
+      await doc.save();
       if (!removed) {
         return res.status(404).json({ ok: false, message: "Mark not found" });
       }
-      doc.updatedAt = new Date();
-      await doc.save();
       await refreshUserStats(userId);
 
       res.json({
@@ -1856,11 +2275,12 @@ app.delete(
         (s) => String(s.id) !== shotId
       );
       const removed = before - doc.screenshots.length;
+      addTombstone(doc, "deletedScreenshotIds", shotId);
+      doc.updatedAt = new Date();
+      await doc.save();
       if (!removed) {
         return res.status(404).json({ ok: false, message: "Shot not found" });
       }
-      doc.updatedAt = new Date();
-      await doc.save();
       await refreshUserStats(userId);
 
       res.json({
@@ -1880,6 +2300,28 @@ app.delete(
 );
 
 // ─── AI (server-side LLM for perfect Chat / Ask / Topics) ───────────
+
+/**
+ * Callers may only ask for the vault's configured model, or one the owner
+ * explicitly listed in LLM_ALLOWED_MODELS. Anything else falls back to the
+ * default rather than billing the owner's key for a model they never chose.
+ */
+function allowedModel(requested) {
+  const want = String(requested || "").trim();
+  if (!want) return undefined;
+  const cfg = getLlmConfig();
+  const allowed = new Set(
+    [
+      cfg.model,
+      ...String(process.env.LLM_ALLOWED_MODELS || "")
+        .split(",")
+        .map((s) => s.trim()),
+    ].filter(Boolean)
+  );
+  if (allowed.has(want)) return want;
+  console.warn(`[vault-api] Ignored non-allowlisted model request: ${want.slice(0, 60)}`);
+  return undefined;
+}
 
 app.get("/api/ai/status", authMiddleware, (req, res) => {
   const cfg = getLlmConfig();
@@ -1941,7 +2383,9 @@ app.post("/api/ai/chat", authMiddleware, aiRateLimit(), async (req, res) => {
         typeof max_tokens === "number"
           ? Math.min(4096, Math.max(64, max_tokens))
           : 1400,
-      model: typeof model === "string" ? model : undefined,
+      // Never let a caller pick the model: it bills the vault owner's key and
+      // an arbitrary name could route to a far more expensive tier.
+      model: allowedModel(model),
     });
 
     res.json({
@@ -1974,6 +2418,62 @@ app.post("/api/ai/chat", authMiddleware, aiRateLimit(), async (req, res) => {
  * POST /api/vault/:videoId/share
  * Body optional: { expiresInDays?: number }
  */
+const SHARE_DEFAULT_DAYS = Number(process.env.SHARE_DEFAULT_DAYS || 30);
+const SHARE_MAX_DAYS = Number(process.env.SHARE_MAX_DAYS || 365);
+
+/** Active share links for the signed-in user, so they can see and kill them. */
+app.get("/api/vault/shares", authMiddleware, async (req, res) => {
+  try {
+    const rows = await SharedCard.find({ userId: req.user.userId })
+      .select("token kind videoId playlistName createdAt expiresAt viewCount snapshot.videoTitle")
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean();
+    res.json({
+      ok: true,
+      shares: rows.map((r) => ({
+        token: r.token,
+        kind: r.kind === "playlist" ? "playlist" : "video",
+        videoId: r.videoId,
+        playlistName: r.playlistName || "",
+        videoTitle:
+          r.kind === "playlist"
+            ? `Playlist · ${r.playlistName}`
+            : r.snapshot?.videoTitle || r.videoId,
+        createdAt: r.createdAt,
+        expiresAt: r.expiresAt,
+        viewCount: r.viewCount || 0,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Could not list shares",
+      shares: [],
+    });
+  }
+});
+
+/** Revoke one share link. Scoped to the owner so a token alone can't delete. */
+app.delete("/api/vault/shares/:token", authMiddleware, async (req, res) => {
+  try {
+    const token = String(req.params.token || "").trim();
+    if (!token) {
+      return res.status(400).json({ ok: false, message: "Missing share token" });
+    }
+    const out = await SharedCard.deleteOne({ token, userId: req.user.userId });
+    if (!out.deletedCount) {
+      return res.status(404).json({ ok: false, message: "Share not found" });
+    }
+    res.json({ ok: true, message: "Share link revoked" });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Revoke failed",
+    });
+  }
+});
+
 app.post("/api/vault/:videoId/share", authMiddleware, shareRateLimit(), async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -2001,11 +2501,14 @@ app.post("/api/vault/:videoId/share", authMiddleware, shareRateLimit(), async (r
       highlights.filter((h) => (h.note || "").trim()).length +
       screenshots.filter((s) => (s.note || "").trim()).length;
 
-    const days = Number(req.body?.expiresInDays);
-    const expiresAt =
-      Number.isFinite(days) && days > 0
-        ? new Date(Date.now() + days * 86400_000)
-        : null;
+    // A share link is public to anyone holding it, so it always expires.
+    // Callers may shorten the window, not remove it.
+    const requestedDays = Number(req.body?.expiresInDays);
+    const days =
+      Number.isFinite(requestedDays) && requestedDays > 0
+        ? Math.min(requestedDays, SHARE_MAX_DAYS)
+        : SHARE_DEFAULT_DAYS;
+    const expiresAt = new Date(Date.now() + days * 86400_000);
 
     const token = crypto.randomBytes(24).toString("hex");
     const sharedBy =
@@ -2063,6 +2566,93 @@ app.post("/api/vault/:videoId/share", authMiddleware, shareRateLimit(), async (r
   }
 });
 
+/**
+ * Share a whole playlist as a read-only link (titles, marks, notes).
+ * POST /api/playlists/share { playlistName, expiresInDays? }
+ */
+app.post("/api/playlists/share", authMiddleware, shareRateLimit(), async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const wanted = String(req.body?.playlistName || "").trim().slice(0, 120);
+    if (!wanted) {
+      return res.status(400).json({ ok: false, message: "playlistName required" });
+    }
+    const rows = await VaultVideo.find({ userId, playlists: { $exists: true, $ne: [] } })
+      .select("videoId videoTitle videoUrl channelTitle durationSec progress highlights screenshots playlists updatedAt")
+      .lean();
+    const key = wanted.toLowerCase();
+    const inList = rows.filter((r) =>
+      (r.playlists || []).some((p) => String(p).toLowerCase() === key)
+    );
+    if (!inList.length) {
+      return res.status(404).json({ ok: false, message: "Playlist not found" });
+    }
+    const name =
+      inList[0].playlists.find((p) => String(p).toLowerCase() === key) || wanted;
+    const videos = inList.slice(0, 250).map((r) => ({
+      videoId: r.videoId,
+      videoTitle: r.videoTitle || r.videoId,
+      videoUrl: r.videoUrl || `https://www.youtube.com/watch?v=${r.videoId}`,
+      channelTitle: r.channelTitle || "",
+      durationSec: r.durationSec || r.progress?.duration || 0,
+      highlights: (r.highlights || []).map((h) => ({
+        id: h.id,
+        startTime: h.startTime,
+        endTime: h.endTime,
+        note: h.note || "",
+        color: h.color || "#ef4444",
+      })),
+      shotCount: (r.screenshots || []).length,
+    }));
+
+    const requestedDays = Number(req.body?.expiresInDays);
+    const days =
+      Number.isFinite(requestedDays) && requestedDays > 0
+        ? Math.min(requestedDays, SHARE_MAX_DAYS)
+        : SHARE_DEFAULT_DAYS;
+    const expiresAt = new Date(Date.now() + days * 86400_000);
+    const token = crypto.randomBytes(24).toString("hex");
+    const markCount = videos.reduce((n, v) => n + v.highlights.length, 0);
+
+    await SharedCard.create({
+      token,
+      userId,
+      kind: "playlist",
+      videoId: "",
+      playlistName: name,
+      expiresAt,
+      snapshot: {
+        playlistName: name,
+        sharedBy: req.user.displayName || "VideoSearch user",
+        videos,
+        markCount,
+        shotCount: videos.reduce((n, v) => n + v.shotCount, 0),
+        noteCount: videos.reduce(
+          (n, v) => n + v.highlights.filter((h) => h.note.trim()).length,
+          0
+        ),
+      },
+    });
+
+    const sharePath = `/app/share/${token}`;
+    res.json({
+      ok: true,
+      token,
+      shareUrl: `${apiBaseFromReq(req)}${sharePath}`,
+      sharePath,
+      expiresAt,
+      message: "Playlist link created",
+      preview: { title: name, videoCount: videos.length, markCount },
+    });
+  } catch (err) {
+    console.error("[vault-api] playlist share", err);
+    res.status(500).json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Share failed",
+    });
+  }
+});
+
 /** Public: load a shared video card snapshot (no auth). */
 app.get("/api/share/:token", async (req, res) => {
   try {
@@ -2085,6 +2675,7 @@ app.get("/api/share/:token", async (req, res) => {
     res.json({
       ok: true,
       token: card.token,
+      kind: card.kind === "playlist" ? "playlist" : "video",
       createdAt: card.createdAt,
       expiresAt: card.expiresAt,
       snapshot: card.snapshot,

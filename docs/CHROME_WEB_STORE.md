@@ -1,91 +1,164 @@
 # Publish VideoSearch AI on the Chrome Web Store
 
-Copy-paste listing, privacy answers, zip, and review notes. Last updated 25 August 2026.
+This is the full process, in order. Do each box before the next.
 
-**Privacy policy URL (required for the dashboard):**  
+**Privacy policy (Google requires a live HTTPS page):**  
 https://videosearchai.netlify.app/privacy.html
 
-Deploy `website/` (including `privacy.html`) before you submit, or the reviewer will reject the listing.
+**Developer dashboard:**  
+https://chrome.google.com/webstore/devconsole
+
+**Official Google steps:**  
+https://developer.chrome.com/docs/webstore/publish
 
 ---
 
-## 1. One-time account
+## What you are doing
 
-1. Open [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)
-2. Sign in with the Google account that should own the listing
-3. Pay the **one-time USD $5** developer registration
-4. Complete identity verification if Google asks (common in 2026)
+You upload a **zip of `dist/`** (the built extension), fill a listing, answer a privacy form, and click **Submit for review**. Google reviews it (often 1–3 days, first item can take longer). Then anyone can install from:
+
+`https://chromewebstore.google.com/detail/videosearch-ai/<ID>`
+
+You do **not** upload the GitHub repo, `src/`, or `node_modules/`.
+
+Pricing on the store listing is **Free**. Plus / Pro (see [PRICING.md](./PRICING.md)) can come later **inside the app** with Stripe/Clerk. Do not mark the item as a paid CWS listing until that is built.
 
 ---
 
-## 2. Build the zip Google wants
+## Step 0 — You need these
 
-From the repo root:
+- [ ] This repo on your Mac, Node 18+
+- [ ] A Google account that will **own** the listing (use one you will keep)
+- [ ] **USD $5** one-time developer fee (Google, not refundable)
+- [ ] Privacy page live (already: `videosearchai.netlify.app/privacy.html`)
+- [ ] A captioned YouTube video to test (any lecture with CC)
+
+---
+
+## Step 1 — Developer account (once)
+
+1. Open https://chrome.google.com/webstore/devconsole
+2. Sign in
+3. Pay the **$5** registration if Google asks
+4. Complete **identity verification** if Google asks (name, ID — common now)
+5. On **Account**, turn on email notifications so you see “published” / “rejected”
+
+New publishers can only publish **2 items** until Google raises the limit. One item is enough.
+
+---
+
+## Step 2 — Test unpacked (do this before the zip)
 
 ```bash
+cd /path/to/videosearch
 npm install
+npm run build
+```
+
+1. Chrome → `chrome://extensions`
+2. Developer mode **ON**
+3. **Load unpacked** → the `dist/` folder (not the repo root)
+4. Open a **watch** URL with captions
+5. Confirm: VideoSearch chip, search a spoken word, Mark, Shot
+6. If Chrome asks for **Local network access**, Allow it (vault on this PC)
+
+If this is broken, do not upload. Reviewers will reject it.
+
+---
+
+## Step 3 — Build the store zip
+
+```bash
 npm run store:zip
 ```
 
-That builds the extension and writes:
+That command builds the extension and writes:
 
-```text
-store/videosearch-ai-1.1.0.zip     ← upload this
-store/listing/screenshot-1.png     ← 1280×800
-store/listing/screenshot-2.png
-store/listing/screenshot-3.png
-store/listing/promo-small.png      ← 440×280
-store/listing/icon-128.png
-```
+| File | What it is |
+|------|------------|
+| `store/videosearch-ai-2.0.0.zip` | **Upload this** |
+| `store/listing/icon-128.png` | Store icon |
+| `store/listing/promo-small.png` | 440×280 small tile |
+| `store/listing/screenshot-1.png` | 1280×800 (replace with a real YouTube shot) |
+| `store/listing/screenshot-2.png` | 1280×800 |
+| `store/listing/screenshot-3.png` | 1280×800 |
 
-Load `dist/` unpacked first and click through a captioned YouTube video so you can confirm the zip matches what you tested.
+The zip is the **contents of `dist/`** (it must contain `manifest.json` at the top of the zip).
 
-**Do not zip the repo root.** Google wants the folder that contains `manifest.json` (our `dist/`).
+**Replace the generated screenshots** with real captures of the extension on YouTube. Reviewers reject marketing mockups.
+
+Take them at **1280×800**:
+
+1. Watch page: VideoSearch chip + search results  
+2. A mark on the timeline + notes  
+3. Welcome / create account (email + password)
+
+On macOS: Screenshot → Options → capture a window, or crop in Preview.
 
 ---
 
-## 3. Create the item
+## Step 4 — Create the item and upload the zip
 
-Dashboard → **New item** → upload `store/videosearch-ai-1.1.0.zip`.
+1. Dashboard → **New item** (or **Add new item**)
+2. Choose `store/videosearch-ai-2.0.0.zip`
+3. **Upload**
+4. If Google says the zip is invalid, you zipped the wrong folder. Run `npm run store:zip` again; do not zip the whole repo.
+
+The item now exists as a **draft**. Fill the tabs on the left.
 
 ---
 
-## 4. Store listing (paste these)
+## Step 5 — Store listing tab (copy-paste)
 
-### Name
+### Name (max 45 characters)
+
 ```
 VideoSearch AI
 ```
-(45-character limit. Keep it.)
 
-### Short description (≤132 characters)
+### Short description (max 132 characters)
+
 ```
 Search what was said on YouTube. Jump to the second. Mark, shoot, and keep notes — no API key for search.
 ```
-(110 characters)
 
 ### Category
-**Productivity** (secondary: Education if asked)
+
+**Productivity**  
+(Secondary if asked: Education)
 
 ### Language
+
 English
 
 ### Homepage
+
 ```
 https://videosearchai.netlify.app/
 ```
 
 ### Support URL
+
 ```
 https://github.com/Kadiwalhussain/VideoSearch/issues
 ```
 
 ### Privacy policy
+
 ```
 https://videosearchai.netlify.app/privacy.html
 ```
 
-### Full description
+### Graphics (this tab)
+
+| Dashboard field | Size | File to upload |
+|-----------------|------|----------------|
+| Icon | 128×128 | `store/listing/icon-128.png` |
+| Small promo tile | 440×280 | `store/listing/promo-small.png` |
+| Screenshots (min 1, up to 5) | 1280×800 | your real YouTube PNGs |
+| Marquee | 1400×560 | skip unless you have a real banner |
+
+### Full description (paste)
 
 ```
 VideoSearch AI finds the moment something was spoken on a YouTube video — not just the title.
@@ -121,101 +194,165 @@ This extension only runs on YouTube watch pages. It does not change ads or repla
 
 ---
 
-## 5. Graphics
+## Step 6 — Privacy tab (checkboxes)
 
-| Asset | Size | File |
-|-------|------|------|
-| Store icon | 128×128 PNG | `store/listing/icon-128.png` |
-| Screenshots (at least 1, up to 5) | **1280×800** PNG | `store/listing/screenshot-1.png` … |
-| Small promo (required) | **440×280** PNG | `store/listing/promo-small.png` |
-| Marquee (optional) | 1400×560 | skip unless you have a real shot |
+Answer **only what the code does**. Wrong answers get the item pulled later.
 
-Screenshots must show the **real extension UI** on YouTube. After `npm run store:zip`, open a lecture, take 2–3 extra 1280×800 shots of:
-
-1. The VideoSearch pill + search results  
-2. A red mark on the progress bar  
-3. The welcome / create-account tab  
-
-Replace the generated files if they look like marketing art. Reviewers reject mockups.
-
----
-
-## 6. Privacy practices tab (checkboxes)
-
-Google will ask what you collect. Answer **only what the code does**.
-
-| Question | Answer |
-|----------|--------|
-| Personally identifiable info | **Yes, optional** — email and name if the user creates an account |
-| Health / financial / auth | **No** (password is sent only to the user’s vault to log in; we do not sell it) |
-| User activity | **Yes, limited** — which YouTube video they mark/search **on the page they opened**; not browsing history across the web |
-| Website content | **Yes** — YouTube captions and description for the current watch page, used to search and extract sources |
+| Question | Your answer |
+|----------|-------------|
+| Personally identifiable information | **Yes, optional** — email / name if they create an account |
+| Health, financial, authentication secrets sold | **No** |
+| User activity | **Yes, limited** — the YouTube **watch page they opened** (video they search/mark). Not their whole browsing history |
+| Website content | **Yes** — captions + description of the **current** video, to search and find sources |
 | Location | **No** |
 | Web history | **No** |
 | Sold to third parties | **No** |
 | Used for credit / lending | **No** |
-| Remote code | **No** — all extension JS ships in the zip. Model weights download from Hugging Face / jsDelivr for on-device search |
+| Remote code | **No** — all extension JS is in the zip. The MiniLM model downloads once from Hugging Face / jsDelivr and stays in the browser |
 
-**Single purpose statement** (paste):
+### Single purpose (paste)
 
 ```
 This extension searches spoken YouTube captions on the watch page, lets the user mark moments and capture frames, and optionally syncs those notes to the user’s own vault. It does not run on other sites except to paste a transcript when the user asks.
 ```
 
-**Host permission justifications** (paste in the justification boxes):
+### Permission justifications (paste in each box)
 
-- `https://www.youtube.com/*` — inject the search panel and fetch captions for the current video  
-- `https://youtube.com/*`, `https://m.youtube.com/*` — same  
-- Hugging Face / jsDelivr — download the MiniLM embedding model once so search stays on-device  
-- Optional `api.x.ai`, Groq, OpenAI, Mistral — only if the user pastes a Chat/Ask key  
-- ChatGPT / Claude / Gemini / Grok / Perplexity — only to paste a transcript when the user taps Ask  
-- `http://127.0.0.1:8787/*` and LAN — optional local vault sync  
+**`https://www.youtube.com/*`**, **`https://youtube.com/*`**, **`https://m.youtube.com/*`**  
+Inject the search panel and read captions for the current watch page.
 
-**clipboardWrite** — copy a timestamp or source URL when the user clicks copy.  
-**storage** — local index, marks, shots, settings, optional session.
+**Hugging Face / jsDelivr**  
+Download the on-device MiniLM model once so search does not need a server.
 
----
+**`api.mistral.ai`, `api.x.ai`, Groq, OpenAI**  
+Only if the user pastes their own Chat/Ask key. Search does not use these.
 
-## 7. Distribution
+**ChatGPT / Claude / Gemini / Grok / Perplexity**  
+Only to paste a transcript when the user taps Ask in an external chat.
 
-- Visibility: **Public**
-- Regions: All, unless you need to restrict
-- Pricing: **Free**
+**`http://127.0.0.1:8787/*`**, **`http://localhost:8787/*`**, LAN `:8787`  
+Optional local vault on the user’s computer (Studio + phone). Not required for search.
 
----
+**`storage`**  
+Save the local caption index, marks, shots, and login session on this device.
 
-## 8. After submit
+**`clipboardWrite`**  
+Copy a timestamp or source link when the user clicks copy.
 
-1. Status → **Pending review** (often 1–3 days; first item can take longer)
-2. If rejected, the email cites a policy. Fix the zip, bump `version` in `manifest.config.ts` (e.g. `1.1.1`), rebuild, upload again
-3. When published, the URL looks like:  
-   `https://chromewebstore.google.com/detail/videosearch-ai/<ID>`
-
-**Updates:** bump `version` every upload. Google will not accept the same version twice.
+**`cookies`**  
+Used only if the user signs in with the optional account/Google flow.
 
 ---
 
-## 9. Reviewer traps we already avoided
+## Step 7 — Distribution tab
 
-- Manifest V3  
-- No remote extension JS  
-- Search works without a key  
-- Privacy policy is a real HTTPS page  
-- Screenshots are 1280×800  
-- `dist/` only in the zip — not `src/` or `node_modules/`
-
-Do not mention “bypass ads”, “download YouTube videos”, or “undetected”. That gets the item banned.
+| Field | Set to |
+|-------|--------|
+| Visibility | **Public** |
+| Regions | All countries (unless you must restrict) |
+| Pricing | **Free** |
 
 ---
 
-## 10. Shortcuts (also in the listing)
+## Step 8 — Test instructions tab (for the reviewer)
 
-On a YouTube **watch** page, with no text field focused:
+Paste this so Google can try the extension without emailing you:
 
-| Action | Mac | Windows / Linux |
-|--------|-----|-----------------|
-| Mark this moment | ⌘M | Ctrl+M |
-| Capture this frame | ⌘C | Ctrl+C |
+```
+1. Install the extension.
+2. Open any YouTube watch page that has captions (CC on), for example a long lecture.
+3. You should see a VideoSearch chip near the channel / Like row. Click it.
+4. Type a word that is spoken in the video (not only in the title). Click a result — the player should jump to that second.
+5. Search does not need an account or an API key.
+6. Optional: create an account with any email. If the vault is not running, search still works; only cloud sync will say it cannot reach the vault.
+7. Do not test on YouTube Home. The panel is for watch pages only.
+```
 
-⌘C / Ctrl+C still **copies** if you have text selected.  
-Chrome also registers ⌘⇧M / Ctrl+Shift+M and ⌘⇧K / Ctrl+Shift+K. Edit at `chrome://extensions/shortcuts`.
+You do **not** need to give the reviewer a password.
+
+---
+
+## Step 9 — Submit for review
+
+1. Click **Submit for review**
+2. Confirm the dialog  
+   - Leave “publish automatically after review” **checked** if you want it live as soon as Google says yes  
+   - Uncheck if you want to press Publish yourself later
+3. Status becomes **Pending review**
+
+Watch the Google account email. Rejections go there.
+
+---
+
+## Step 10 — After it is live
+
+You get a URL like:
+
+```
+https://chromewebstore.google.com/detail/videosearch-ai/<ITEM_ID>
+```
+
+Put that link on:
+
+- https://videosearchai.netlify.app/
+- GitHub README
+- Tester emails
+
+**Every future upload must bump the version.** In `manifest.config.ts` change:
+
+```ts
+version: "2.0.0",
+```
+
+to `1.1.1`, then:
+
+```bash
+npm run store:zip
+```
+
+Upload the new zip on the same item → Submit for review again. Google refuses the same version twice.
+
+---
+
+## If they reject it
+
+The email names a policy. Typical fixes:
+
+| They say | You do |
+|----------|--------|
+| Privacy policy missing / 404 | Confirm https://videosearchai.netlify.app/privacy.html loads |
+| Screenshots not 1280×800 or look fake | Replace with real watch-page captures |
+| Single purpose / extra hosts | Shorten host_permissions or justify each one |
+| Doesn’t work | You uploaded a bad zip — load `dist/` unpacked and re-zip |
+| Remote code | Do not load JS from the network. Model weights only. |
+
+Bump version, rebuild, upload, submit again.
+
+---
+
+## Do not write in the listing
+
+These words get extensions banned:
+
+- download YouTube videos  
+- bypass ads  
+- undetected / hidden from YouTube  
+
+---
+
+## Master checklist
+
+- [ ] $5 developer account paid  
+- [ ] Privacy URL opens in a private window  
+- [ ] `npm run build` + Load unpacked `dist/` works on a captioned video  
+- [ ] `npm run store:zip`  
+- [ ] Zip is `store/videosearch-ai-2.0.0.zip` (manifest at the root of the zip)  
+- [ ] 3 real 1280×800 screenshots  
+- [ ] Listing name, short + full description pasted  
+- [ ] Privacy checkboxes match the table above  
+- [ ] Distribution = Public + Free  
+- [ ] Test instructions pasted  
+- [ ] Submit for review  
+- [ ] Wait for email  
+
+When the store URL is live, add it to the website **Install** section.

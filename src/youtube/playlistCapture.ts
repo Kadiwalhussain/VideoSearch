@@ -64,25 +64,36 @@ function playlistNameFromDom(): string {
   return "";
 }
 
+/** Playlist rows: side panel on /watch and the list on /playlist. */
+export const PLAYLIST_ROW_SELECTOR =
+  "ytd-playlist-panel-video-renderer, ytd-playlist-video-renderer";
+
+/** Video id a playlist row links to ("" if none). */
+export function playlistRowVideoId(node: Element): string {
+  const a =
+    (node.querySelector("a#wc-endpoint") as HTMLAnchorElement | null) ||
+    (node.querySelector("a#video-title") as HTMLAnchorElement | null) ||
+    (node.querySelector("a[href*='watch?v=']") as HTMLAnchorElement | null);
+  if (!a?.href) return "";
+  try {
+    return new URL(a.href, location.origin).searchParams.get("v") || "";
+  } catch {
+    return "";
+  }
+}
+
 function videosFromPlaylistPanel(): PlaylistVideoEntry[] {
   const out: PlaylistVideoEntry[] = [];
   const seen = new Set<string>();
 
-  const nodes = document.querySelectorAll(
-    "ytd-playlist-panel-video-renderer, ytd-playlist-video-renderer"
-  );
+  const nodes = document.querySelectorAll(PLAYLIST_ROW_SELECTOR);
   nodes.forEach((node) => {
     const a =
       (node.querySelector("a#wc-endpoint") as HTMLAnchorElement | null) ||
       (node.querySelector("a#video-title") as HTMLAnchorElement | null) ||
       (node.querySelector("a[href*='watch?v=']") as HTMLAnchorElement | null);
     if (!a?.href) return;
-    let videoId = "";
-    try {
-      videoId = new URL(a.href, location.origin).searchParams.get("v") || "";
-    } catch {
-      return;
-    }
+    const videoId = playlistRowVideoId(node);
     if (!videoId || seen.has(videoId)) return;
     seen.add(videoId);
     const title =

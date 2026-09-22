@@ -1,9 +1,12 @@
 /**
+ * UNUSED (Aug 2026) — old Yes/No “save local to cloud or delete” dialog.
+ * Sign-in now merges and never deletes. Kept for reference; nothing imports this.
+ *
  * After login: keep local notes in the account, or delete them.
  */
 
-import type { LocalUserCounts } from "../storage/guestSession";
-import { formatElapsed } from "../storage/guestSession";
+import type { LocalUserCounts } from "../zx/guestSession";
+import { formatElapsed } from "../zx/guestSession";
 
 const ROOT_ID = "vsa-save-cloud-prompt";
 const STYLE_ID = "vsa-save-cloud-prompt-style";
