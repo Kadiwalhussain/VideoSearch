@@ -76,7 +76,7 @@ That command builds the extension and writes:
 
 | File | What it is |
 |------|------------|
-| `store/videosearch-ai-1.1.0.zip` | **Upload this** |
+| `store/videosearch-ai-2.0.0.zip` | **Upload this** |
 | `store/listing/icon-128.png` | Store icon |
 | `store/listing/promo-small.png` | 440×280 small tile |
 | `store/listing/screenshot-1.png` | 1280×800 (replace with a real YouTube shot) |
@@ -100,7 +100,7 @@ On macOS: Screenshot → Options → capture a window, or crop in Preview.
 ## Step 4 — Create the item and upload the zip
 
 1. Dashboard → **New item** (or **Add new item**)
-2. Choose `store/videosearch-ai-1.1.0.zip`
+2. Choose `store/videosearch-ai-2.0.0.zip`
 3. **Upload**
 4. If Google says the zip is invalid, you zipped the wrong folder. Run `npm run store:zip` again; do not zip the whole repo.
 
@@ -301,7 +301,7 @@ Put that link on:
 **Every future upload must bump the version.** In `manifest.config.ts` change:
 
 ```ts
-version: "1.1.0",
+version: "2.0.0",
 ```
 
 to `1.1.1`, then:
@@ -346,7 +346,7 @@ These words get extensions banned:
 - [ ] Privacy URL opens in a private window  
 - [ ] `npm run build` + Load unpacked `dist/` works on a captioned video  
 - [ ] `npm run store:zip`  
-- [ ] Zip is `store/videosearch-ai-1.1.0.zip` (manifest at the root of the zip)  
+- [ ] Zip is `store/videosearch-ai-2.0.0.zip` (manifest at the root of the zip)  
 - [ ] 3 real 1280×800 screenshots  
 - [ ] Listing name, short + full description pasted  
 - [ ] Privacy checkboxes match the table above  
