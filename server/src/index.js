@@ -1109,6 +1109,7 @@ function mapVaultRow(r, includeImages = false, apiBase = PUBLIC_API_BASE) {
       deletedHighlightIds: r.deletedHighlightIds || [],
       deletedScreenshotIds: r.deletedScreenshotIds || [],
       durationSec: r.durationSec || r.progress?.duration || 0,
+      breaks: cleanBreaks(r.breaks),
       progress:
         r.progress?.updatedAt && r.progress.position > 0
           ? {
@@ -1397,10 +1398,57 @@ app.post("/api/vault/view", authMiddleware, async (req, res) => {
   }
 });
 
+const MAX_BREAKS_PER_VIDEO = 30;
+
+/** Valid break entries only, oldest first, capped. */
+function cleanBreaks(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const b of list.slice(0, 200)) {
+    const id = String(b?.id || "").slice(0, 60);
+    const position = Number(b?.position);
+    const startedAt = Number(b?.startedAt);
+    const endedAt = Number(b?.endedAt);
+    if (!id || !Number.isFinite(position) || position < 0 || position > 86400) continue;
+    if (!Number.isFinite(startedAt) || startedAt <= 0) continue;
+    out.push({
+      id,
+      position,
+      startedAt,
+      endedAt: Number.isFinite(endedAt) && endedAt >= startedAt ? endedAt : null,
+    });
+  }
+  return out
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .slice(-MAX_BREAKS_PER_VIDEO);
+}
+
+/** Union by id; a closed copy of a break wins over an open one. */
+function mergeBreaks(stored, incoming) {
+  const byId = new Map();
+  for (const e of [...cleanBreaks(stored), ...cleanBreaks(incoming)]) {
+    const prev = byId.get(e.id);
+    if (!prev) {
+      byId.set(e.id, e);
+      continue;
+    }
+    byId.set(e.id, {
+      ...prev,
+      ...(e.startedAt > prev.startedAt ? e : {}),
+      endedAt:
+        prev.endedAt && e.endedAt
+          ? Math.max(prev.endedAt, e.endedAt)
+          : prev.endedAt ?? e.endedAt,
+    });
+  }
+  return cleanBreaks([...byId.values()]);
+}
+
 /**
  * Resume point + video length. POST /api/vault/progress
- * { videoId, position, duration, kind: "break"|"auto", at?, videoTitle?, … }
+ * { videoId, position, duration, kind: "break"|"auto", at?, breaks?, videoTitle?, … }
  * Older writes (an offline replay) never overwrite a newer resume point.
+ * breaks[] is merged by id, even when the position itself is older.
  */
 app.post("/api/vault/progress", authMiddleware, async (req, res) => {
   try {
@@ -1424,18 +1472,29 @@ app.post("/api/vault/progress", authMiddleware, async (req, res) => {
     const at = parseViewedAt(b.at) || new Date();
 
     const existing = await VaultVideo.findOne({ userId, videoId })
-      .select("progress durationSec lastViewedAt")
+      .select("progress durationSec lastViewedAt breaks")
       .lean();
+    const breaks = Array.isArray(b.breaks)
+      ? mergeBreaks(existing?.breaks, b.breaks)
+      : null;
     const prevAt = existing?.progress?.updatedAt
       ? new Date(existing.progress.updatedAt).getTime()
       : 0;
     if (prevAt && at.getTime() <= prevAt) {
-      return res.json({ ok: true, skipped: true });
+      if (breaks) {
+        await VaultVideo.updateOne(
+          { userId, videoId },
+          { $set: { breaks } },
+          { timestamps: false }
+        );
+      }
+      return res.json({ ok: true, skipped: true, breaks: breaks || undefined });
     }
 
     const $set = {
       progress: { position, duration, kind, updatedAt: at },
     };
+    if (breaks) $set.breaks = breaks;
     if (duration > 0) $set.durationSec = Math.round(duration);
     const viewedAt = nextLastViewedAt(existing, { watched: true, lastViewedAt: at });
     if (viewedAt) $set.lastViewedAt = viewedAt;
@@ -1466,7 +1525,11 @@ app.post("/api/vault/progress", authMiddleware, async (req, res) => {
       { upsert: true, timestamps: false }
     );
     if (!existing) await refreshUserStats(userId);
-    res.json({ ok: true, progress: { position, duration, kind, updatedAt: at.getTime() } });
+    res.json({
+      ok: true,
+      progress: { position, duration, kind, updatedAt: at.getTime() },
+      breaks: breaks || undefined,
+    });
   } catch (err) {
     console.error("progress error", err);
     res.status(500).json({
@@ -1481,12 +1544,13 @@ app.get("/api/vault/progress/:videoId", authMiddleware, async (req, res) => {
   try {
     const videoId = requireVideoId(req.params.videoId);
     const r = await VaultVideo.findOne({ userId: req.user.userId, videoId })
-      .select("progress durationSec")
+      .select("progress durationSec breaks")
       .lean();
     const p = r?.progress;
     res.json({
       ok: true,
       durationSec: r?.durationSec || 0,
+      breaks: cleanBreaks(r?.breaks),
       progress:
         p?.updatedAt && p.position > 0
           ? {

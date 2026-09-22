@@ -6,6 +6,7 @@
  *  - While watching, the position is saved every few seconds so History can
  *    show a progress bar and "Continue watching".
  * Video length is saved with every point.
+ * Every break is also logged and drawn as a coffee marker on the progress bar.
  */
 
 import "../dom/trustedHtml";
@@ -17,6 +18,20 @@ import {
   saveResumePoint,
   type ResumePoint,
 } from "../zx/progressStore";
+import {
+  absorbBreaks,
+  endBreak,
+  getBreaks,
+  mergeBreaks,
+  startBreak,
+  type BreakEntry,
+} from "../zx/breakLog";
+import {
+  breakMarkersMissing,
+  clearBreakMarkers,
+  paintBreakMarkers,
+  setBreakMarkers,
+} from "./breakMarkers";
 
 const BTN_ID = "vsa-break-btn";
 const TOAST_ID = "vsa-resume-toast";
@@ -44,6 +59,14 @@ let toastTimer: number | null = null;
 let globalsBound = false;
 /** pause() fires "pause" synchronously; that must not save over the break */
 let breakingUntil = 0;
+/** Break log of the current video (drawn on the progress bar) */
+let breaks: BreakEntry[] = [];
+
+function showBreaks(id: string, list: BreakEntry[]): void {
+  if (videoId !== id) return;
+  breaks = list;
+  setBreakMarkers(list);
+}
 
 function getVideo(): HTMLVideoElement | null {
   return (
@@ -213,6 +236,7 @@ async function pushToVault(p: ResumePoint): Promise<void> {
       duration: p.duration,
       progressKind: p.kind,
       recordedAt: p.at,
+      breaks: await getBreaks(p.videoId),
       videoTitle: meta?.getTitle(),
       channelTitle: ch.channelTitle,
       channelUrl: ch.channelUrl,
@@ -269,6 +293,9 @@ export async function takeBreak(): Promise<void> {
   }
   breakingUntil = Date.now() + 1500;
   v.pause();
+  const id = videoId;
+  // Log it first: persist() sends the break log along to the vault
+  if (id) showBreaks(id, await startBreak(id, Math.round(v.currentTime)));
   const p = await persist("break");
   if (!p) return;
   armedFor = videoId;
@@ -282,6 +309,7 @@ function onTimeUpdate(): void {
   if (armedFor !== videoId || !isOnVideo()) return;
   const v = getVideo();
   if (!v || v.paused) return;
+  if (breaks[breaks.length - 1]?.endedAt === null) onPlaying();
   if (Date.now() - lastLocalAt < LOCAL_EVERY_MS) return;
   void persist("auto");
 }
@@ -291,6 +319,28 @@ function onPause(): void {
   // This pause came from Take a break, which saves its own point
   if (Date.now() < breakingUntil) return;
   void persist("auto", { toCloud: Date.now() - lastCloudAt > 15_000 });
+}
+
+let closingBreak = false;
+
+/** Watching again after a break: stamp how long the user was away. */
+function onPlaying(): void {
+  if (closingBreak) return;
+  const id = videoId;
+  const last = breaks[breaks.length - 1];
+  if (!id || !last || last.endedAt != null || !isOnVideo()) return;
+  if (Date.now() < breakingUntil) return;
+  closingBreak = true;
+  void endBreak(id)
+    .then(async (list) => {
+      if (!list) return;
+      showBreaks(id, list);
+      const p = await getResumePoint(id);
+      if (p) void pushToVault(p);
+    })
+    .finally(() => {
+      closingBreak = false;
+    });
 }
 
 function onEnded(): void {
@@ -305,10 +355,15 @@ function bindVideo(): void {
     boundVideo.removeEventListener("timeupdate", onTimeUpdate);
     boundVideo.removeEventListener("pause", onPause);
     boundVideo.removeEventListener("ended", onEnded);
+    boundVideo.removeEventListener("playing", onPlaying);
+    boundVideo.removeEventListener("durationchange", paintBreakMarkers);
   }
   v.addEventListener("timeupdate", onTimeUpdate);
   v.addEventListener("pause", onPause);
   v.addEventListener("ended", onEnded);
+  v.addEventListener("playing", onPlaying);
+  // Markers need the length to place themselves
+  v.addEventListener("durationchange", paintBreakMarkers);
   boundVideo = v;
 }
 
@@ -354,6 +409,7 @@ function ensureObserver(): void {
       if (!videoId) return;
       bindVideo();
       if (!document.getElementById(BTN_ID)) ensureButton();
+      if (breakMarkersMissing()) paintBreakMarkers();
     }, 250);
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
@@ -390,8 +446,17 @@ async function applyResume(id: string): Promise<void> {
     let point = await getResumePoint(id);
     const { fetchCloudResumePoint } = await import("../cloud/cloudSync");
     const remote = await fetchCloudResumePoint(id);
-    if (remote && (!point || remote.at > point.at)) {
-      point = await saveResumePoint({ videoId: id, ...remote });
+    if (remote?.breaks?.length) {
+      showBreaks(id, await absorbBreaks(id, remote.breaks));
+    }
+    if (remote && remote.position > 0 && (!point || remote.at > point.at)) {
+      point = await saveResumePoint({
+        videoId: id,
+        position: remote.position,
+        duration: remote.duration,
+        kind: remote.kind,
+        at: remote.at,
+      });
     }
     if (videoId !== id || userActed()) return;
     breakPoint = point?.kind === "break" ? point : null;
@@ -457,6 +522,11 @@ export function startResumeTracking(id: string, m: ResumeMeta): void {
   lastLocalAt = 0;
   lastCloudAt = 0;
   document.getElementById(TOAST_ID)?.remove();
+  showBreaks(id, []);
+  void getBreaks(id).then((list) => {
+    // The cloud copy may have landed first: keep both
+    if (videoId === id) showBreaks(id, mergeBreaks(list, breaks));
+  });
   void applyResume(id);
 }
 
@@ -466,6 +536,8 @@ export function stopResumeTracking(): void {
   videoId = null;
   armedFor = null;
   breakPoint = null;
+  breaks = [];
+  clearBreakMarkers();
   document.getElementById(BTN_ID)?.remove();
   document.getElementById(TOAST_ID)?.remove();
 }
