@@ -8,10 +8,12 @@ import {
   loadCloudSettings,
   vaultUrlAlternates,
 } from "../settings/cloudSettings";
-import type { VideoHighlight } from "../storage/highlightsStore";
-import type { VideoScreenshot } from "../storage/screenshotStore";
-import { updateScreenshot } from "../storage/screenshotStore";
+import type { VideoHighlight } from "../zx/highlightsStore";
+import type { VideoScreenshot } from "../zx/screenshotStore";
+import { updateScreenshot } from "../zx/screenshotStore";
 import { vaultHttp } from "../net/vaultHttp";
+import { saveResumePoint } from "../zx/progressStore";
+import type { AbsoluteLibraryAction } from "./offlineSync";
 
 /** Privileged fetch + localhost ↔ 127.0.0.1 retry. */
 async function vaultFetch(
@@ -98,7 +100,7 @@ export async function syncVideoToCloud(opts: {
   /** True only when the user is actually on this video’s watch page */
   watched?: boolean;
 }): Promise<SyncResult> {
-  const { isPinnedToVault } = await import("../storage/libraryStore");
+  const { isPinnedToVault } = await import("../zx/libraryStore");
   if (!(await isPinnedToVault(opts.videoId))) {
     return {
       ok: true,
@@ -184,9 +186,13 @@ export async function syncVideoToCloud(opts: {
 
     if (!res.ok || data.ok === false) {
       if (res.status === 401) {
+        if (!opts.skipOfflineEnqueue) {
+          const { enqueueVideoSync } = await import("./offlineSync");
+          await enqueueVideoSync(opts.videoId, { title: opts.videoTitle });
+        }
         return {
           ok: false,
-          message: "Session expired — log in again in Settings.",
+          message: "Session expired — log in again in Settings. Marks stay on this device.",
         };
       }
       // 5xx → treat as offline-ish and queue
@@ -259,6 +265,283 @@ export async function syncVideoToCloud(opts: {
       };
     }
     return { ok: false, message: msg };
+  }
+}
+
+type VaultListPayload = VaultPayload & {
+  saved?: boolean;
+  savedAt?: number | null;
+  watchLater?: boolean;
+  watchLaterAt?: number | null;
+  playlists?: string[];
+  completed?: boolean;
+  completedAt?: number | null;
+  sourceLinks?: Array<{
+    id: string;
+    url: string;
+    label?: string;
+    kind?: string;
+    source?: string;
+    createdAt?: number;
+    startTime?: number;
+  }>;
+  bioText?: string;
+  bioMarkdown?: string;
+  deletedHighlightIds?: string[];
+  deletedScreenshotIds?: string[];
+  durationSec?: number;
+  progress?: {
+    position: number;
+    duration: number;
+    kind: "break" | "auto";
+    updatedAt: number;
+  } | null;
+};
+
+/**
+ * Pull this account's Mongo vault onto the device (merge by id, never delete).
+ * Call after every login so user A and user B on the same Chrome stay isolated.
+ */
+export async function hydrateLocalFromVault(opts?: {
+  onStatus?: (msg: string, isError?: boolean) => void;
+}): Promise<{ ok: boolean; videos: number; message: string }> {
+  const settings = await loadCloudSettings();
+  if (!settings.enabled || !settings.apiKey) {
+    return { ok: false, videos: 0, message: "Not signed in" };
+  }
+
+  const { listPendingLibraryVideoIds, listPendingDeletedIds } = await import(
+    "./offlineSync"
+  );
+  // Snapshot before fetching: an op replayed mid-pull must not let the
+  // (older) fetched copy overwrite it.
+  // A local Save/Unsave not yet replayed is newer than the vault copy
+  const pendingLib = await listPendingLibraryVideoIds();
+  // Deleted here, delete not yet confirmed: don't pull them back down
+  const pendingDeleted = await listPendingDeletedIds();
+
+  opts?.onStatus?.("Loading your account from the vault…");
+  const cloud = await fetchCloudVault();
+  if (!cloud.ok) {
+    const message = cloud.message || "Could not load vault";
+    opts?.onStatus?.(message, true);
+    return { ok: false, videos: 0, message };
+  }
+
+  const { applyLibraryFlags, rememberVaultVideoIds, getLibraryEntry } = await import(
+    "../zx/libraryStore"
+  );
+  const { absorbLegacyHighlights, saveHighlights } = await import(
+    "../zx/highlightsStore"
+  );
+  const { saveSourceLinks } = await import("../zx/sourceLinksStore");
+  const { loadScreenshots, deleteScreenshot } = await import(
+    "../zx/screenshotStore"
+  );
+  const { listKnownVaultVideoIds } = await import("../zx/libraryStore");
+  const knownBefore = await listKnownVaultVideoIds();
+
+  const ids: string[] = [];
+  const pinIds: string[] = [];
+  for (const row of cloud.rows) {
+    const videoId = row.video_id;
+    if (!videoId) continue;
+    ids.push(videoId);
+    const p = (row.payload || {}) as VaultListPayload;
+    if (!pendingLib.has(videoId)) await applyLibraryFlags(videoId, {
+      videoTitle: p.videoTitle,
+      videoUrl: p.videoUrl || `https://www.youtube.com/watch?v=${videoId}`,
+      saved: Boolean(p.saved),
+      savedAt: p.savedAt ?? null,
+      watchLater: Boolean(p.watchLater),
+      watchLaterAt: p.watchLaterAt ?? null,
+      playlists: Array.isArray(p.playlists) ? p.playlists : [],
+      completed: Boolean(p.completed),
+      completedAt: p.completedAt ?? null,
+    });
+    const pinned = Boolean(
+      p.saved ||
+        p.watchLater ||
+        (Array.isArray(p.playlists) && p.playlists.length)
+    );
+    const hasWork =
+      (Array.isArray(p.highlights) && p.highlights.length > 0) ||
+      (Array.isArray(p.screenshots) && p.screenshots.length > 0);
+    if (pinned || hasWork) pinIds.push(videoId);
+
+    // Resume point from another device (phone, other browser): newest wins
+    if (p.progress && p.progress.position > 0) {
+      await saveResumePoint({
+        videoId,
+        position: p.progress.position,
+        duration: p.progress.duration || p.durationSec || 0,
+        kind: p.progress.kind === "break" ? "break" : "auto",
+        at: p.progress.updatedAt || 0,
+      });
+    }
+
+    // Deleted elsewhere (Studio / another device): remove the local copy
+    const deadMarks = new Set((p.deletedHighlightIds || []).map(String));
+    const deadShots = new Set((p.deletedScreenshotIds || []).map(String));
+    if (deadShots.size) {
+      for (const s of await loadScreenshots(videoId)) {
+        if (deadShots.has(String(s.id))) await deleteScreenshot(s.id);
+      }
+    }
+
+    const remoteHs = (Array.isArray(p.highlights) ? p.highlights : []).filter(
+      (h) => h?.id && !pendingDeleted.has(String(h.id))
+    );
+    const local = await absorbLegacyHighlights(videoId);
+    const localAlive = local.filter((h) => !deadMarks.has(String(h.id)));
+    if (remoteHs.length || localAlive.length !== local.length) {
+      const map = new Map(localAlive.map((h) => [String(h.id), h]));
+      for (const h of remoteHs) {
+        if (!h?.id) continue;
+        const prev = map.get(String(h.id));
+        if (!prev) {
+          map.set(String(h.id), {
+            id: String(h.id),
+            videoId,
+            startTime: Number(h.startTime) || 0,
+            endTime:
+              typeof h.endTime === "number" && h.endTime > (h.startTime || 0)
+                ? h.endTime
+                : (Number(h.startTime) || 0) + 2.5,
+            note: typeof h.note === "string" ? h.note : "",
+            color: h.color || "#ef4444",
+            screenshotId: h.screenshotId,
+            createdAt: h.createdAt || Date.now(),
+            updatedAt: h.updatedAt || Date.now(),
+          });
+        } else {
+          const remoteNote = typeof h.note === "string" ? h.note : "";
+          // Newer edit wins (a device typing right now has the newer stamp)
+          const remoteNewer = (h.updatedAt || 0) > (prev.updatedAt || 0);
+          map.set(String(h.id), {
+            ...prev,
+            startTime: Number(h.startTime) || prev.startTime,
+            endTime:
+              typeof h.endTime === "number" ? h.endTime : prev.endTime,
+            note: remoteNewer ? remoteNote : prev.note,
+            color: h.color || prev.color,
+            screenshotId: h.screenshotId || prev.screenshotId,
+            updatedAt: Math.max(prev.updatedAt || 0, h.updatedAt || 0),
+          });
+        }
+      }
+      await saveHighlights(videoId, [...map.values()]);
+    }
+
+    if (Array.isArray(p.sourceLinks) && p.sourceLinks.length) {
+      try {
+        await saveSourceLinks(
+          videoId,
+          p.sourceLinks.map((l) => ({
+            id: l.id,
+            url: l.url,
+            label: l.label || "",
+            kind: l.kind || "link",
+            source:
+              l.source === "comment" || l.source === "cc"
+                ? l.source
+                : "description",
+            createdAt: l.createdAt || Date.now(),
+            startTime: l.startTime,
+          }))
+        );
+      } catch {
+        /* optional */
+      }
+    }
+  }
+
+  // Was in the vault last time, gone now, no local change pending: the user
+  // removed it in Studio. Un-pin here so the next sync doesn't recreate it.
+  const cloudIds = new Set(ids);
+  for (const videoId of knownBefore) {
+    if (cloudIds.has(videoId) || pendingLib.has(videoId)) continue;
+    const e = await getLibraryEntry(videoId);
+    if (e && (e.saved || e.watchLater || e.playlists?.length)) {
+      await applyLibraryFlags(videoId, {
+        saved: false,
+        savedAt: null,
+        watchLater: false,
+        watchLaterAt: null,
+        playlists: [],
+      });
+    }
+  }
+
+  await rememberVaultVideoIds(pinIds, { replace: true });
+  const message = ids.length
+    ? `Account loaded · ${ids.length} video${ids.length === 1 ? "" : "s"} in vault`
+    : "Signed in · vault is empty until you Save a video";
+  opts?.onStatus?.(message);
+  return { ok: true, videos: ids.length, message };
+}
+
+const lastWatchSent = new Map<string, number>();
+
+/**
+ * Stamp History for the signed-in account. Does not Save the video.
+ * Creates a vault row with lastViewedAt if this is the first watch.
+ */
+export async function recordWatchToCloud(opts: {
+  videoId: string;
+  videoTitle?: string;
+  channelTitle?: string;
+  channelUrl?: string;
+}): Promise<void> {
+  if (!opts.videoId) return;
+  const settings = await loadCloudSettings();
+  if (!settings.enabled || !settings.apiKey) return;
+  const now = Date.now();
+  const prev = lastWatchSent.get(opts.videoId) || 0;
+  if (now - prev < 2 * 60 * 1000) return;
+  lastWatchSent.set(opts.videoId, now);
+  try {
+    const { res } = await vaultFetch(
+      "/api/vault/view",
+      {
+        method: "POST",
+        headers: authHeaders(settings.apiKey),
+        body: JSON.stringify({
+          videoId: opts.videoId,
+          videoTitle: opts.videoTitle,
+          videoUrl: `https://www.youtube.com/watch?v=${opts.videoId}`,
+          channelTitle: opts.channelTitle,
+          channelUrl: opts.channelUrl,
+          watched: true,
+        }),
+      },
+      settings.projectUrl
+    );
+    if (res.ok) return;
+    // Bad request will never succeed; anything else (down, 5xx, expired) waits
+    if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 429) {
+      return;
+    }
+    await queueWatch(opts, now);
+  } catch {
+    await queueWatch(opts, now);
+  }
+}
+
+async function queueWatch(
+  opts: {
+    videoId: string;
+    videoTitle?: string;
+    channelTitle?: string;
+    channelUrl?: string;
+  },
+  viewedAt: number
+): Promise<void> {
+  try {
+    const { enqueueOp } = await import("./offlineSync");
+    await enqueueOp({ kind: "view", ...opts, viewedAt });
+  } catch {
+    lastWatchSent.delete(opts.videoId);
   }
 }
 
@@ -361,12 +644,12 @@ async function runAutoSync(
 
     // Always load local data first (source of truth on device)
     try {
-      const { loadHighlights } = await import("../storage/highlightsStore");
-      const { loadScreenshots } = await import("../storage/screenshotStore");
+      const { loadHighlights } = await import("../zx/highlightsStore");
+      const { loadScreenshots } = await import("../zx/screenshotStore");
       const highlights = await loadHighlights(videoId);
       const screenshots = await loadScreenshots(videoId);
 
-      const { isPinnedToVault } = await import("../storage/libraryStore");
+      const { isPinnedToVault } = await import("../zx/libraryStore");
       if (!(await isPinnedToVault(videoId))) {
         opts.onStatus?.(
           "On this device · Save, Watch later, or Playlist to keep in vault"
@@ -519,13 +802,13 @@ export async function pushAllLocalToCloud(opts?: {
   }
 
   const { listLocalHighlightVideoIds, loadHighlights } = await import(
-    "../storage/highlightsStore"
+    "../zx/highlightsStore"
   );
   const { loadAllScreenshots, loadScreenshots } = await import(
-    "../storage/screenshotStore"
+    "../zx/screenshotStore"
   );
 
-  const { isPinnedToVault } = await import("../storage/libraryStore");
+  const { isPinnedToVault } = await import("../zx/libraryStore");
   const idSet = new Set<string>(await listLocalHighlightVideoIds());
   try {
     const shots = await loadAllScreenshots();
@@ -619,7 +902,10 @@ export type LibraryAction =
   | "toggle_watch_later"
   | "add_playlist"
   | "remove_playlist"
-  | "toggle_playlist";
+  | "toggle_playlist"
+  | "complete"
+  | "uncomplete"
+  | "toggle_complete";
 
 export interface LibraryState {
   saved: boolean;
@@ -627,6 +913,8 @@ export interface LibraryState {
   watchLater: boolean;
   watchLaterAt: number | null;
   playlists: string[];
+  completed?: boolean;
+  completedAt?: number | null;
 }
 
 /**
@@ -640,7 +928,7 @@ export async function updateLibraryOnCloud(opts: {
   playlist?: string;
 }): Promise<{ ok: boolean; message: string; library?: LibraryState }> {
   const settings = await loadCloudSettings();
-  const { applyLibraryFlags } = await import("../storage/libraryStore");
+  const { applyLibraryFlags } = await import("../zx/libraryStore");
 
   // Apply optimistically on device first so UI works offline
   const localLib = await applyLocalLibraryAction(opts);
@@ -650,11 +938,23 @@ export async function updateLibraryOnCloud(opts: {
     ...localLib,
   });
 
-  if (!settings.enabled || !settings.apiKey) {
-    const { enqueueVideoSync } = await import("./offlineSync");
-    const pending = await enqueueVideoSync(opts.videoId, {
-      title: opts.videoTitle,
+  // Send what the user now sees, never a toggle: if the device and the vault
+  // disagree, a server-side toggle would flip the opposite way.
+  const absolute = toAbsoluteAction(opts.action, localLib, opts.playlist);
+  const queueForLater = async (): Promise<number> => {
+    const { enqueueOp } = await import("./offlineSync");
+    return enqueueOp({
+      kind: "library",
+      videoId: opts.videoId,
+      action: absolute.action,
+      playlist: absolute.playlist,
+      videoTitle: opts.videoTitle,
+      videoUrl: opts.videoUrl,
     });
+  };
+
+  if (!settings.enabled || !settings.apiKey) {
+    const pending = await queueForLater();
     return {
       ok: true,
       message: `Saved on device · sign in to sync (${pending} pending)`,
@@ -674,8 +974,8 @@ export async function updateLibraryOnCloud(opts: {
           videoUrl:
             opts.videoUrl ||
             `https://www.youtube.com/watch?v=${opts.videoId}`,
-          action: opts.action,
-          playlist: opts.playlist,
+          action: absolute.action,
+          playlist: absolute.playlist,
         }),
       },
       settings.projectUrl
@@ -686,19 +986,22 @@ export async function updateLibraryOnCloud(opts: {
       library?: LibraryState;
     };
     if (!res.ok || data.ok === false) {
-      if (res.status === 401) {
+      if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 429) {
+        // Rejected payload — retrying cannot help
         return {
           ok: false,
-          message: "Session expired — log in again",
+          message: data.message || `HTTP ${res.status}`,
           library: localLib,
         };
       }
-      // Keep local; queue for retry
-      const { enqueueVideoSync } = await import("./offlineSync");
-      await enqueueVideoSync(opts.videoId, { title: opts.videoTitle });
+      // Keep local; replay once the vault (or a fresh login) is back
+      const pending = await queueForLater();
       return {
         ok: true,
-        message: data.message || "Saved on device · will retry cloud",
+        message:
+          res.status === 401
+            ? `Session expired · saved on device · log in again to sync (${pending} pending)`
+            : `Saved on device · will retry cloud (${pending} pending)`,
         library: localLib,
       };
     }
@@ -716,17 +1019,40 @@ export async function updateLibraryOnCloud(opts: {
       message: data.message || "Library updated",
       library: data.library || localLib,
     };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Library update failed";
-    const { enqueueVideoSync } = await import("./offlineSync");
-    const pending = await enqueueVideoSync(opts.videoId, {
-      title: opts.videoTitle,
-    });
+  } catch {
+    const pending = await queueForLater();
     return {
       ok: true,
       message: `Saved on device · vault offline · ${pending} pending`,
       library: localLib,
     };
+  }
+}
+
+function toAbsoluteAction(
+  action: LibraryAction,
+  lib: LibraryState,
+  playlist?: string
+): { action: AbsoluteLibraryAction; playlist?: string } {
+  const pl = (playlist || "").trim();
+  switch (action) {
+    case "toggle_save":
+      return { action: lib.saved ? "save" : "unsave" };
+    case "toggle_watch_later":
+      return { action: lib.watchLater ? "watch_later" : "unwatch_later" };
+    case "toggle_playlist": {
+      const has = lib.playlists.some(
+        (p) => p.toLowerCase() === pl.toLowerCase()
+      );
+      return { action: has ? "add_playlist" : "remove_playlist", playlist: pl };
+    }
+    case "add_playlist":
+    case "remove_playlist":
+      return { action, playlist: pl };
+    case "toggle_complete":
+      return { action: lib.completed ? "complete" : "uncomplete" };
+    default:
+      return { action };
   }
 }
 
@@ -738,7 +1064,7 @@ async function applyLocalLibraryAction(opts: {
   action: LibraryAction;
   playlist?: string;
 }): Promise<LibraryState> {
-  const { getLibraryEntry } = await import("../storage/libraryStore");
+  const { getLibraryEntry } = await import("../zx/libraryStore");
   const prev = (await getLibraryEntry(opts.videoId)) || {
     videoId: opts.videoId,
     saved: false,
@@ -746,12 +1072,16 @@ async function applyLocalLibraryAction(opts: {
     watchLater: false,
     watchLaterAt: null as number | null,
     playlists: [] as string[],
+    completed: false,
+    completedAt: null as number | null,
   };
   let saved = prev.saved;
   let savedAt = prev.savedAt;
   let watchLater = prev.watchLater;
   let watchLaterAt = prev.watchLaterAt;
   let playlists = [...(prev.playlists || [])];
+  let completed = Boolean(prev.completed);
+  let completedAt = prev.completedAt ?? null;
   const pl = (opts.playlist || "").trim();
   const now = Date.now();
 
@@ -798,11 +1128,31 @@ async function applyLocalLibraryAction(opts: {
           : [...playlists, pl];
       }
       break;
+    case "complete":
+      completed = true;
+      completedAt = completedAt || now;
+      break;
+    case "uncomplete":
+      completed = false;
+      completedAt = null;
+      break;
+    case "toggle_complete":
+      completed = !completed;
+      completedAt = completed ? now : null;
+      break;
     default:
       break;
   }
 
-  return { saved, savedAt, watchLater, watchLaterAt, playlists };
+  return {
+    saved,
+    savedAt,
+    watchLater,
+    watchLaterAt,
+    playlists,
+    completed,
+    completedAt,
+  };
 }
 
 /**
@@ -827,12 +1177,12 @@ export async function importPlaylistToCloud(opts: {
   playlistName?: string;
 }> {
   const settings = await loadCloudSettings();
-  const { applyLibraryFlags } = await import("../storage/libraryStore");
+  const { applyLibraryFlags } = await import("../zx/libraryStore");
 
   // Always save locally first so Studio can sync later if offline
   for (const v of opts.videos) {
     if (!v.videoId) continue;
-    const prev = await (await import("../storage/libraryStore")).getLibraryEntry(
+    const prev = await (await import("../zx/libraryStore")).getLibraryEntry(
       v.videoId
     );
     const playlists = [...(prev?.playlists || [])];
@@ -851,7 +1201,18 @@ export async function importPlaylistToCloud(opts: {
     });
   }
 
+  const queueImport = async (): Promise<void> => {
+    const { enqueueOp } = await import("./offlineSync");
+    await enqueueOp({
+      kind: "playlist_import",
+      playlistName: opts.playlistName,
+      playlistId: opts.playlistId,
+      videos: opts.videos.slice(0, 250),
+    });
+  };
+
   if (!settings.enabled || !settings.apiKey) {
+    await queueImport();
     return {
       ok: true,
       message: `Saved “${opts.playlistName}” on device (${opts.videos.length} videos) · sign in to sync cloud`,
@@ -883,11 +1244,18 @@ export async function importPlaylistToCloud(opts: {
       playlistName?: string;
     };
     if (!res.ok || data.ok === false) {
+      if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 429) {
+        return {
+          ok: false,
+          message: data.message || `HTTP ${res.status}`,
+          total: opts.videos.length,
+          playlistName: opts.playlistName,
+        };
+      }
+      await queueImport();
       return {
         ok: true,
-        message:
-          data.message ||
-          `Saved “${opts.playlistName}” on device · cloud will retry`,
+        message: `Saved “${opts.playlistName}” on device · cloud will retry`,
         total: opts.videos.length,
         playlistName: opts.playlistName,
       };
@@ -900,10 +1268,11 @@ export async function importPlaylistToCloud(opts: {
       updated: data.updated,
       playlistName: data.playlistName || opts.playlistName,
     };
-  } catch (err) {
+  } catch {
+    await queueImport();
     return {
       ok: true,
-      message: `Saved “${opts.playlistName}” on device · vault offline`,
+      message: `Saved “${opts.playlistName}” on device · vault offline · will sync when it is back`,
       total: opts.videos.length,
       playlistName: opts.playlistName,
     };
@@ -920,7 +1289,7 @@ export async function fetchUserPlaylists(): Promise<{
   if (!settings.enabled || !settings.apiKey) {
     try {
       const { listLocalPlaylistNames } = await import(
-        "../storage/libraryStore"
+        "../zx/libraryStore"
       );
       const names = await listLocalPlaylistNames();
       return {
@@ -953,7 +1322,7 @@ export async function fetchUserPlaylists(): Promise<{
   } catch (err) {
     try {
       const { listLocalPlaylistNames } = await import(
-        "../storage/libraryStore"
+        "../zx/libraryStore"
       );
       const names = await listLocalPlaylistNames();
       return {
@@ -967,5 +1336,112 @@ export async function fetchUserPlaylists(): Promise<{
         message: err instanceof Error ? err.message : "Fetch failed",
       };
     }
+  }
+}
+
+// ── Pull vault → device on a schedule ──────────────────────────────────────
+// Login used to be the only pull, so Studio edits (unsave, delete a mark) and
+// other devices' notes never reached this browser until the next sign-in.
+
+const PULL_KEY = "vsa_last_vault_pull_v1";
+const PULL_EVERY_MS = 5 * 60_000;
+let pullerTimer: number | null = null;
+let pullerCleanup: (() => void) | null = null;
+
+/**
+ * Pull the vault if nobody on this browser did so within maxAgeMs.
+ * The stamp lives in chrome.storage so several YouTube tabs share one pull.
+ */
+export async function pullVaultIfStale(
+  maxAgeMs = PULL_EVERY_MS
+): Promise<boolean> {
+  const settings = await loadCloudSettings();
+  if (!settings.enabled || !settings.apiKey) return false;
+  const key = `${PULL_KEY}_${settings.userId}`;
+  let last = 0;
+  try {
+    last = Number((await chrome.storage.local.get(key))[key]) || 0;
+  } catch {
+    /* ignore */
+  }
+  if (Date.now() - last < maxAgeMs) return false;
+  // Claim first so other tabs skip while this one fetches
+  await chrome.storage.local.set({ [key]: Date.now() });
+  const result = await hydrateLocalFromVault().catch(() => ({ ok: false }));
+  if (!result.ok) {
+    // Vault down: let the next check retry instead of waiting a full period
+    await chrome.storage.local.set({ [key]: last });
+  }
+  return result.ok;
+}
+
+/**
+ * Check every minute and on tab focus. After a fresh pull, calls onChanged
+ * only when snapshot() differs, so an unchanged video is never repainted.
+ */
+export function startVaultPuller(
+  onChanged: () => void,
+  snapshot: () => Promise<string> = async () => ""
+): () => void {
+  pullerCleanup?.();
+  const check = () => {
+    void (async () => {
+      const before = await snapshot();
+      if (!(await pullVaultIfStale())) return;
+      if ((await snapshot()) !== before) onChanged();
+    })();
+  };
+  const onVisible = () => {
+    if (document.visibilityState === "visible") check();
+  };
+  check();
+  pullerTimer = window.setInterval(check, 60_000);
+  document.addEventListener("visibilitychange", onVisible);
+  pullerCleanup = () => {
+    if (pullerTimer != null) window.clearInterval(pullerTimer);
+    pullerTimer = null;
+    document.removeEventListener("visibilitychange", onVisible);
+    pullerCleanup = null;
+  };
+  return pullerCleanup;
+}
+
+/**
+ * Freshest resume point for one video from the vault (break taken on the
+ * phone or another browser). Null when signed out, offline, or none saved.
+ */
+export async function fetchCloudResumePoint(videoId: string): Promise<{
+  position: number;
+  duration: number;
+  kind: "break" | "auto";
+  at: number;
+} | null> {
+  const settings = await loadCloudSettings();
+  if (!settings.enabled || !settings.apiKey || !videoId) return null;
+  try {
+    const { res } = await Promise.race([
+      vaultFetch(
+        `/api/vault/progress/${encodeURIComponent(videoId)}`,
+        { headers: authHeaders(settings.apiKey) },
+        settings.projectUrl
+      ),
+      new Promise<never>((_, reject) =>
+        window.setTimeout(() => reject(new Error("timeout")), 2500)
+      ),
+    ]);
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      progress?: { position: number; duration: number; kind: string; updatedAt: number } | null;
+    };
+    const p = data.progress;
+    if (!p || !(p.position > 0)) return null;
+    return {
+      position: p.position,
+      duration: p.duration || 0,
+      kind: p.kind === "break" ? "break" : "auto",
+      at: p.updatedAt || 0,
+    };
+  } catch {
+    return null;
   }
 }

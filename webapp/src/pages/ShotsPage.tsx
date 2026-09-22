@@ -12,11 +12,12 @@ import {
   X,
 } from "lucide-react";
 import { EmptyState } from "../components/EmptyState";
+import { ExportPdfButton } from "../components/ExportPdfButton";
 import { useVault } from "../store/VaultContext";
 import { useSession } from "../store/SessionContext";
 import { formatTime, relTime, ytThumb, ytWatchUrl } from "../lib/format";
 import { shotSrc } from "../api/client";
-import type { ShotItem } from "../types";
+import type { ShotItem, VaultRow } from "../types";
 
 type Group = {
   videoId: string;
@@ -63,10 +64,17 @@ export function ShotsPage() {
   const [filter, setFilter] = useState("");
   const [videoFilter, setVideoFilter] = useState<string>("all");
 
+  // One pass to index rows — a .find() per shot is quadratic on big vaults.
+  const rowById = useMemo(() => {
+    const m = new Map<string, VaultRow>();
+    for (const r of rows) m.set(r.video_id, r);
+    return m;
+  }, [rows]);
+
   const groups = useMemo(() => {
     const map = new Map<string, Group>();
     for (const s of shots) {
-      const row = rows.find((r) => r.video_id === s.videoId);
+      const row = rowById.get(s.videoId);
       let g = map.get(s.videoId);
       if (!g) {
         g = {
@@ -89,7 +97,7 @@ export function ShotsPage() {
       (a, b) =>
         (b.shots[0]?.shot.createdAt || 0) - (a.shots[0]?.shot.createdAt || 0)
     );
-  }, [shots, rows]);
+  }, [shots, rowById]);
 
   const flatFiltered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -138,6 +146,32 @@ export function ShotsPage() {
 
   const active = lb != null ? flatFiltered[lb] : null;
 
+  // One section per video, carrying only the shots currently in view.
+  const exportRows = useMemo(() => {
+    const byVideo = new Map<string, ShotItem[]>();
+    for (const s of flatFiltered) {
+      const list = byVideo.get(s.videoId);
+      if (list) list.push(s);
+      else byVideo.set(s.videoId, [s]);
+    }
+    const out: VaultRow[] = [];
+    for (const [videoId, items] of byVideo) {
+      const row = rowById.get(videoId);
+      out.push({
+        video_id: videoId,
+        updated_at: row?.updated_at || new Date().toISOString(),
+        payload: {
+          ...(row?.payload || { videoId }),
+          videoId,
+          videoTitle: row?.payload?.videoTitle || items[0]?.title || videoId,
+          highlights: [],
+          screenshots: items.map((s) => s.shot),
+        },
+      });
+    }
+    return out;
+  }, [flatFiltered, rowById]);
+
   return (
     <div className="view shots-gallery">
       <header className="view-head shots-gallery-head">
@@ -174,6 +208,15 @@ export function ShotsPage() {
               </option>
             ))}
           </select>
+          <ExportPdfButton
+            rows={exportRows}
+            title="Screenshots"
+            subtitle={`${flatFiltered.length} capture${flatFiltered.length === 1 ? "" : "s"} from ${exportRows.length} video${exportRows.length === 1 ? "" : "s"}`}
+            fileBase="videosearch-shots"
+            label="PDF"
+            disabled={!flatFiltered.length}
+            options={{ includeMarks: false }}
+          />
         </div>
       </header>
 

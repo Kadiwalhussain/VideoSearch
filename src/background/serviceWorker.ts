@@ -6,6 +6,7 @@
  */
 
 import { loadOnboarding } from "../welcome/onboardingStore";
+import { getPendingSyncCount } from "../cloud/offlineSync";
 
 export {};
 
@@ -171,3 +172,45 @@ if (chrome.commands?.onCommand) {
     if (command === "capture-frame") sendToYoutubeTab("VSA_CAPTURE");
   });
 }
+
+// ── Toolbar badge: changes waiting to reach the vault ─────────────────────
+// Any tab can queue or flush, so the worker watches storage rather than
+// relying on messages.
+
+const BADGE_KEYS = new Set([
+  "vsa_offline_sync_queue_v1",
+  "vsa_offline_ops_v1",
+  "vsa_cloud_settings",
+]);
+
+async function refreshSyncBadge(): Promise<void> {
+  if (!chrome.action?.setBadgeText) return;
+  let pending = 0;
+  try {
+    pending = await getPendingSyncCount();
+  } catch {
+    /* storage unavailable — show nothing */
+  }
+  await chrome.action.setBadgeText({
+    text: pending > 0 ? (pending > 99 ? "99+" : String(pending)) : "",
+  });
+  if (pending > 0) {
+    await chrome.action.setBadgeBackgroundColor({ color: "#d97706" });
+  }
+  await chrome.action.setTitle({
+    title:
+      pending > 0
+        ? `VideoSearch AI · ${pending} change${pending === 1 ? "" : "s"} waiting for the vault`
+        : "VideoSearch AI",
+  });
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (Object.keys(changes).some((k) => BADGE_KEYS.has(k))) {
+    void refreshSyncBadge();
+  }
+});
+chrome.runtime.onStartup?.addListener(() => void refreshSyncBadge());
+chrome.runtime.onInstalled?.addListener(() => void refreshSyncBadge());
+void refreshSyncBadge();

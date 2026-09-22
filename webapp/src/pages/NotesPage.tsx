@@ -10,6 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { EmptyState } from "../components/EmptyState";
+import { ExportPdfButton } from "../components/ExportPdfButton";
 import { useVault } from "../store/VaultContext";
 import { useDialog } from "../store/DialogContext";
 import {
@@ -18,7 +19,7 @@ import {
   ytThumb,
   ytWatchUrl,
 } from "../lib/format";
-import type { NoteItem } from "../types";
+import type { NoteItem, VaultRow } from "../types";
 
 type Filter = "all" | "written" | "silent";
 
@@ -49,7 +50,7 @@ function noteKey(n: NoteItem, index: number): string {
 }
 
 export function NotesPage() {
-  const { notes, deleteMark } = useVault();
+  const { notes, deleteMark, getVideo } = useVault();
   const { confirm, toast } = useDialog();
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -94,6 +95,33 @@ export function NotesPage() {
     [filtered]
   );
 
+  // Export exactly what the current search/filter is showing, grouped back
+  // into one section per video.
+  const exportRows = useMemo(() => {
+    const byVideo = new Map<string, NoteItem[]>();
+    for (const n of filtered) {
+      const list = byVideo.get(n.videoId);
+      if (list) list.push(n);
+      else byVideo.set(n.videoId, [n]);
+    }
+    const out: VaultRow[] = [];
+    for (const [videoId, items] of byVideo) {
+      const row = getVideo(videoId);
+      out.push({
+        video_id: videoId,
+        updated_at: row?.updated_at || new Date().toISOString(),
+        payload: {
+          ...(row?.payload || { videoId }),
+          videoId,
+          videoTitle: row?.payload?.videoTitle || items[0]?.title || videoId,
+          highlights: items.map((n) => n.highlight),
+          screenshots: [],
+        },
+      });
+    }
+    return out;
+  }, [filtered, getVideo]);
+
   return (
     <div className="view notes-page">
       <header className="notes-page-head">
@@ -137,6 +165,19 @@ export function NotesPage() {
               </button>
             ))}
           </div>
+          <ExportPdfButton
+            rows={exportRows}
+            title="Notes & marks"
+            subtitle={
+              q.trim() || filter !== "all"
+                ? `Filtered export · ${filtered.length} marks`
+                : `${filtered.length} marks across ${videoCount} video${videoCount === 1 ? "" : "s"}`
+            }
+            fileBase="videosearch-notes"
+            label="PDF"
+            disabled={!filtered.length}
+            options={{ includeShots: false }}
+          />
         </div>
       </header>
 

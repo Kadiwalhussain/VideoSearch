@@ -2,6 +2,7 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   Activity,
   CloudDownload,
+  GraduationCap,
   PlayCircle,
   Search,
   Sparkles,
@@ -10,12 +11,14 @@ import { StatCards } from "../components/StatCards";
 import { VideoCard } from "../components/VideoCard";
 import { useSession } from "../store/SessionContext";
 import { useVault } from "../store/VaultContext";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { fetchStudyQueue } from "../api/study";
 import { formatTime } from "../lib/format";
 import { EmptyState } from "../components/EmptyState";
 import { SessionLoader } from "../components/SessionLoader";
 import { Inbox, Tv } from "lucide-react";
 import { buildChannelStats } from "../lib/analytics";
+import { continueWatchingRows } from "../lib/vaultSelectors";
 
 export function DashboardPage() {
   const { session } = useSession();
@@ -26,6 +29,21 @@ export function DashboardPage() {
   const name = session?.user.displayName || session?.user.email || "there";
   const topChannels = useMemo(
     () => buildChannelStats(rows).slice(0, 5),
+    [rows]
+  );
+  const [studyLeft, setStudyLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (!session) return;
+    let live = true;
+    fetchStudyQueue(session)
+      .then((q) => live && setStudyLeft(q.cards.length))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [session]);
+  const continueRows = useMemo(
+    () => continueWatchingRows(rows).slice(0, 4),
     [rows]
   );
 
@@ -59,6 +77,24 @@ export function DashboardPage() {
             Retry
           </button>
         </div>
+      ) : null}
+
+      {continueRows.length > 0 ? (
+        <section className="section">
+          <div className="section-head">
+            <h2 className="section-title">
+              <PlayCircle size={18} /> Continue watching
+            </h2>
+            <Link className="link-btn" to="/history">
+              History →
+            </Link>
+          </div>
+          <div className="video-grid">
+            {continueRows.map((r) => (
+              <VideoCard key={r.video_id} row={r} />
+            ))}
+          </div>
+        </section>
       ) : null}
 
       <section className="section">
@@ -202,9 +238,17 @@ export function DashboardPage() {
               <strong>{stats.watchLater}</strong> watch later
             </li>
           </ul>
-          <Link className="btn-glow sm" to="/history" style={{ marginTop: 12 }}>
-            <PlayCircle size={14} /> Continue in history
-          </Link>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+            {studyLeft ? (
+              <Link className="btn-glow sm" to="/study">
+                <GraduationCap size={14} /> Review {studyLeft} card
+                {studyLeft === 1 ? "" : "s"} today
+              </Link>
+            ) : null}
+            <Link className={studyLeft ? "btn-notes" : "btn-glow sm"} to="/history">
+              <PlayCircle size={14} /> Continue in history
+            </Link>
+          </div>
         </section>
       </div>
     </div>

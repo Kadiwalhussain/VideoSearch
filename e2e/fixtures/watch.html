@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Resume test video - YouTube</title>
+  <style>
+    body { margin: 0; background: #0f0f0f; color: #fff; font-family: Roboto, Arial, sans-serif; }
+    #movie_player { position: relative; width: 854px; height: 480px; background: #000; }
+    video { width: 100%; height: 100%; }
+    .ytp-chrome-bottom { position: absolute; left: 12px; right: 12px; bottom: 0; height: 48px; }
+    .ytp-progress-bar { height: 4px; background: rgba(255,255,255,.3); }
+    .ytp-chrome-controls { display: flex; justify-content: space-between; height: 44px; }
+    .ytp-left-controls, .ytp-right-controls { display: flex; align-items: center; height: 100%; }
+    .ytp-time-display { padding: 0 8px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <!-- Minimal stand-in for YouTube's watch page: the selectors the extension uses -->
+  <ytd-watch-flexy>
+    <div id="movie_player" class="html5-video-player">
+      <div class="html5-video-container">
+        <video class="html5-main-video" src="/e2e/tenmin.webm" muted playsinline preload="auto"></video>
+      </div>
+      <div class="ytp-chrome-bottom">
+        <div class="ytp-progress-bar-container"><div class="ytp-progress-bar"></div></div>
+        <div class="ytp-chrome-controls">
+          <div class="ytp-left-controls">
+            <button class="ytp-play-button ytp-button" aria-label="Play">▶</button>
+            <div class="ytp-time-display"><span class="ytp-time-current">0:00</span> / <span>10:00</span></div>
+            <div class="ytp-chapter-container"></div>
+          </div>
+          <div class="ytp-right-controls"></div>
+        </div>
+      </div>
+    </div>
+    <ytd-watch-metadata>
+      <h1 class="ytd-watch-metadata"><yt-formatted-string>Resume test video</yt-formatted-string></h1>
+      <div id="top-row"><div id="owner-and-actions"><div id="actions"></div></div></div>
+    </ytd-watch-metadata>
+    <div id="secondary"></div>
+  </ytd-watch-flexy>
+</body>
+</html>

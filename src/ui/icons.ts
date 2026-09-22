@@ -20,6 +20,8 @@ import {
   Bookmark,
   BookmarkCheck,
   Clock,
+  Coffee,
+  RotateCcw,
   FolderPlus,
   Link2,
   Copy,
@@ -65,7 +67,9 @@ export type IconName =
   | "clock"
   | "playlist"
   | "link"
-  | "copy";
+  | "copy"
+  | "coffee"
+  | "restart";
 
 const MAP: Record<IconName, IconNode> = {
   search: Search,
@@ -99,6 +103,8 @@ const MAP: Record<IconName, IconNode> = {
   playlist: FolderPlus,
   link: Link2,
   copy: Copy,
+  coffee: Coffee,
+  restart: RotateCcw,
 };
 
 function attrsToString(attrs: Record<string, string | number>): string {

@@ -84,8 +84,29 @@ export const VaultVideo = mongoose.model(
       watchLaterAt: { type: Date, default: null },
       /** Named playlists this video belongs to */
       playlists: { type: [String], default: [] },
+      /** User ticked this video as watched (shown on playlist rows) */
+      completed: { type: Boolean, default: false },
+      completedAt: { type: Date, default: null },
       /** Last time the user actually watched this video */
       lastViewedAt: { type: Date, default: null },
+      /**
+       * Ids of marks / shots the user deleted. Sync drops these so a device
+       * that still holds an old copy cannot bring them back.
+       */
+      deletedHighlightIds: { type: [String], default: [] },
+      deletedScreenshotIds: { type: [String], default: [] },
+      /** Video length in seconds, reported by the player */
+      durationSec: { type: Number, default: 0 },
+      /**
+       * Where to resume. kind "break" = the user pressed Take a break;
+       * "auto" = last position saved while watching.
+       */
+      progress: {
+        position: { type: Number, default: 0 },
+        duration: { type: Number, default: 0 },
+        kind: { type: String, default: "auto" },
+        updatedAt: { type: Date, default: null },
+      },
       updatedAt: { type: Date, default: Date.now },
     },
     { timestamps: true }
@@ -103,7 +124,11 @@ export const SharedCard = mongoose.model(
     {
       token: { type: String, required: true, unique: true, index: true },
       userId: { type: String, required: true, index: true },
-      videoId: { type: String, required: true, index: true },
+      /** "video" (one card) or "playlist" (a whole list, read-only) */
+      kind: { type: String, default: "video" },
+      /** Empty for playlist shares */
+      videoId: { type: String, default: "", index: true },
+      playlistName: { type: String, default: "" },
       /** Snapshot so share stays stable even if vault changes */
       snapshot: {
         videoId: String,
@@ -140,6 +165,27 @@ export const SharedCard = mongoose.model(
         shotCount: Number,
         noteCount: Number,
         sourceCount: Number,
+        /** Playlist shares only */
+        playlistName: String,
+        videos: [
+          {
+            videoId: String,
+            videoTitle: String,
+            videoUrl: String,
+            channelTitle: String,
+            durationSec: Number,
+            highlights: [
+              {
+                id: String,
+                startTime: Number,
+                endTime: Number,
+                note: String,
+                color: String,
+              },
+            ],
+            shotCount: Number,
+          },
+        ],
       },
       createdAt: { type: Date, default: Date.now },
       expiresAt: { type: Date, default: null },
@@ -148,6 +194,11 @@ export const SharedCard = mongoose.model(
     { timestamps: true }
   )
 );
+
+// Mongo drops expired share snapshots on its own — a revoked or lapsed link
+// shouldn't keep a copy of someone's notes lying around.
+SharedCard.schema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+SharedCard.schema.index({ userId: 1, createdAt: -1 });
 
 /** Auth user account */
 export const User = mongoose.model(
@@ -174,6 +225,19 @@ export const User = mongoose.model(
         expiresAt: Date,
         attempts: { type: Number, default: 0 },
       },
+      /**
+       * Which section each playlist sits in ("Education", "Entertainment"…).
+       * Keyed by playlist name; playlists without an entry are unsorted.
+       */
+      playlistSections: {
+        type: [
+          new mongoose.Schema(
+            { playlist: String, section: String },
+            { _id: false }
+          ),
+        ],
+        default: [],
+      },
       videoCount: { type: Number, default: 0 },
       highlightCount: { type: Number, default: 0 },
       screenshotCount: { type: Number, default: 0 },
@@ -183,3 +247,33 @@ export const User = mongoose.model(
 );
 
 attachSupabaseMirrors({ User, VaultVideo, SharedCard });
+
+/**
+ * Spaced-repetition state for one mark used as a flashcard.
+ * Kept apart from VaultVideo.highlights because extension syncs replace
+ * highlight objects wholesale and would wipe review history.
+ */
+export const StudyCard = mongoose.model(
+  "StudyCard",
+  new mongoose.Schema(
+    {
+      userId: { type: String, required: true, index: true },
+      videoId: { type: String, required: true },
+      highlightId: { type: String, required: true },
+      ease: { type: Number, default: 2.5 },
+      intervalDays: { type: Number, default: 0 },
+      reps: { type: Number, default: 0 },
+      lapses: { type: Number, default: 0 },
+      dueAt: { type: Date, default: Date.now },
+      lastGrade: { type: String, default: "" },
+      lastReviewedAt: { type: Date, default: null },
+    },
+    { timestamps: true }
+  )
+);
+
+StudyCard.schema.index(
+  { userId: 1, videoId: 1, highlightId: 1 },
+  { unique: true }
+);
+StudyCard.schema.index({ userId: 1, dueAt: 1 });

@@ -69,12 +69,12 @@ export async function shareVaultVideo(
   return { shareUrl: created.shareUrl, text };
 }
 
-/** Prefer native share sheet; fall back to clipboard. */
+/** Prefer native share sheet; fall back to clipboard on a real failure. */
 export async function presentShare(opts: {
   title: string;
   text: string;
   url: string;
-}): Promise<"shared" | "copied"> {
+}): Promise<"shared" | "copied" | "cancelled"> {
   if (typeof navigator !== "undefined" && navigator.share) {
     try {
       await navigator.share({
@@ -84,10 +84,12 @@ export async function presentShare(opts: {
       });
       return "shared";
     } catch (e) {
-      // User cancelled share sheet — not an error
+      // User cancelled share sheet — not an error, and not a reason to
+      // silently copy to clipboard behind their back either.
       if (e instanceof Error && /Abort|cancel/i.test(e.name + e.message)) {
-        throw e;
+        return "cancelled";
       }
+      throw e;
     }
   }
   await navigator.clipboard.writeText(`${opts.text}`);

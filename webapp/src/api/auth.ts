@@ -90,3 +90,44 @@ export async function fetchMe(session: Session): Promise<VaultUser> {
   if (!res.ok) throw new Error(data.message || "Session expired");
   return data.user as VaultUser;
 }
+
+export function googleStartUrl(projectUrl: string, redirect: string): string {
+  const base = normalizeApiBase(projectUrl || defaultApiUrl());
+  return `${base}/api/auth/google/start?redirect=${encodeURIComponent(redirect)}`;
+}
+
+export async function probeGoogleAuth(projectUrl?: string): Promise<boolean> {
+  const base = normalizeApiBase(projectUrl || defaultApiUrl());
+  try {
+    const res = await apiFetch(base, "/health");
+    const data = (await res.json().catch(() => ({}))) as { googleAuth?: boolean };
+    return Boolean(res.ok && data.googleAuth);
+  } catch {
+    return false;
+  }
+}
+
+/** Apply a JWT from Google OAuth (query ?token=) — same vault as the extension. */
+export async function applyVaultToken(opts: {
+  token: string;
+  projectUrl?: string;
+  email?: string;
+  displayName?: string;
+}): Promise<Session> {
+  const token = opts.token.trim();
+  if (!token) throw new Error("Missing sign-in token");
+  const base = normalizeApiBase(opts.projectUrl || defaultApiUrl());
+  const session: Session = {
+    url: base,
+    token,
+    user: {
+      userId: "",
+      email: opts.email || "",
+      displayName: opts.displayName || "",
+    },
+  };
+  const user = await fetchMe(session);
+  const next: Session = { ...session, user };
+  saveSession(next);
+  return next;
+}
