@@ -110,6 +110,13 @@ export type PendingOp =
       progressKind: "break" | "auto";
       /** When the position was recorded (older replays never win) */
       recordedAt: number;
+      /** Full break log for the video (merged by id on the vault) */
+      breaks?: Array<{
+        id: string;
+        position: number;
+        startedAt: number;
+        endedAt: number | null;
+      }>;
       videoTitle?: string;
       channelTitle?: string;
       channelUrl?: string;
@@ -247,6 +254,7 @@ async function replayOp(op: PendingOp, token: string): Promise<ReplayOutcome> {
       duration: op.duration,
       kind: op.progressKind,
       at: op.recordedAt,
+      breaks: op.breaks,
       videoTitle: op.videoTitle,
       channelTitle: op.channelTitle,
       channelUrl: op.channelUrl,

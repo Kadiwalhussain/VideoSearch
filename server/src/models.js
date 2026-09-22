@@ -107,6 +107,21 @@ export const VaultVideo = mongoose.model(
         kind: { type: String, default: "auto" },
         updatedAt: { type: Date, default: null },
       },
+      /** Every Take a break: spot in the video, when it began and ended (ms) */
+      breaks: {
+        type: [
+          new mongoose.Schema(
+            {
+              id: String,
+              position: Number,
+              startedAt: Number,
+              endedAt: { type: Number, default: null },
+            },
+            { _id: false }
+          ),
+        ],
+        default: [],
+      },
       updatedAt: { type: Date, default: Date.now },
     },
     { timestamps: true }

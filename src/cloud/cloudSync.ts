@@ -13,6 +13,7 @@ import type { VideoScreenshot } from "../zx/screenshotStore";
 import { updateScreenshot } from "../zx/screenshotStore";
 import { vaultHttp } from "../net/vaultHttp";
 import { saveResumePoint } from "../zx/progressStore";
+import { absorbBreaks } from "../zx/breakLog";
 import type { AbsoluteLibraryAction } from "./offlineSync";
 
 /** Privileged fetch + localhost ↔ 127.0.0.1 retry. */
@@ -296,6 +297,7 @@ type VaultListPayload = VaultPayload & {
     kind: "break" | "auto";
     updatedAt: number;
   } | null;
+  breaks?: unknown[];
 };
 
 /**
@@ -378,6 +380,10 @@ export async function hydrateLocalFromVault(opts?: {
         kind: p.progress.kind === "break" ? "break" : "auto",
         at: p.progress.updatedAt || 0,
       });
+    }
+
+    if (Array.isArray(p.breaks) && p.breaks.length) {
+      await absorbBreaks(videoId, p.breaks);
     }
 
     // Deleted elsewhere (Studio / another device): remove the local copy
@@ -1415,6 +1421,8 @@ export async function fetchCloudResumePoint(videoId: string): Promise<{
   duration: number;
   kind: "break" | "auto";
   at: number;
+  /** Break log from other devices (raw; normalized by the caller) */
+  breaks?: unknown[];
 } | null> {
   const settings = await loadCloudSettings();
   if (!settings.enabled || !settings.apiKey || !videoId) return null;
@@ -1432,14 +1440,17 @@ export async function fetchCloudResumePoint(videoId: string): Promise<{
     if (!res.ok) return null;
     const data = (await res.json()) as {
       progress?: { position: number; duration: number; kind: string; updatedAt: number } | null;
+      breaks?: unknown[];
     };
     const p = data.progress;
-    if (!p || !(p.position > 0)) return null;
+    const breaks = Array.isArray(data.breaks) ? data.breaks : [];
+    if ((!p || !(p.position > 0)) && !breaks.length) return null;
     return {
-      position: p.position,
-      duration: p.duration || 0,
-      kind: p.kind === "break" ? "break" : "auto",
-      at: p.updatedAt || 0,
+      position: p && p.position > 0 ? p.position : 0,
+      duration: p?.duration || 0,
+      kind: p?.kind === "break" ? "break" : "auto",
+      at: p?.updatedAt || 0,
+      breaks,
     };
   } catch {
     return null;
