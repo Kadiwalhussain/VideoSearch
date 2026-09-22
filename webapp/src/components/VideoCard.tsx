@@ -2,18 +2,21 @@ import { Link } from "react-router-dom";
 import {
   Bookmark,
   Clock,
+  Coffee,
+  Play,
   ExternalLink,
   ListPlus,
   Share2,
   StickyNote,
   Trash2,
 } from "lucide-react";
-import { activityLabel, ytThumb, ytWatchUrl } from "../lib/format";
+import { activityLabel, formatTime, ytThumb, ytWatchUrl } from "../lib/format";
+import { resumeInfo } from "../lib/vaultSelectors";
 import type { VaultRow } from "../types";
 import { useVault } from "../store/VaultContext";
 import { useDialog } from "../store/DialogContext";
 import { useSession } from "../store/SessionContext";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ShareCardModal } from "./ShareCardModal";
 import { filterUsefulSources } from "../lib/sourceFilter";
@@ -34,7 +37,7 @@ function cardActivityLabel(row: VaultRow): string {
   return activityLabel(row);
 }
 
-export function VideoCard({
+function VideoCardBase({
   row,
   showRemoveWatchLater,
   playlistName,
@@ -62,6 +65,9 @@ export function VideoCard({
   const plBtnRef = useRef<HTMLButtonElement>(null);
 
   const title = displayTitle(row);
+  const resume = resumeInfo(row);
+  const canResume = Boolean(resume && !resume.finished && resume.position >= 10);
+  const length = resume?.duration || p.durationSec || 0;
 
   useEffect(() => {
     if (!plOpen) return;
@@ -157,6 +163,26 @@ export function VideoCard({
         <div className="v-play" aria-hidden>
           <span>▶</span>
         </div>
+        {resume?.isBreak && canResume ? (
+          <span className="v-break-badge" title="You took a break here">
+            <Coffee size={12} aria-hidden /> Break · {formatTime(resume.position)}
+          </span>
+        ) : null}
+        {length > 0 ? (
+          <span className="v-duration">{formatTime(length)}</span>
+        ) : null}
+        {resume && resume.pct > 0 ? (
+          <div
+            className={`v-progress${resume.isBreak ? " is-break" : ""}`}
+            role="progressbar"
+            aria-label="Watched"
+            aria-valuenow={Math.round(resume.pct)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <i style={{ width: `${resume.finished ? 100 : resume.pct}%` }} />
+          </div>
+        ) : null}
       </Link>
 
       <div className="v-body">
@@ -171,14 +197,27 @@ export function VideoCard({
         <div className="v-bar">
           <div className="v-bar-primary">
             <a
-              className="v-bar-watch"
-              href={ytWatchUrl(row.video_id, p.videoUrl)}
+              className={`v-bar-watch${canResume ? " is-resume" : ""}`}
+              href={ytWatchUrl(
+                row.video_id,
+                p.videoUrl,
+                canResume ? Math.max(0, (resume?.position || 0) - 2) : undefined
+              )}
               target="_blank"
               rel="noreferrer"
+              title={
+                canResume
+                  ? `Resume at ${formatTime(resume!.position)}`
+                  : "Watch on YouTube"
+              }
               onClick={() => recordView(row.video_id)}
             >
-              <ExternalLink size={14} strokeWidth={2.25} aria-hidden />
-              <span>Watch</span>
+              {canResume ? (
+                <Play size={14} strokeWidth={2.25} aria-hidden />
+              ) : (
+                <ExternalLink size={14} strokeWidth={2.25} aria-hidden />
+              )}
+              <span>{canResume ? `Resume ${formatTime(resume!.position)}` : "Watch"}</span>
             </a>
             <Link className="v-bar-open" to={`/video/${row.video_id}`}>
               <StickyNote size={14} strokeWidth={2.25} aria-hidden />
@@ -336,3 +375,9 @@ export function VideoCard({
     </article>
   );
 }
+
+/**
+ * Untouched rows keep their object identity across vault updates, so a shallow
+ * compare keeps a large grid from re-rendering when one card changes.
+ */
+export const VideoCard = memo(VideoCardBase);

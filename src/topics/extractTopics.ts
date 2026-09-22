@@ -1,18 +1,23 @@
 /**
- * Human-readable main topics for a video.
+ * Human-readable main topics for a video, derived on-device.
  *
- * Avoids ASR brand spam ("Youtube Youtube Gmail") by:
- * 1. Splitting the video into timeline sections
- * 2. Finding words distinctive to each section (not repeated global noise)
- * 3. Building short, readable titles users would actually click
+ * Sections come from MiniLM embedding shifts (falling back to equal time
+ * windows), and every label is a contiguous phrase lifted from the captions —
+ * see phraseLabel.ts. Nothing here reassembles loose words into a title, which
+ * is what used to produce labels like "Normalization Smoother Learning".
  */
 
 import type { EmbeddedChunk, TranscriptChunk } from "../types/schema";
 import { estimateDurationSec, topicBudget } from "./topicBudget";
+import { hasDenseEmbedding, segmentByEmbedding } from "./segmentByEmbedding";
+import { labelSections, type LabelledSection } from "./phraseLabel";
 import {
-  hasDenseEmbedding,
-  segmentByEmbedding,
-} from "./segmentByEmbedding";
+  BRAND_NOISE,
+  STOP,
+  isBoilerplate,
+  isWeakEnding,
+} from "./lexicon";
+import { isContentWord, isNumericJunk, tokenize, titleCase } from "./phraseLabel";
 
 export interface VideoTopic {
   label: string;
@@ -22,46 +27,6 @@ export interface VideoTopic {
   score: number;
 }
 
-const STOP = new Set(
-  `
-  a an the and or but if then else when while of in on at to for from by with
-  as is are was were be been being have has had do does did will would can could
-  should may might must shall about into through during before after above below
-  between out off over under again further once here there all each few more most
-  other some such no nor not only own same so than too very just also now
-  this that these those it its i you he she we they them my your our their
-  me him her us what which who whom whose how why where yeah yes ok okay um uh
-  like really actually basically literally right well going go get got getting
-  says said say tell tells know think want need look see make take come use used
-  using something anything everything nothing guy guys people kind sort thing
-  things stuff way ways lot lots bit little much many one two three first second
-  next last let gonna wanna video videos lecture chapter section today
-  don't doesn't didn't isn't aren't wasn't weren't won't can't
-  because however therefore thus hence since while although though
-  maybe probably perhaps somehow anyway specific generally particular certain
-  different another create created creating based value values field fields
-  string strings type types name names good bad big small new old high low
-  example examples question questions answer answers point points time times
-  part parts case cases call calls called show shows mean means okay cool
-  slide slides page pages line lines code codes file files skip scy
-  um uh hmm ah oh wow nice great super
-  `.split(/\s+/).filter(Boolean)
-);
-
-/** Brands that dominate captions but are rarely useful alone as "topics" */
-const BRAND_NOISE = new Set(
-  `
-  youtube netflix google gmail alexa amazon facebook instagram twitter x
-  microsoft apple openai chatgpt github linkedin whatsapp telegram discord
-  zoom slack reddit tiktok spotify uber airbnb paypal stripe aws azure
-  python java javascript html css react node typescript kotlin swift
-  `.split(/\s+/).filter(Boolean)
-);
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 export function extractTopics(
   chunks: Array<TranscriptChunk | EmbeddedChunk>
 ): VideoTopic[] {
@@ -70,18 +35,21 @@ export function extractTopics(
   const durationSec = estimateDurationSec(chunks);
   const budget = topicBudget(chunks.length, durationSec);
 
-  // 1) Embedding shifts (MiniLM already on the chunks) — most exact local cuts
+  // 1) Embedding shifts — the most faithful cuts when the index has vectors.
   const dense = chunks.filter(hasDenseEmbedding);
-  let sectionTopics =
+  const sectionTopics =
     dense.length >= 6
-      ? topicsFromEmbedSections(dense, budget)
+      ? topicsFromPhrases(segmentByEmbedding(dense, budget), 12)
       : [];
 
-  // 2) Equal-time sections if embedding cuts were too few
+  // 2) Equal-time windows when embeddings are absent or produced too few cuts.
   if (sectionTopics.length < Math.min(6, budget)) {
-    const timed = topicsFromSections(chunks, budget);
+    const nSections = Math.min(
+      Math.max(budget, 10),
+      Math.max(8, Math.ceil(chunks.length / 2))
+    );
     const used = new Set(sectionTopics.map((t) => normalizeKey(t.label)));
-    for (const t of timed) {
+    for (const t of topicsFromPhrases(splitTimeline(chunks, nSections), 6)) {
       const key = normalizeKey(t.label);
       if (!key || used.has(key) || isNearDuplicate(key, used)) continue;
       used.add(key);
@@ -90,7 +58,7 @@ export function extractTopics(
     }
   }
 
-  // 2) Top up with distinctive global phrases if still short
+  // 3) Still thin — top up with the video's most distinctive repeated phrases.
   const used = new Set(sectionTopics.map((t) => normalizeKey(t.label)));
   const topics = [...sectionTopics];
 
@@ -105,130 +73,47 @@ export function extractTopics(
     }
   }
 
-  return topics
-    .filter((t) => isGoodUserLabel(t.label))
-    .sort((a, b) => a.startTime - b.startTime)
-    .slice(0, budget);
+  return dedupeByTime(
+    topics
+      .filter((t) => isGoodUserLabel(t.label))
+      .sort((a, b) => a.startTime - b.startTime)
+  ).slice(0, budget);
 }
 
 // ---------------------------------------------------------------------------
-// Section pipeline — one readable topic per time window
+// Sections → labels
 // ---------------------------------------------------------------------------
-
-function topicsFromSections(
-  chunks: Array<TranscriptChunk | EmbeddedChunk>,
-  budget: number
-): VideoTopic[] {
-  const global = wordDocFreq(chunks);
-  const nSections = Math.min(budget, Math.max(8, Math.ceil(chunks.length / 2.5)));
-  const sections = splitTimeline(chunks, nSections);
-  const out: VideoTopic[] = [];
-  const used = new Set<string>();
-
-  for (const section of sections) {
-    if (section.members.length === 0) continue;
-
-    const label =
-      labelFromDistinctiveWords(section.members, global, chunks.length) ??
-      labelFromBestSentence(section.members);
-
-    if (!label || !isGoodUserLabel(label)) continue;
-
-    const key = normalizeKey(label);
-    if (used.has(key) || isNearDuplicate(key, used)) continue;
-    used.add(key);
-
-    out.push({
-      label,
-      query: label.toLowerCase(),
-      startTime: section.startTime,
-      kind: "section",
-      score: section.members.length + 1,
-    });
-  }
-
-  return out;
-}
-
-function topicsFromEmbedSections(
-  chunks: EmbeddedChunk[],
-  budget: number
-): VideoTopic[] {
-  const global = wordDocFreq(chunks);
-  const sections = segmentByEmbedding(chunks, budget);
-  const out: VideoTopic[] = [];
-  const used = new Set<string>();
-
-  for (const section of sections) {
-    if (section.members.length === 0) continue;
-    const label =
-      labelFromExactPhrases(section.members, global, chunks.length) ??
-      labelFromDistinctiveWords(section.members, global, chunks.length) ??
-      labelFromBestSentence(section.members);
-    if (!label || !isGoodUserLabel(label)) continue;
-    const key = normalizeKey(label);
-    if (used.has(key) || isNearDuplicate(key, used)) continue;
-    used.add(key);
-    out.push({
-      label,
-      query: label.toLowerCase(),
-      startTime: section.startTime,
-      kind: "section",
-      score: 12 + section.members.length,
-    });
-  }
-  return out;
-}
 
 /**
- * 2–5 word phrases in caption order — more “exact” than shuffled TF-IDF bags.
+ * Label a set of sections with real caption phrases. Sponsor reads and
+ * sign-offs yield no candidates, so those sections drop out on their own.
  */
-function labelFromExactPhrases(
-  members: Array<TranscriptChunk | EmbeddedChunk>,
-  globalDf: Map<string, number>,
-  totalChunks: number
-): string | null {
-  const candidates = new Map<string, number>();
+function topicsFromPhrases(
+  sections: LabelledSection[],
+  baseScore: number
+): VideoTopic[] {
+  const usable = sections.filter((s) => s.members.length > 0);
+  const labels = labelSections(usable);
+  const out: VideoTopic[] = [];
 
-  for (const m of members) {
-    const tokens = tokenize(m.text);
-    for (let n = 5; n >= 2; n--) {
-      for (let i = 0; i + n <= tokens.length; i++) {
-        const slice = tokens.slice(i, i + n);
-        if (!slice.every(isContentWord)) continue;
-        if (slice.every((w) => BRAND_NOISE.has(w))) continue;
-        if (new Set(slice).size < Math.min(2, n)) continue;
-        const phrase = slice.join(" ");
-        const idf =
-          slice.reduce((s, w) => {
-            const df = globalDf.get(w) ?? 1;
-            return s + Math.log(1 + totalChunks / df);
-          }, 0) / n;
-        const lengthBonus = n === 3 || n === 4 ? 1.25 : n === 2 ? 1 : 1.05;
-        const score = idf * lengthBonus;
-        const prev = candidates.get(phrase) ?? 0;
-        if (score > prev) candidates.set(phrase, score);
-      }
-    }
-  }
+  labels.forEach((label, i) => {
+    if (!label || !isGoodUserLabel(label.label)) return;
+    out.push({
+      label: label.label,
+      query: label.query,
+      startTime: label.startTime,
+      kind: "section",
+      score: baseScore + usable[i].members.length,
+    });
+  });
 
-  const ranked = [...candidates.entries()].sort((a, b) => b[1] - a[1]);
-  for (const [phrase] of ranked.slice(0, 12)) {
-    const label = titleCase(phrase);
-    if (isGoodUserLabel(label)) return label;
-  }
-  return null;
-}
-
-interface Section {
-  members: Array<TranscriptChunk | EmbeddedChunk>;
-  startTime: number;
+  return out;
 }
 
 function splitTimeline(
   chunks: Array<TranscriptChunk | EmbeddedChunk>,
   n: number
-): Section[] {
+): LabelledSection[] {
   if (chunks.length === 0) return [];
   const start = chunks[0].startTime;
   const end = Math.max(
@@ -236,7 +121,7 @@ function splitTimeline(
     start + 1
   );
   const span = end - start || 1;
-  const out: Section[] = [];
+  const out: LabelledSection[] = [];
 
   for (let i = 0; i < n; i++) {
     const t0 = start + (span * i) / n;
@@ -250,207 +135,42 @@ function splitTimeline(
   return out;
 }
 
-function wordDocFreq(
-  chunks: Array<TranscriptChunk | EmbeddedChunk>
-): Map<string, number> {
-  const df = new Map<string, number>();
-  for (const c of chunks) {
-    const seen = new Set<string>();
-    for (const w of tokenize(c.text)) {
-      if (seen.has(w)) continue;
-      seen.add(w);
-      df.set(w, (df.get(w) ?? 0) + 1);
-    }
-  }
-  return df;
-}
-
-/**
- * Score words that appear more in this section than in the rest of the video.
- * Then build a 2–4 word title from the best ones in first-seen order.
- */
-function labelFromDistinctiveWords(
-  members: Array<TranscriptChunk | EmbeddedChunk>,
-  globalDf: Map<string, number>,
-  totalChunks: number
-): string | null {
-  // Prefer a cleaned clause from the densest caption (more human than bag-of-words)
-  const clause = labelFromBestSentence(members);
-  if (clause && isGoodUserLabel(clause)) return clause;
-
-  const localTf = new Map<string, number>();
-  const firstPos = new Map<string, number>();
-  let pos = 0;
-
-  for (const m of members) {
-    for (const w of tokenize(m.text)) {
-      localTf.set(w, (localTf.get(w) ?? 0) + 1);
-      if (!firstPos.has(w)) firstPos.set(w, pos);
-      pos += 1;
-    }
-  }
-
-  const scored: Array<{ w: string; score: number; pos: number }> = [];
-  for (const [w, tf] of localTf) {
-    if (!isContentWord(w)) continue;
-    if (isNumericJunkToken(w)) continue;
-    // Brands only allowed if not the only signal
-    const df = globalDf.get(w) ?? 1;
-    const idf = Math.log(1 + totalChunks / df);
-    // Prefer words concentrated in this section
-    const concentration = tf / Math.max(1, members.length);
-    let score = tf * idf * (1 + concentration);
-
-    if (BRAND_NOISE.has(w)) score *= 0.2;
-    if (w.length >= 7) score *= 1.25;
-    if (w.length >= 5 && /^[a-z]+$/.test(w)) score *= 1.1;
-
-    scored.push({ w, score, pos: firstPos.get(w) ?? 0 });
-  }
-
-  scored.sort((a, b) => b.score - a.score);
-  if (scored.length === 0) return null;
-
-  // Take top candidates, then order by first appearance for natural reading
-  const top = scored.slice(0, 10);
-  top.sort((a, b) => a.pos - b.pos);
-
-  // Build phrase: prefer 2–4 non-brand words; allow one brand if mixed
-  const picked: string[] = [];
-  let brandCount = 0;
-  for (const { w } of top) {
-    if (picked.includes(w)) continue;
-    if (BRAND_NOISE.has(w)) {
-      if (brandCount >= 1) continue;
-      brandCount += 1;
-    }
-    picked.push(w);
-    if (picked.length >= 4) break;
-  }
-
-  if (picked.length < 2) {
-    for (const { w } of scored) {
-      if (picked.includes(w)) continue;
-      if (BRAND_NOISE.has(w) && picked.some((p) => BRAND_NOISE.has(p))) continue;
-      picked.push(w);
-      if (picked.length >= 2) break;
-    }
-  }
-
-  if (picked.length < 2) return null;
-  if (picked.every((w) => BRAND_NOISE.has(w))) return null;
-  if (new Set(picked).size < 2) return null;
-
-  const label = titleCase(picked.slice(0, 4).join(" "));
-  return isGoodUserLabel(label) ? label : null;
-}
-
-/**
- * Build a short title from the densest caption span — strips numbers/prices
- * and keeps readable content words (3–5 words).
- */
-function labelFromBestSentence(
-  members: Array<TranscriptChunk | EmbeddedChunk>
-): string | null {
-  const ranked = [...members].sort(
-    (a, b) =>
-      contentDensity(b.text) - contentDensity(a.text) ||
-      b.text.length - a.text.length
-  );
-
-  for (const densest of ranked.slice(0, 4)) {
-    const cleaned = densest.text
-      .replace(/https?:\/\/\S+/gi, " ")
-      .replace(/(?:rs\.?|inr|usd|\$|₹|€|£)\s*\d+(?:[.,]\d+)?/gi, " ")
-      .replace(/\b\d+[.,]\d+\b/g, " ")
-      .replace(/\b\d{2,}\b/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    const words = tokenize(cleaned).filter(
-      (w) => isContentWord(w) && !BRAND_NOISE.has(w)
-    );
-    if (words.length >= 2) {
-      // Prefer longer conceptual words first for title quality
-      const preferred = [...words].sort((a, b) => b.length - a.length);
-      const core = preferred.slice(0, 3);
-      // Restore roughly chronological order among picked
-      const ordered = words.filter((w) => core.includes(w)).slice(0, 4);
-      const label = titleCase(
-        (ordered.length >= 2 ? ordered : words.slice(0, 3)).join(" ")
-      );
-      if (isGoodUserLabel(label)) return label;
-    }
-
-    const any = tokenize(cleaned).filter(isContentWord);
-    if (any.length >= 2) {
-      const slice = any.filter((w) => !isNumericJunkToken(w)).slice(0, 4);
-      if (slice.length >= 2 && !slice.every((w) => BRAND_NOISE.has(w))) {
-        const label = titleCase(slice.join(" "));
-        if (isGoodUserLabel(label)) return label;
-      }
-    }
-  }
-  return null;
-}
-
-function contentDensity(text: string): number {
-  const tokens = tokenize(text);
-  if (!tokens.length) return 0;
-  const good = tokens.filter(
-    (w) => isContentWord(w) && !BRAND_NOISE.has(w) && w.length >= 4
-  );
-  return good.length / Math.max(1, tokens.length) + good.length * 0.05;
-}
-
 // ---------------------------------------------------------------------------
-// Global distinctive phrases (top-up)
+// Global distinctive phrases (top-up when sections come up short)
 // ---------------------------------------------------------------------------
 
 function distinctiveGlobalPhrases(
   chunks: Array<TranscriptChunk | EmbeddedChunk>,
   limit: number
 ): VideoTopic[] {
-  const bigrams = new Map<string, { count: number; start: number }>();
+  const phrases = new Map<string, { count: number; start: number }>();
 
   for (const c of chunks) {
+    if (isBoilerplate(c.text)) continue;
     const tokens = tokenize(c.text);
     const seen = new Set<string>();
-    for (let i = 0; i < tokens.length - 1; i++) {
-      const a = tokens[i];
-      const b = tokens[i + 1];
-      if (!isContentWord(a) || !isContentWord(b)) continue;
-      if (a === b) continue; // youtube youtube
-      if (BRAND_NOISE.has(a) && BRAND_NOISE.has(b)) continue;
-      const phrase = `${a} ${b}`;
-      if (seen.has(phrase)) continue;
-      seen.add(phrase);
-      const cur = bigrams.get(phrase);
-      if (cur) cur.count += 1;
-      else bigrams.set(phrase, { count: 1, start: c.startTime });
-    }
 
-    // Trigrams
-    for (let i = 0; i < tokens.length - 2; i++) {
-      const a = tokens[i];
-      const b = tokens[i + 1];
-      const c3 = tokens[i + 2];
-      if (![a, b, c3].every(isContentWord)) continue;
-      if (a === b || b === c3) continue;
-      if ([a, b, c3].filter((w) => BRAND_NOISE.has(w)).length >= 2) continue;
-      const phrase = `${a} ${b} ${c3}`;
-      if (seen.has(phrase)) continue;
-      seen.add(phrase);
-      const cur = bigrams.get(phrase);
-      if (cur) cur.count += 1;
-      else bigrams.set(phrase, { count: 1, start: c.startTime });
+    for (let n = 2; n <= 3; n++) {
+      for (let i = 0; i + n <= tokens.length; i++) {
+        const slice = tokens.slice(i, i + n);
+        if (!slice.every(isContentWord)) continue;
+        if (new Set(slice).size < slice.length) continue;
+        if (slice.filter((w) => BRAND_NOISE.has(w)).length >= n - 1) continue;
+        if (isWeakEnding(slice[n - 1])) continue;
+        const phrase = slice.join(" ");
+        if (seen.has(phrase)) continue;
+        seen.add(phrase);
+        const cur = phrases.get(phrase);
+        if (cur) cur.count += 1;
+        else phrases.set(phrase, { count: 1, start: c.startTime });
+      }
     }
   }
 
-  const minCount = chunks.length >= 40 ? 1 : 2;
+  const minCount = chunks.length >= 40 ? 2 : 1;
   const candidates: VideoTopic[] = [];
 
-  for (const [phrase, { count, start }] of bigrams) {
+  for (const [phrase, { count, start }] of phrases) {
     if (count < minCount) continue;
     const label = titleCase(phrase);
     if (!isGoodUserLabel(label)) continue;
@@ -468,116 +188,66 @@ function distinctiveGlobalPhrases(
 }
 
 // ---------------------------------------------------------------------------
-// Quality gates — kills "Youtube Youtube Youtube"
+// Quality gates
 // ---------------------------------------------------------------------------
 
+/**
+ * Script-aware: a Devanagari or CJK label has no [a-z] characters and must
+ * still pass. Only the checks that genuinely signal junk are applied.
+ */
 export function isGoodUserLabel(label: string): boolean {
   const raw = String(label || "").trim();
-  if (raw.length < 6 || raw.length > 72) return false;
-
-  const words = raw
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter(Boolean);
-
-  if (words.length < 2) return false;
-  if (words.length > 8) return false;
-  if (isRepeatedTokenPhrase(words.join(" "))) return false;
-
-  // Price / SKU / version soup: "Youtube 9.99 10.25", "14.5 13.5 E20"
-  const digitish = words.filter((w) => isNumericJunkToken(w)).length;
-  if (digitish >= 1 && digitish / words.length >= 0.35) return false;
-  if (digitish >= 2) return false;
-  if (words.filter((w) => /\d/.test(w)).length >= 2) return false;
-
-  // Must contain at least one real alphabetic content word (len >= 4)
-  const alphaContent = words.filter(
-    (w) =>
-      !isNumericJunkToken(w) &&
-      !STOP.has(w) &&
-      /^[a-z][a-z'-]*$/.test(w) &&
-      w.length >= 4
-  );
-  if (alphaContent.length < 1) return false;
-
-  // All brands → useless for navigation
-  if (words.every((w) => BRAND_NOISE.has(w) || isNumericJunkToken(w)))
-    return false;
-
-  // Majority brands (e.g. Netflix Gmail Google)
-  const brandN = words.filter((w) => BRAND_NOISE.has(w)).length;
-  if (brandN >= 2 && brandN >= words.length - 0) return false;
-  if (brandN === words.length) return false;
-  // Brand + only numbers (Youtube 9.99 10.25)
-  if (brandN >= 1 && digitish >= 1 && alphaContent.length <= 1) return false;
-
-  // Stopword-heavy
-  if (words.filter((w) => STOP.has(w)).length >= words.length - 1) return false;
-
-  // Email / URL garbage
+  if (raw.length < 4 || raw.length > 72) return false;
   if (/@|\.com|\.org|http|www\./i.test(raw)) return false;
 
-  // Pure model codes
-  if (/^[A-Z0-9][\w.-]{0,12}$/i.test(raw) && /\d/.test(raw)) return false;
+  const words = tokenize(raw);
+  if (words.length < 2 || words.length > 6) return false;
+  if (new Set(words).size < words.length) return false;
+
+  // Numbers may appear inside a phrase, never dominate it.
+  const digitish = words.filter(isNumericJunk).length;
+  if (digitish >= 2 || digitish / words.length >= 0.4) return false;
+
+  // At least one real content word carrying meaning.
+  const content = words.filter((w) => isContentWord(w) && !BRAND_NOISE.has(w));
+  if (content.length < 1) return false;
+
+  // Entirely brands, or brand + filler, is useless for navigation.
+  if (words.every((w) => BRAND_NOISE.has(w) || isNumericJunk(w))) return false;
+
+  // Mostly function words.
+  if (words.filter((w) => STOP.has(w)).length > words.length - 2) return false;
+
+  if (isWeakEnding(words[words.length - 1])) return false;
 
   return true;
 }
 
-/** Prices, model numbers, OCR junk: 9.99, e20, x95, 14.5, 779.9 */
+/** Kept for compatibility with existing imports. */
 export function isNumericJunkToken(w: string): boolean {
-  const t = w.toLowerCase().replace(/[$,₹€£]/g, "");
-  if (!t) return true;
-  if (/^\d+([.,]\d+)?%?$/.test(t)) return true;
-  if (/^\d+[kmb]$/i.test(t)) return true;
-  if (/^[a-z]{0,3}\d+[a-z0-9]*$/i.test(t) && /\d/.test(t)) return true;
-  if (/\d/.test(t) && t.length <= 5) return true;
-  return false;
+  return isNumericJunk(w);
 }
 
-function isRepeatedTokenPhrase(phrase: string): boolean {
-  const words = phrase.toLowerCase().split(/\s+/).filter(Boolean);
-  if (words.length < 2) return true;
-  // youtube youtube youtube
-  if (new Set(words).size === 1) return true;
-  // a a b or a b b with same stem spam
-  const counts = new Map<string, number>();
-  for (const w of words) counts.set(w, (counts.get(w) ?? 0) + 1);
-  for (const n of counts.values()) {
-    if (n >= 2 && words.length <= 3) return true;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Two topics seconds apart are one topic — keep the stronger label. */
+function dedupeByTime(topics: VideoTopic[], minGapSec = 20): VideoTopic[] {
+  const out: VideoTopic[] = [];
+  for (const t of topics) {
+    const prev = out[out.length - 1];
+    if (prev && t.startTime - prev.startTime < minGapSec) {
+      if (t.score > prev.score) out[out.length - 1] = t;
+      continue;
+    }
+    out.push(t);
   }
-  return false;
-}
-
-function isContentWord(w: string): boolean {
-  if (!w || w.length < 3) return false;
-  if (STOP.has(w)) return false;
-  if (isNumericJunkToken(w)) return false;
-  // Prefer real words over short codes
-  if (!/^[a-z][a-z'-]*$/i.test(w) && w.length < 5) return false;
-  return true;
-}
-
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/https?:\/\/\S+/g, " ")
-    // Strip currency and bare prices early
-    .replace(/(?:rs\.?|inr|usd|\$|₹|€|£)\s*\d+(?:[.,]\d+)?/gi, " ")
-    .replace(/\b\d+[.,]\d+\b/g, " ")
-    .replace(/\b\d{2,}\b/g, " ")
-    .replace(/[^a-z0-9'+\-.\s]/g, " ")
-    .split(/\s+/)
-    .map((t) => t.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
-    .filter((t) => t.length > 2 && !isNumericJunkToken(t));
+  return out;
 }
 
 function normalizeKey(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return tokenize(s).join(" ");
 }
 
 function isNearDuplicate(key: string, used: Set<string>): boolean {
@@ -592,18 +262,4 @@ function isNearDuplicate(key: string, used: Set<string>): boolean {
     if (union > 0 && inter / union >= 0.6) return true;
   }
   return false;
-}
-
-function titleCase(s: string): string {
-  return s
-    .split(/\s+/)
-    .map((w) => {
-      if (w.length <= 2) return w.toLowerCase();
-      // Keep short tech tokens readable
-      if (["html", "css", "api", "sql", "ai", "ui", "ux", "db"].includes(w)) {
-        return w.toUpperCase();
-      }
-      return w.charAt(0).toUpperCase() + w.slice(1);
-    })
-    .join(" ");
 }

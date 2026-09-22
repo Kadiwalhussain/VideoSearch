@@ -21,14 +21,46 @@ export function snapTopicTimes(
     1
   );
 
-  return topics.map((topic) => {
+  const snapped = topics.map((topic) => {
     const hint = normalizeTimeSeconds(topic.startTime, duration);
-    const snapped = findBestChunkStart(topic.query || topic.label, hint, chunks);
     return {
       ...topic,
-      startTime: snapped,
+      startTime: findBestChunkStart(topic.query || topic.label, hint, chunks),
     };
   });
+
+  return enforceOrder(snapped, chunks);
+}
+
+/**
+ * Snapping is per-topic, so two topics can land on the same chunk or swap
+ * places — which shows up as a jumbled, duplicated topic list. Keep the
+ * chronological order and give every topic its own caption boundary.
+ */
+function enforceOrder(
+  topics: VideoTopic[],
+  chunks: TranscriptChunk[]
+): VideoTopic[] {
+  const starts = [...new Set(chunks.map((c) => c.startTime))].sort(
+    (a, b) => a - b
+  );
+  const ordered = [...topics].sort((a, b) => a.startTime - b.startTime);
+  const out: VideoTopic[] = [];
+  let prev = -Infinity;
+
+  for (const topic of ordered) {
+    let t = topic.startTime;
+    if (t <= prev) {
+      // Nearest caption boundary strictly after the previous topic.
+      const next = starts.find((s) => s > prev);
+      if (next == null) continue; // ran out of video — drop the duplicate
+      t = next;
+    }
+    prev = t;
+    out.push({ ...topic, startTime: t });
+  }
+
+  return out;
 }
 
 function findBestChunkStart(

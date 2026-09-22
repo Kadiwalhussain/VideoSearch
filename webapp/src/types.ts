@@ -64,12 +64,26 @@ export interface VaultPayload {
   watchLater?: boolean;
   watchLaterAt?: number | null;
   playlists?: string[];
+  /** User ticked this video as watched (YouTube playlist tick or Studio) */
+  completed?: boolean;
+  completedAt?: number | null;
   /** Server activity time (ms epoch) — vault mutation, not a watch */
   updatedAt?: number | null;
   /** Last time the user actually watched this video (ms epoch) */
   lastViewedAt?: number | null;
   /** When the video first entered the vault (ms epoch) */
   createdAt?: number | null;
+  /** Video length in seconds (from the extension's player) */
+  durationSec?: number;
+  /** Where the user left off; kind "break" = pressed Take a break */
+  progress?: ResumeProgress | null;
+}
+
+export interface ResumeProgress {
+  position: number;
+  duration: number;
+  kind: "break" | "auto";
+  updatedAt: number;
 }
 
 export interface ChannelStat {
@@ -99,6 +113,8 @@ export interface LibraryState {
   watchLater: boolean;
   watchLaterAt: number | null;
   playlists: string[];
+  completed?: boolean;
+  completedAt?: number | null;
 }
 
 export type LibraryAction =
@@ -110,7 +126,10 @@ export type LibraryAction =
   | "toggle_watch_later"
   | "add_playlist"
   | "remove_playlist"
-  | "toggle_playlist";
+  | "toggle_playlist"
+  | "complete"
+  | "uncomplete"
+  | "toggle_complete";
 
 export interface Session {
   url: string;

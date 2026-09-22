@@ -4,6 +4,7 @@ import {
   Bookmark,
   Camera,
   Clock,
+  Coffee,
   ExternalLink,
   FileText,
   Highlighter,
@@ -25,8 +26,10 @@ import {
   ytWatchUrl,
 } from "../lib/format";
 import { shotSrc } from "../api/client";
+import { resumeInfo } from "../lib/vaultSelectors";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { EmptyState } from "../components/EmptyState";
+import { ExportPdfButton } from "../components/ExportPdfButton";
 import { ShareCardModal } from "../components/ShareCardModal";
 import { filterUsefulSources } from "../lib/sourceFilter";
 import type { SourceLink, VaultPayload } from "../types";
@@ -293,6 +296,24 @@ export function VideoDetailPage() {
               {hasBio ? " · bio" : ""}
             </p>
             <div className="v-actions" style={{ marginTop: 14 }}>
+              {(() => {
+                const r = resumeInfo(row);
+                if (!r || r.finished || r.position < 10) return null;
+                return (
+                  <a
+                    className="btn-glow sm"
+                    href={ytWatchUrl(videoId, p.videoUrl, Math.max(0, r.position - 2))}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={r.duration ? `${Math.round(r.pct)}% watched` : undefined}
+                    onClick={() => recordView(videoId)}
+                  >
+                    <Coffee size={14} />{" "}
+                    {r.isBreak ? "Resume break" : "Resume"} at {formatTime(r.position)}
+                    {r.duration ? ` / ${formatTime(r.duration)}` : ""}
+                  </a>
+                );
+              })()}
               <a
                 className="btn-watch"
                 href={ytWatchUrl(videoId, p.videoUrl)}
@@ -333,6 +354,13 @@ export function VideoDetailPage() {
               >
                 <Share2 size={14} /> Share
               </button>
+              <ExportPdfButton
+                rows={[row]}
+                title={p.videoTitle || videoId}
+                subtitle={p.channelTitle}
+                label="PDF"
+                disabled={busy || (!marks.length && !shots.length)}
+              />
               <button
                 type="button"
                 className="btn-notes is-danger"

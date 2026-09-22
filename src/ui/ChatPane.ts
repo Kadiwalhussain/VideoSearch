@@ -5,6 +5,7 @@
 import type { ChatMessage, ChatSource } from "../qa/chatRag";
 import { formatTimestamp } from "../player/seekTo";
 import { iconHtml } from "./icons";
+import { renderMarkdownWithTimes } from "./renderMarkdown";
 
 /** Local copy so ChatPane does not pull the full RAG/embed graph into first paint */
 const CHAT_SUGGESTIONS = [
@@ -244,7 +245,7 @@ export class ChatPane {
     if (intro && !isMomentsList) {
       const body = document.createElement("div");
       body.className = "vsa-chat-bubble-text";
-      fillWithTimeLinks(body, intro, (t) => this.handlers.onSeek(t));
+      renderMarkdownWithTimes(body, intro, (t) => this.handlers.onSeek(t));
       bubble.appendChild(body);
     } else if (intro && isMomentsList) {
       const body = document.createElement("div");
@@ -269,7 +270,7 @@ export class ChatPane {
     } else if (!intro) {
       const body = document.createElement("div");
       body.className = "vsa-chat-bubble-text";
-      fillWithTimeLinks(body, m.content || "", (t) => this.handlers.onSeek(t));
+      renderMarkdownWithTimes(body, m.content || "", (t) => this.handlers.onSeek(t));
       bubble.appendChild(body);
     }
 
@@ -301,64 +302,6 @@ export class ChatPane {
       this.listEl.scrollTop = this.listEl.scrollHeight;
     });
   }
-}
-
-function fillWithTimeLinks(
-  container: HTMLElement,
-  answer: string,
-  onSeek: (seconds: number) => void
-): void {
-  const re =
-    /(\bat\s+)?(\[|\()?(\d{1,2}:\d{2}(?::\d{2})?)(\]|\))?/gi;
-  let last = 0;
-  let match: RegExpExecArray | null;
-  const text = answer;
-
-  while ((match = re.exec(text)) !== null) {
-    const timeStr = match[3];
-    const seconds = parseTimestampToken(timeStr);
-    if (seconds == null) continue;
-
-    if (match.index > last) {
-      container.appendChild(
-        document.createTextNode(text.slice(last, match.index))
-      );
-    }
-
-    const pill = document.createElement("button");
-    pill.type = "button";
-    pill.className = "vsa-time-pill";
-    pill.textContent = timeStr;
-    pill.title = `Jump to ${timeStr}`;
-    const t = seconds;
-    pill.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onSeek(t);
-    });
-    container.appendChild(pill);
-    last = match.index + match[0].length;
-  }
-
-  if (last < text.length) {
-    container.appendChild(document.createTextNode(text.slice(last)));
-  }
-  if (!container.childNodes.length) {
-    container.textContent = answer;
-  }
-}
-
-function parseTimestampToken(token: string): number | null {
-  const m = token.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-  if (!m) return null;
-  if (m[3] != null) {
-    return (
-      parseInt(m[1], 10) * 3600 +
-      parseInt(m[2], 10) * 60 +
-      parseInt(m[3], 10)
-    );
-  }
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 }
 
 function truncate(s: string, n: number): string {

@@ -65,6 +65,44 @@ export async function fetchPlaylists(
   return data.playlists || [];
 }
 
+export type PlaylistSections = {
+  /** Section per playlist; playlists missing here are unsorted */
+  sections: Array<{ playlist: string; section: string }>;
+  /** Every section name the user has used */
+  names: string[];
+};
+
+export async function fetchPlaylistSections(
+  session: Session
+): Promise<PlaylistSections> {
+  const res = await apiFetch(session.url, "/api/library/sections", {
+    token: session.token,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `HTTP ${res.status}`);
+  }
+  return { sections: data.sections || [], names: data.names || [] };
+}
+
+/** Put a playlist in a section ("" takes it out). */
+export async function savePlaylistSection(
+  session: Session,
+  playlist: string,
+  section: string
+): Promise<PlaylistSections> {
+  const res = await apiFetch(session.url, "/api/library/sections", {
+    method: "POST",
+    token: session.token,
+    body: JSON.stringify({ playlist, section }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `Section update failed (${res.status})`);
+  }
+  return { sections: data.sections || [], names: data.names || [] };
+}
+
 /** Backfill full YouTube titles when stored title is just the video id */
 export async function repairTitles(
   session: Session
@@ -87,14 +125,22 @@ export async function repairTitles(
 /** Record that the signed-in user actually watched this video. */
 export async function recordVideoView(
   session: Session,
-  videoId: string
+  videoId: string,
+  meta?: { videoTitle?: string; channelTitle?: string; channelUrl?: string }
 ): Promise<void> {
   if (!videoId) return;
   try {
     await apiFetch(session.url, "/api/vault/view", {
       method: "POST",
       token: session.token,
-      body: JSON.stringify({ videoId }),
+      body: JSON.stringify({
+        videoId,
+        videoTitle: meta?.videoTitle,
+        channelTitle: meta?.channelTitle,
+        channelUrl: meta?.channelUrl,
+        videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
+        watched: true,
+      }),
     });
   } catch {
     /* view tracking is best-effort */
@@ -218,11 +264,75 @@ export async function createVideoShare(
   };
 }
 
-/** Public fetch of a shared card (no auth). */
+export interface SharedPlaylistVideo {
+  videoId: string;
+  videoTitle?: string;
+  videoUrl?: string;
+  channelTitle?: string;
+  durationSec?: number;
+  highlights?: Array<{
+    id?: string;
+    startTime?: number;
+    endTime?: number;
+    note?: string;
+    color?: string;
+  }>;
+  shotCount?: number;
+}
+
+/** Share a whole playlist as a read-only link. */
+export async function createPlaylistShare(
+  session: Session,
+  playlistName: string
+): Promise<{ shareUrl: string; token: string }> {
+  const res = await apiFetch(session.url, "/api/playlists/share", {
+    method: "POST",
+    token: session.token,
+    body: JSON.stringify({ playlistName }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `Share failed (${res.status})`);
+  }
+  let shareUrl = String(data.shareUrl || "");
+  if (typeof window !== "undefined" && data.sharePath) {
+    shareUrl = `${window.location.origin}${data.sharePath}`;
+  }
+  return { shareUrl, token: String(data.token || "") };
+}
+
+/** Copy a shared playlist into the signed-in viewer's vault. */
+export async function importPlaylist(
+  session: Session,
+  playlistName: string,
+  videos: SharedPlaylistVideo[]
+): Promise<{ message: string; total?: number }> {
+  const res = await apiFetch(session.url, "/api/vault/playlist/import", {
+    method: "POST",
+    token: session.token,
+    body: JSON.stringify({
+      playlistName,
+      videos: videos.slice(0, 250).map((v) => ({
+        videoId: v.videoId,
+        videoTitle: v.videoTitle,
+        channelTitle: v.channelTitle,
+        videoUrl: v.videoUrl,
+      })),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || `Import failed (${res.status})`);
+  }
+  return { message: data.message || "Playlist saved", total: data.total };
+}
+
+/** Public fetch of a shared card or playlist (no auth). */
 export async function fetchSharedCard(
   apiBase: string,
   token: string
 ): Promise<{
+  kind: "video" | "playlist";
   snapshot: {
     videoId: string;
     videoTitle?: string;
@@ -252,6 +362,8 @@ export async function fetchSharedCard(
     shotCount?: number;
     noteCount?: number;
     sourceCount?: number;
+    playlistName?: string;
+    videos?: SharedPlaylistVideo[];
   };
   createdAt?: string;
   expiresAt?: string | null;
@@ -263,6 +375,7 @@ export async function fetchSharedCard(
     throw new Error(data.message || `Share load failed (${res.status})`);
   }
   return {
+    kind: data.kind === "playlist" ? "playlist" : "video",
     snapshot: data.snapshot,
     createdAt: data.createdAt,
     expiresAt: data.expiresAt,

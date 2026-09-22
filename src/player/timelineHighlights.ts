@@ -7,8 +7,8 @@
 
 import "../dom/trustedHtml";
 import { shortcutLabel } from "../content/hotkeys";
-import type { VideoHighlight } from "../storage/highlightsStore";
-import type { VideoScreenshot } from "../storage/screenshotStore";
+import type { VideoHighlight } from "../zx/highlightsStore";
+import type { VideoScreenshot } from "../zx/screenshotStore";
 import { iconHtml } from "../ui/icons";
 
 const LAYER_ID = "vsa-timeline-highlights";
@@ -814,25 +814,6 @@ function ensureObserver(): void {
   }
 }
 
-export function destroyTimelineHighlights(): void {
-  observer?.disconnect();
-  observer = null;
-  if (paintTimer != null) {
-    window.clearTimeout(paintTimer);
-    paintTimer = null;
-  }
-  if (rebindTimer != null) {
-    window.clearTimeout(rebindTimer);
-    rebindTimer = null;
-  }
-  clearTimelineHighlights();
-  onMarkerClick = null;
-  onAddClick = null;
-  onCaptureClick = null;
-}
-
-/** Force re-inject controls (call when SPA navigates to a new video). */
-export function refreshPlayerControls(): void {
-  paint();
-  ensureObserver();
-}
+// unused — SPA remount uses clearTimelineHighlights() instead
+// export function destroyTimelineHighlights(): void { ... }
+// export function refreshPlayerControls(): void { paint(); ensureObserver(); }

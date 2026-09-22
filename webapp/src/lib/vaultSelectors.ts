@@ -50,14 +50,38 @@ export function savedRows(rows: VaultRow[]): VaultRow[] {
     .sort((a, b) => (b.payload?.savedAt || 0) - (a.payload?.savedAt || 0));
 }
 
-/** Saved, Watch later, or in a playlist — not raw watch History. */
-export function pinnedRows(rows: VaultRow[]): VaultRow[] {
+/** Unused — Library uses libraryRows (marks/shots too, not only pin flags). */
+// export function pinnedRows(rows: VaultRow[]): VaultRow[] { ... }
+
+function hasVaultWork(p: VaultRow["payload"] | undefined): boolean {
+  if (!p) return false;
+  if (p.saved || p.watchLater || (p.playlists && p.playlists.length)) return true;
+  if (p.highlights && p.highlights.length) return true;
+  if (p.screenshots && p.screenshots.length) return true;
+  if ((p.bioText && p.bioText.trim()) || (p.bioMarkdown && p.bioMarkdown.trim())) {
+    return true;
+  }
+  return false;
+}
+
+/** Everything this account already stored — marks, shots, bio, or pinned lists. */
+export function libraryRows(rows: VaultRow[]): VaultRow[] {
+  return rows
+    .filter((r) => hasVaultWork(r.payload))
+    .sort((a, b) => (rowActivityMs(b) || 0) - (rowActivityMs(a) || 0));
+}
+
+/** Watched, or videos that already have marks/shots in this account. */
+export function historyRows(rows: VaultRow[]): VaultRow[] {
   return rows
     .filter((r) => {
       const p = r.payload;
-      return Boolean(
-        p?.saved || p?.watchLater || (p?.playlists && p.playlists.length)
-      );
+      if (!p) return false;
+      if (p.lastViewedAt) return true;
+      if ((p.highlights && p.highlights.length) || (p.screenshots && p.screenshots.length)) {
+        return true;
+      }
+      return false;
     })
     .sort((a, b) => (rowActivityMs(b) || 0) - (rowActivityMs(a) || 0));
 }
@@ -230,4 +254,45 @@ export function recentRows(rows: VaultRow[], n = 8): VaultRow[] {
 
 export function findRow(rows: VaultRow[], videoId: string): VaultRow | undefined {
   return rows.find((r) => r.video_id === videoId);
+}
+
+export type ResumeInfo = {
+  position: number;
+  duration: number;
+  /** 0–100 */
+  pct: number;
+  isBreak: boolean;
+  finished: boolean;
+  updatedAt: number;
+};
+
+/** Resume point for a row, or null when there is nothing to resume. */
+export function resumeInfo(row: VaultRow): ResumeInfo | null {
+  const pr = row.payload?.progress;
+  if (!pr || !(pr.position > 0)) return null;
+  const duration = pr.duration || row.payload?.durationSec || 0;
+  const pct = duration > 0 ? Math.min(100, (pr.position / duration) * 100) : 0;
+  const finished =
+    duration > 0 && (pr.position >= duration - 20 || pct >= 95);
+  return {
+    position: pr.position,
+    duration,
+    pct,
+    isBreak: pr.kind === "break",
+    finished,
+    updatedAt: pr.updatedAt || 0,
+  };
+}
+
+/** Started but not finished, most recent first — breaks included. */
+export function continueWatchingRows(rows: VaultRow[]): VaultRow[] {
+  return rows
+    .filter((r) => {
+      const info = resumeInfo(r);
+      return Boolean(info && !info.finished && info.position >= 10);
+    })
+    .sort(
+      (a, b) =>
+        (resumeInfo(b)?.updatedAt || 0) - (resumeInfo(a)?.updatedAt || 0)
+    );
 }

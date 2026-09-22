@@ -3,7 +3,7 @@ import { VideoCard } from "../components/VideoCard";
 import { EmptyState } from "../components/EmptyState";
 import { SessionLoader } from "../components/SessionLoader";
 import { useVault } from "../store/VaultContext";
-import { pinnedRows } from "../lib/vaultSelectors";
+import { libraryRows } from "../lib/vaultSelectors";
 import { Bookmark, Inbox, Library } from "lucide-react";
 
 type Filter = "all" | "saved";
@@ -11,11 +11,11 @@ type Filter = "all" | "saved";
 export function LibraryPage() {
   const { rows, loading, stats, saved } = useVault();
   const [filter, setFilter] = useState<Filter>("all");
-  const pinned = useMemo(() => pinnedRows(rows), [rows]);
+  const library = useMemo(() => libraryRows(rows), [rows]);
 
   const list = useMemo(
-    () => (filter === "saved" ? saved : pinned),
-    [filter, saved, pinned]
+    () => (filter === "saved" ? saved : library),
+    [filter, saved, library]
   );
 
   return (
@@ -25,9 +25,11 @@ export function LibraryPage() {
           <Library size={22} /> Library
         </h1>
         <p className="view-sub">
-          {pinned.length} saved, queued, or in a playlist
-          {stats.saved > 0 ? ` · ${stats.saved} bookmarked` : ""}.
-          Watching a video does not add it here.
+          {library.length} in this account
+          {stats.saved > 0 ? ` · ${stats.saved} bookmarked` : ""}
+          {stats.marks ? ` · ${stats.marks} marks` : ""}
+          {stats.shots ? ` · ${stats.shots} shots` : ""}.
+          Each login only shows that user’s vault.
         </p>
       </header>
 
@@ -37,7 +39,7 @@ export function LibraryPage() {
           className={`btn-notes ${filter === "all" ? "is-active" : ""}`}
           onClick={() => setFilter("all")}
         >
-          All ({pinned.length})
+          All ({library.length})
         </button>
         <button
           type="button"
@@ -70,7 +72,7 @@ export function LibraryPage() {
         <EmptyState
           icon={Inbox}
           title="Nothing in library yet"
-          sub="Use Save, Watch later, or Playlist in the extension. Watching a video is not enough."
+          sub="Marks, shots, Save, Watch later, and playlists from this account show up here."
         />
       )}
     </div>

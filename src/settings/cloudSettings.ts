@@ -154,11 +154,12 @@ export async function clearCloudSession(): Promise<CloudSettings> {
   });
 }
 
-export function maskKey(key: string): string {
-  if (!key) return "";
-  if (key.length <= 12) return "••••";
-  return `${key.slice(0, 6)}…${key.slice(-4)}`;
-}
+/** Unused duplicate — UI masks keys via llmSettings.maskKey. */
+// export function maskKey(key: string): string {
+//   if (!key) return "";
+//   if (key.length <= 12) return "••••";
+//   return `${key.slice(0, 6)}…${key.slice(-4)}`;
+// }
 
 /** True when the vault API answers /health (account sync is available). */
 export async function probeVault(projectUrl?: string): Promise<boolean> {

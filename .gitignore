@@ -37,3 +37,8 @@ EXTENSION_HOW_IT_WORKS.md
 
 # Tester handoff with live secrets — never commit
 tester/
+.test-build/
+
+# Playwright output
+test-results/
+playwright-report/

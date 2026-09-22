@@ -1,4 +1,7 @@
 /**
+ * UNUSED (Aug 2026) — nothing imports this file.
+ * Live icons come from `src/ui/icons.ts`.
+ *
  * Timeline / highlight icons — Lucide-backed for consistency.
  */
 

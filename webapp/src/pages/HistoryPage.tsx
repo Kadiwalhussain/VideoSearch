@@ -4,23 +4,12 @@ import { VideoCard } from "../components/VideoCard";
 import { EmptyState } from "../components/EmptyState";
 import { SessionLoader } from "../components/SessionLoader";
 import { useVault } from "../store/VaultContext";
-import { rowActivityMs } from "../lib/format";
+import { historyRows } from "../lib/vaultSelectors";
 
 export function HistoryPage() {
   const { rows, loading } = useVault();
 
-  // Watched videos only — Saved / Watch later / playlists have their own pages
-  const list = useMemo(
-    () =>
-      rows
-        .filter((r) => Boolean(r.payload?.lastViewedAt))
-        .sort((a, b) => {
-          const ta = rowActivityMs(a) || 0;
-          const tb = rowActivityMs(b) || 0;
-          return tb - ta;
-        }),
-    [rows]
-  );
+  const list = useMemo(() => historyRows(rows), [rows]);
 
   return (
     <div className="view">
@@ -29,8 +18,7 @@ export function HistoryPage() {
           <History size={22} /> History
         </h1>
         <p className="view-sub">
-          Videos you actually watched · {list.length} total · Save, Watch later,
-          and playlists stay on their own pages
+          Videos you opened on YouTube while signed in · {list.length} total
         </p>
       </header>
       {loading && !list.length ? (
@@ -49,7 +37,7 @@ export function HistoryPage() {
         <EmptyState
           icon={Inbox}
           title="No history yet"
-          sub="Mark moments with the extension while signed in — they show up here."
+          sub="Open a YouTube video while signed in — it shows up here. Save is separate."
         />
       )}
     </div>

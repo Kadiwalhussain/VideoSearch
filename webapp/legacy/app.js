@@ -1,4 +1,5 @@
 /**
+ * UNUSED (Aug 2026): old Studio JS. Live Studio is webapp/src (React).
  * VideoSearch SaaS dashboard — vault-powered UI.
  */
 

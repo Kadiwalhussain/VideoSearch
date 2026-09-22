@@ -1,15 +1,25 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  Check,
+  Copy,
   ExternalLink,
   Inbox,
   ListVideo,
+  Loader2,
   Play,
+  Share2,
   StickyNote,
 } from "lucide-react";
 import { useVault } from "../store/VaultContext";
+import { useSession } from "../store/SessionContext";
+import { useDialog } from "../store/DialogContext";
+import { createPlaylistShare } from "../api/vault";
 import { EmptyState } from "../components/EmptyState";
+import { ExportPdfButton } from "../components/ExportPdfButton";
 import { PlaylistTrackRow } from "../components/PlaylistTrackRow";
+import { PlaylistSectionPicker } from "../components/PlaylistSectionPicker";
 import {
   activityLabel,
   ytThumb,
@@ -30,6 +40,36 @@ export function PlaylistDetailPage() {
   const { name = "" } = useParams();
   const decoded = decodeURIComponent(name);
   const { playlists, loading } = useVault();
+  const { session } = useSession();
+  const { toast } = useDialog();
+  const [shareUrl, setShareUrl] = useState("");
+  const [sharing, setSharing] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const copy = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* clipboard blocked — the link is visible to copy by hand */
+    }
+  };
+
+  const share = async (listName: string) => {
+    if (!session) return;
+    setSharing(true);
+    try {
+      const out = await createPlaylistShare(session, listName);
+      setShareUrl(out.shareUrl);
+      await copy(out.shareUrl);
+      toast("Playlist link copied — anyone with it can view (read-only)", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not share playlist", "error");
+    } finally {
+      setSharing(false);
+    }
+  };
   const group = playlists.find(
     (g) => g.name.toLowerCase() === decoded.toLowerCase()
   );
@@ -39,7 +79,9 @@ export function PlaylistDetailPage() {
 
   let marks = 0;
   let shots = 0;
+  let watched = 0;
   for (const r of rows) {
+    if (r.payload?.completed) watched += 1;
     marks += (r.payload?.highlights || []).length;
     shots += (r.payload?.screenshots || []).length;
   }
@@ -100,8 +142,10 @@ export function PlaylistDetailPage() {
                 <ListVideo size={13} /> Playlist
               </div>
               <h1 title={decoded}>{decoded}</h1>
+              <PlaylistSectionPicker playlist={group.name} />
               <p className="pl-hero-stats">
                 {rows.length} video{rows.length === 1 ? "" : "s"}
+                {` · ${watched} watched`}
                 {marks > 0 ? ` · ${marks} marks` : ""}
                 {shots > 0 ? ` · ${shots} shots` : ""}
                 {activityLabel(lead) !== "—"
@@ -133,9 +177,41 @@ export function PlaylistDetailPage() {
                 <Link className="btn-notes" to={`/video/${lead.video_id}`}>
                   <StickyNote size={14} /> Open notes
                 </Link>
+                <button
+                  type="button"
+                  className="btn-notes"
+                  disabled={sharing}
+                  onClick={() => void share(group.name)}
+                  title="Create a read-only link to this playlist"
+                >
+                  {sharing ? <Loader2 size={14} className="spin" /> : <Share2 size={14} />} Share list
+                </button>
+                <ExportPdfButton
+                  rows={rows}
+                  title={decoded}
+                  subtitle={`Playlist · ${rows.length} video${rows.length === 1 ? "" : "s"} · ${marks} marks · ${shots} shots`}
+                  fileBase={`${decoded} - videosearch`}
+                  label="Export PDF"
+                  disabled={!marks && !shots}
+                />
               </div>
             </div>
           </section>
+
+          {shareUrl ? (
+            <div className="pl-share-box glass-card">
+              <Share2 size={16} />
+              <input
+                readOnly
+                value={shareUrl}
+                aria-label="Playlist share link"
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              <button type="button" className="btn-notes" onClick={() => void copy(shareUrl)}>
+                {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          ) : null}
 
           {/* Full playlist queue */}
           <section className="pl-queue">
@@ -144,8 +220,18 @@ export function PlaylistDetailPage() {
                 <ListVideo size={18} /> Full playlist
               </h2>
               <span className="pl-queue-count">
-                {rows.length} item{rows.length === 1 ? "" : "s"}
+                {watched}/{rows.length} watched
               </span>
+            </div>
+            <div
+              className="pl-progress"
+              role="progressbar"
+              aria-label="Watched in this playlist"
+              aria-valuemin={0}
+              aria-valuemax={rows.length}
+              aria-valuenow={watched}
+            >
+              <span style={{ width: `${(watched / rows.length) * 100}%` }} />
             </div>
 
             <div className="pl-track-list">

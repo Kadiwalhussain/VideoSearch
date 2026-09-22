@@ -17,6 +17,9 @@ import {
   deleteScreenshot as apiDeleteScreenshot,
   saveVideoBio as apiSaveBio,
   recordVideoView as apiRecordView,
+  fetchPlaylistSections,
+  savePlaylistSection,
+  type PlaylistSections,
 } from "../api/vault";
 import {
   allNotes,
@@ -79,7 +82,36 @@ type VaultCtx = {
   ) => Promise<{ sourceCount: number }>;
   /** Stamp lastViewedAt when the user actually watches. */
   recordView: (videoId: string) => void;
+  /** Section of a playlist ("" = unsorted). */
+  sectionOf: (playlist: string) => string;
+  /** Every section the user has used, A–Z. */
+  sectionNames: string[];
+  /** Put a playlist in a section ("" takes it out). */
+  setPlaylistSection: (playlist: string, section: string) => Promise<void>;
 };
+
+const NO_SECTIONS: PlaylistSections = { sections: [], names: [] };
+const SECTIONS_CACHE_KEY = "vsa_playlist_sections_v1";
+
+function readSectionsCache(userId?: string): PlaylistSections {
+  try {
+    const raw = sessionStorage.getItem(SECTIONS_CACHE_KEY);
+    if (!raw) return NO_SECTIONS;
+    const parsed = JSON.parse(raw) as { userId?: string } & PlaylistSections;
+    if (!userId || parsed.userId !== userId) return NO_SECTIONS;
+    return { sections: parsed.sections || [], names: parsed.names || [] };
+  } catch {
+    return NO_SECTIONS;
+  }
+}
+
+function writeSectionsCache(userId: string | undefined, s: PlaylistSections) {
+  try {
+    sessionStorage.setItem(SECTIONS_CACHE_KEY, JSON.stringify({ userId, ...s }));
+  } catch {
+    /* quota — ignore */
+  }
+}
 
 const Ctx = createContext<VaultCtx | null>(null);
 
@@ -114,6 +146,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const lastFetchAt = useRef(0);
   const inFlight = useRef<Promise<void> | null>(null);
+  const [sections, setSections] = useState<PlaylistSections>(() =>
+    readSectionsCache(userId)
+  );
+
+  // Callbacks read rows through a ref so they keep a stable identity. Without
+  // it every row change rebuilt the context value, which re-ran all eight
+  // selectors and re-rendered every card on the page.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   const refresh = useCallback(
     async (opts?: { force?: boolean }) => {
@@ -128,7 +169,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         !opts?.force &&
         lastFetchAt.current &&
         now - lastFetchAt.current < SOFT_REFRESH_MS &&
-        rows.length > 0
+        rowsRef.current.length > 0
       ) {
         return;
       }
@@ -142,13 +183,21 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
       const run = (async () => {
         // Only show full-page loading when we have nothing cached
-        if (rows.length === 0) setLoading(true);
+        if (rowsRef.current.length === 0) setLoading(true);
         setError(null);
         try {
           // Fast path: no images=1, no blocking title repair
-          const data = await fetchVault(session);
+          const [data, secs] = await Promise.all([
+            fetchVault(session),
+            // Older vault servers have no sections yet: keep playlists working
+            fetchPlaylistSections(session).catch(() => null),
+          ]);
           setRows(data);
           writeCache(session.user?.userId, data);
+          if (secs) {
+            setSections(secs);
+            writeSectionsCache(session.user?.userId, secs);
+          }
           lastFetchAt.current = Date.now();
         } catch (e) {
           setError(e instanceof Error ? e.message : "Failed to load vault");
@@ -164,10 +213,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         inFlight.current = null;
       }
     },
-    [session, rows.length]
+    [session]
   );
 
   useEffect(() => {
+    setSections(readSectionsCache(session?.user?.userId));
     if (!session) {
       setRows([]);
       return;
@@ -199,6 +249,19 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [session, refresh]);
+
+  // Vault API was unreachable: keep showing cached rows and quietly reconnect,
+  // so changes the extension queued while it was down appear without a reload.
+  useEffect(() => {
+    if (!session || !error) return;
+    const retry = () => void refresh({ force: true });
+    const timer = window.setInterval(retry, 15_000);
+    window.addEventListener("online", retry);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("online", retry);
+    };
+  }, [session, error, refresh]);
 
   const repairTitlesFn = useCallback(async () => {
     if (!session) throw new Error("Not signed in");
@@ -269,7 +332,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const libraryAction = useCallback(
     async (videoId: string, action: LibraryAction, playlist?: string) => {
       if (!session) throw new Error("Not signed in");
-      const row = findRow(rows, videoId);
+      const row = findRow(rowsRef.current, videoId);
       const p = row?.payload;
       const videoTitle = p?.videoTitle || videoId;
       const videoUrl =
@@ -315,6 +378,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
               watchLater: library.watchLater,
               watchLaterAt: library.watchLaterAt,
               playlists: library.playlists || [],
+              completed: Boolean(library.completed),
+              completedAt: library.completedAt ?? null,
             },
           };
         }
@@ -322,13 +387,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         return next;
       });
     },
-    [session, rows, refresh]
+    [session, refresh]
   );
 
   const recordView = useCallback(
     (videoId: string) => {
       if (!session || !videoId) return;
       const now = Date.now();
+      const existing = rowsRef.current.find((r) => r.video_id === videoId);
       setRows((prev) => {
         const next = prev.map((r) => {
           if (r.video_id !== videoId) return r;
@@ -342,9 +408,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         writeCache(session.user?.userId, next);
         return next;
       });
-      void apiRecordView(session, videoId);
+      void apiRecordView(session, videoId, {
+        videoTitle: existing?.payload?.videoTitle,
+        channelTitle: existing?.payload?.channelTitle,
+        channelUrl: existing?.payload?.channelUrl,
+      }).then(() => {
+        if (!existing) void refresh({ force: true });
+      });
     },
-    [session]
+    [session, refresh]
   );
 
   const saveBioFn = useCallback(
@@ -353,7 +425,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       opts: { bioText: string; bioMarkdown?: string }
     ) => {
       if (!session) throw new Error("Not signed in");
-      const row = findRow(rows, videoId);
+      const row = findRow(rowsRef.current, videoId);
       const title = row?.payload?.videoTitle || videoId;
       const saved = await apiSaveBio(session, {
         videoId,
@@ -384,17 +456,34 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       });
       return { sourceCount: saved.sourceLinks?.length ?? 0 };
     },
-    [session, rows]
+    [session]
   );
 
-  const value = useMemo<VaultCtx>(() => {
-    const stats = vaultStats(rows);
+  const setPlaylistSection = useCallback(
+    async (playlist: string, section: string) => {
+      if (!session) throw new Error("Not signed in");
+      const next = await savePlaylistSection(session, playlist, section);
+      setSections(next);
+      writeSectionsCache(session.user?.userId, next);
+    },
+    [session]
+  );
+
+  const sectionInfo = useMemo(() => {
+    const map = new Map(
+      sections.sections.map((s) => [s.playlist.toLowerCase(), s.section])
+    );
     return {
-      rows,
-      loading,
-      error,
-      stats,
-      refresh: (o) => refresh(o),
+      sectionOf: (playlist: string) => map.get(playlist.toLowerCase()) || "",
+      sectionNames: sections.names,
+    };
+  }, [sections]);
+
+  // Every selector walks the whole vault, so they key on `rows` alone —
+  // flipping `loading` must not re-derive notes, shots and playlists.
+  const derived = useMemo(
+    () => ({
+      stats: vaultStats(rows),
       watchLater: watchLaterRows(rows),
       saved: savedRows(rows),
       notes: allNotes(rows),
@@ -402,8 +491,19 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       playlists: playlistGroups(rows),
       playlistNames: allPlaylistNames(rows),
       recent: recentRows(rows, 12),
-      search: (q) => searchVault(rows, q),
-      getVideo: (id) => findRow(rows, id),
+      search: (q: string) => searchVault(rows, q),
+      getVideo: (id: string) => findRow(rows, id),
+    }),
+    [rows]
+  );
+
+  const value = useMemo<VaultCtx>(() => {
+    return {
+      rows,
+      loading,
+      error,
+      refresh: (o) => refresh(o),
+      ...derived,
       libraryAction,
       repairTitles: repairTitlesFn,
       deleteVideo: deleteVideoFn,
@@ -411,11 +511,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       deleteShot: deleteShotFn,
       saveBio: saveBioFn,
       recordView,
+      ...sectionInfo,
+      setPlaylistSection,
     };
   }, [
+    sectionInfo,
+    setPlaylistSection,
     rows,
     loading,
     error,
+    derived,
     refresh,
     libraryAction,
     repairTitlesFn,

@@ -181,7 +181,7 @@ export function ShareCardModal({
       onToast?.("Shared", "success");
     } catch (e) {
       if (e instanceof Error && /Abort|cancel/i.test(e.name + e.message)) return;
-      onToast?.("Share cancelled", "info");
+      onToast?.(e instanceof Error ? e.message : "Share failed", "error");
     }
   };
 
