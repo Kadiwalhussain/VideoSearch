@@ -30,7 +30,7 @@ const CLERK_HOST = clerkFrontendHost();
 export default defineManifest({
   manifest_version: 3,
   name: "VideoSearch AI",
-  version: "1.1.0",
+  version: "2.0.0",
   description:
     "Search what was said, not just what was titled — local semantic search over YouTube transcripts.",
   icons: {
