@@ -180,8 +180,9 @@ export async function applyLibraryFlags(
 /**
  * Vault writes for:
  * - videos this user Saved / Watch later / playlist
+ * - videos with marks, notes, or screenshots on this device
  * - videos already stored in this user's Mongo vault (keep syncing, never drop)
- * New unmarked watches stay on the device until they pin them.
+ * Plain watches with nothing captured stay on the device.
  */
 export async function isPinnedToVault(videoId: string): Promise<boolean> {
   const e = await getLibraryEntry(videoId);
@@ -191,7 +192,24 @@ export async function isPinnedToVault(videoId: string): Promise<boolean> {
   ) {
     return true;
   }
-  return isKnownVaultVideo(videoId);
+  if (await isKnownVaultVideo(videoId)) return true;
+  return hasLocalWork(videoId);
+}
+
+async function hasLocalWork(videoId: string): Promise<boolean> {
+  try {
+    const { loadHighlights } = await import("./highlightsStore");
+    if ((await loadHighlights(videoId)).length) return true;
+  } catch {
+    /* ignore */
+  }
+  try {
+    const { countScreenshots } = await import("./screenshotStore");
+    if ((await countScreenshots(videoId)) > 0) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
 }
 
 /**

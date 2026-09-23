@@ -66,6 +66,37 @@ export interface SyncResult {
   /** True when data is safe on-device and queued for later cloud upload */
   offlineQueued?: boolean;
   pendingCount?: number;
+  /** Vault busy / erroring: keep the video queued and stop this flush */
+  retryLater?: boolean;
+}
+
+/** New shot images per request — keeps each POST well under the vault body limit. */
+const SHOT_IMAGES_PER_REQUEST = 15;
+const MAX_SYNC_ROUNDS = 10;
+
+/** Stamp shots the vault confirmed; un-stamp ones it lost so they upload again. */
+async function markShotsSynced(
+  videoId: string,
+  shots: VideoScreenshot[],
+  stored: Set<string>,
+  settings: { projectUrl?: string; userId?: string }
+): Promise<void> {
+  const now = Date.now();
+  const base = String(settings.projectUrl || "").replace(/\/$/, "");
+  for (const s of shots) {
+    if (stored.has(s.id)) {
+      if (s.syncedAt) continue;
+      const cloudUrl = base
+        ? `${base}/api/vault/shot/${encodeURIComponent(videoId)}/${encodeURIComponent(s.id)}`
+        : `account://${settings.userId}/${videoId}/${s.id}`;
+      await updateScreenshot(s.id, { cloudUrl, syncedAt: now });
+      s.syncedAt = now;
+      s.cloudUrl = cloudUrl;
+    } else if (s.syncedAt) {
+      await updateScreenshot(s.id, { syncedAt: undefined });
+      s.syncedAt = undefined;
+    }
+  }
 }
 
 function authHeaders(token: string): HeadersInit {
@@ -132,58 +163,86 @@ export async function syncVideoToCloud(opts: {
   }
 
   try {
-    const { res } = await vaultFetch(
-      "/api/vault/sync",
-      {
-        method: "POST",
-        headers: authHeaders(settings.apiKey),
-        body: JSON.stringify({
-          videoId: opts.videoId,
-          videoTitle: opts.videoTitle,
-          channelTitle: opts.channelTitle,
-          channelUrl: opts.channelUrl,
-          videoUrl: `https://www.youtube.com/watch?v=${opts.videoId}`,
-          watched: Boolean(opts.watched),
-          highlights: opts.highlights,
-          sourceLinks: opts.sourceLinks || [],
-          ...(typeof opts.bioText === "string"
-            ? { bioText: opts.bioText }
-            : {}),
-          ...(typeof opts.bioMarkdown === "string"
-            ? { bioMarkdown: opts.bioMarkdown }
-            : {}),
-          // Skip base64 for shots already uploaded (huge payload = hang)
-          screenshots: opts.screenshots.map((s) => {
-            const cloud = s.cloudUrl || "";
-            const storedInObjectStore =
-              cloud.length > 0 &&
-              !cloud.startsWith("account:") &&
-              !cloud.startsWith("blob:") &&
-              !cloud.includes("/api/vault/shot/");
-            // Re-upload JPEG until it lives in R2 / a real media URL.
-            // /api/vault/shot is only a proxy — if Mongo lost dataUrl, resend.
-            return {
+    // Image bytes go up only until the vault confirms it holds them, a few
+    // per request so a large backlog never exceeds the body limit.
+    const confirmed = new Set(
+      opts.screenshots.filter((s) => s.syncedAt).map((s) => s.id)
+    );
+    let res: Response;
+    let data: {
+      ok?: boolean;
+      message?: string;
+      uploadedToR2?: number;
+      sourceLinkCount?: number;
+      storedShotIds?: string[];
+    } = {};
+    let backlog = false;
+    for (let round = 0; ; round++) {
+      const sendImage = new Set(
+        opts.screenshots
+          .filter((s) => !confirmed.has(s.id) && s.dataUrl)
+          .slice(0, SHOT_IMAGES_PER_REQUEST)
+          .map((s) => s.id)
+      );
+      ({ res } = await vaultFetch(
+        "/api/vault/sync",
+        {
+          method: "POST",
+          headers: authHeaders(settings.apiKey),
+          body: JSON.stringify({
+            videoId: opts.videoId,
+            videoTitle: opts.videoTitle,
+            channelTitle: opts.channelTitle,
+            channelUrl: opts.channelUrl,
+            videoUrl: `https://www.youtube.com/watch?v=${opts.videoId}`,
+            watched: Boolean(opts.watched),
+            highlights: opts.highlights,
+            sourceLinks: opts.sourceLinks || [],
+            ...(typeof opts.bioText === "string"
+              ? { bioText: opts.bioText }
+              : {}),
+            ...(typeof opts.bioMarkdown === "string"
+              ? { bioMarkdown: opts.bioMarkdown }
+              : {}),
+            screenshots: opts.screenshots.map((s) => ({
               id: s.id,
               videoTime: s.videoTime,
               note: s.note || "",
               width: s.width,
               height: s.height,
               createdAt: s.createdAt,
-              dataUrl: storedInObjectStore ? undefined : s.dataUrl,
-              imageUrl: storedInObjectStore ? s.cloudUrl : undefined,
-            };
+              dataUrl: sendImage.has(s.id) ? s.dataUrl : undefined,
+            })),
           }),
-        }),
-      },
-      settings.projectUrl
-    );
+        },
+        settings.projectUrl
+      ));
+      data = (await res.json().catch(() => ({}))) as typeof data;
+      if (!res.ok || data.ok === false) break;
 
-    const data = (await res.json().catch(() => ({}))) as {
-      ok?: boolean;
-      message?: string;
-      uploadedToR2?: number;
-      sourceLinkCount?: number;
-    };
+      // Older vaults don't report storedShotIds: trust what we just sent
+      const stored = Array.isArray(data.storedShotIds)
+        ? new Set(data.storedShotIds.map(String))
+        : new Set([...confirmed, ...sendImage]);
+      await markShotsSynced(opts.videoId, opts.screenshots, stored, settings);
+      confirmed.clear();
+      for (const id of stored) confirmed.add(id);
+
+      const remaining = opts.screenshots.filter(
+        (s) => !confirmed.has(s.id) && s.dataUrl
+      ).length;
+      // A first round that sent no images may just have learned which
+      // "synced" shots the vault never got — go again to upload those.
+      const progressed =
+        sendImage.size === 0
+          ? round === 0
+          : [...sendImage].some((id) => confirmed.has(id));
+      if (!remaining || !progressed) break;
+      if (round >= MAX_SYNC_ROUNDS) {
+        backlog = true;
+        break;
+      }
+    }
 
     if (!res.ok || data.ok === false) {
       if (res.status === 401) {
@@ -196,8 +255,18 @@ export async function syncVideoToCloud(opts: {
           message: "Session expired — log in again in Settings. Marks stay on this device.",
         };
       }
-      // 5xx → treat as offline-ish and queue
-      if (res.status >= 500 && !opts.skipOfflineEnqueue) {
+      // 5xx or rate-limited → retry later from the queue, never drop
+      if (res.status >= 500 || res.status === 429) {
+        if (opts.skipOfflineEnqueue) {
+          return {
+            ok: false,
+            retryLater: true,
+            message:
+              res.status === 429
+                ? "Vault busy · will retry"
+                : `Server error (HTTP ${res.status}) · will retry`,
+          };
+        }
         const { enqueueVideoSync } = await import("./offlineSync");
         const pending = await enqueueVideoSync(opts.videoId, {
           title: opts.videoTitle,
@@ -206,7 +275,10 @@ export async function syncVideoToCloud(opts: {
           ok: true,
           offlineQueued: true,
           pendingCount: pending,
-          message: `Server error · saved on device · ${pending} pending sync`,
+          message:
+            res.status === 429
+              ? `Vault busy · saved on device · ${pending} pending sync`
+              : `Server error · saved on device · ${pending} pending sync`,
         };
       }
       return {
@@ -215,15 +287,25 @@ export async function syncVideoToCloud(opts: {
       };
     }
 
-    const now = Date.now();
-    const base = String(settings.projectUrl || "").replace(/\/$/, "");
-    for (const s of opts.screenshots) {
-      await updateScreenshot(s.id, {
-        cloudUrl: base
-          ? `${base}/api/vault/shot/${encodeURIComponent(opts.videoId)}/${encodeURIComponent(s.id)}`
-          : `account://${settings.userId}/${opts.videoId}/${s.id}`,
-        syncedAt: now,
+    // Very large backlog: notes are in, remaining shot images go next round
+    if (backlog) {
+      if (opts.skipOfflineEnqueue) {
+        return {
+          ok: false,
+          retryLater: true,
+          message: "Synced notes · more screenshots uploading shortly",
+        };
+      }
+      const { enqueueVideoSync } = await import("./offlineSync");
+      const pending = await enqueueVideoSync(opts.videoId, {
+        title: opts.videoTitle,
       });
+      return {
+        ok: true,
+        offlineQueued: true,
+        pendingCount: pending,
+        message: "Synced notes · more screenshots uploading shortly",
+      };
     }
 
     // Success — drop from offline queue if present
@@ -810,17 +892,14 @@ export async function pushAllLocalToCloud(opts?: {
   const { listLocalHighlightVideoIds, loadHighlights } = await import(
     "../zx/highlightsStore"
   );
-  const { loadAllScreenshots, loadScreenshots } = await import(
+  const { screenshotCountsByVideo, loadScreenshots } = await import(
     "../zx/screenshotStore"
   );
 
   const { isPinnedToVault } = await import("../zx/libraryStore");
   const idSet = new Set<string>(await listLocalHighlightVideoIds());
   try {
-    const shots = await loadAllScreenshots();
-    for (const s of shots) {
-      if (s.videoId) idSet.add(s.videoId);
-    }
+    for (const id of (await screenshotCountsByVideo()).keys()) idSet.add(id);
   } catch {
     /* ignore */
   }
@@ -831,11 +910,11 @@ export async function pushAllLocalToCloud(opts?: {
   }
   if (videoIds.length === 0) {
     opts?.onStatus?.(
-      "Nothing to upload — only Saved, Watch later, and playlists go to the vault"
+      "Nothing to upload yet"
     );
     return {
       ok: true,
-      message: "Nothing pinned for the vault",
+      message: "Nothing to upload",
       videos: 0,
       failed: 0,
     };

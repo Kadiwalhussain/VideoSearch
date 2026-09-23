@@ -7,7 +7,7 @@ import { loadCloudSettings } from "../settings/cloudSettings";
 import { listLocalHighlightVideoIds, loadHighlights } from "./highlightsStore";
 import {
   clearAllScreenshots,
-  loadAllScreenshots,
+  screenshotCountsByVideo,
 } from "./screenshotStore";
 
 const KEY = "vsa_guest_session";
@@ -93,10 +93,9 @@ export async function countLocalUserData(): Promise<LocalUserCounts> {
     /* ignore */
   }
   try {
-    const allShots = await loadAllScreenshots();
-    shots = allShots.length;
-    for (const s of allShots) {
-      if (s.videoId) videoIds.add(s.videoId);
+    for (const [id, n] of await screenshotCountsByVideo()) {
+      shots += n;
+      videoIds.add(id);
     }
   } catch {
     /* ignore */
@@ -179,7 +178,7 @@ export async function offerSaveLocalToCloud(opts?: {
     }
 
     opts?.onStatus?.(
-      "Uploading Saved / Watch later / playlists. Other marks stay on this device."
+      "Uploading your marks, notes, screenshots, and lists…"
     );
     const result = await pushAllLocalToCloud({ onStatus: opts?.onStatus });
     if (!result.ok || result.failed) {
@@ -203,7 +202,7 @@ export async function offerSaveLocalToCloud(opts?: {
         ? `Account ready · ${pulled.videos} in vault · ${result.videos} uploaded from this device`
         : pulled.videos
           ? pulled.message
-          : "Signed in. Unsaved marks stay on this device until you Save, Watch later, or add to a playlist."
+          : "Signed in. Vault is ready."
     );
     return "saved";
   } catch (err) {

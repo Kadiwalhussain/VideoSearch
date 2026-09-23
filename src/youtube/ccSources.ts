@@ -454,11 +454,17 @@ export function extractSourcesFromCaptions(
     .slice(0, 24);
 }
 
+/** Insertion-ordered, so the first key is the least recently remembered */
 const memory = new Map<string, CcSource[]>();
+const MAX_REMEMBERED = 3;
 
 export function rememberCcSources(videoId: string, links: CcSource[]): void {
   if (!videoId) return;
+  memory.delete(videoId);
   memory.set(videoId, links);
+  while (memory.size > MAX_REMEMBERED) {
+    memory.delete(memory.keys().next().value!);
+  }
 }
 
 export function rememberedCcSources(videoId: string): CcSource[] {

@@ -726,6 +726,13 @@ export class SearchPanel {
     );
   }
 
+  /** Stop per-panel loops/timers so a replaced panel can be collected. */
+  destroy(): void {
+    this.liveTranscript.destroy();
+    this.highlightsPane.destroy();
+    if (this.debounceTimer != null) window.clearTimeout(this.debounceTimer);
+  }
+
   isOpen(): boolean {
     return this.expanded;
   }

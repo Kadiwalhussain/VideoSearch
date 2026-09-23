@@ -38,6 +38,42 @@ const sessionHighlights = new Map<string, VideoHighlight[]>();
 const sessionScreenshots = new Map<string, VideoScreenshot[]>();
 const commentJobs = new Map<string, Promise<void>>();
 const indexingJobs = new Map<string, Promise<VideoIndex | null>>();
+/**
+ * Heavy per-video data (transcript, embeddings, topics, mood, chat) is kept
+ * for the last few videos only, so a long watch session never grows the tab.
+ * Marks/notes/shots are persisted in their stores and reload on mount, so
+ * their in-memory copies are held for the active video alone.
+ */
+const MAX_RECENT_VIDEOS = 3;
+const recentVideos: string[] = [];
+
+function touchRecentVideo(videoId: string): void {
+  const at = recentVideos.indexOf(videoId);
+  if (at >= 0) recentVideos.splice(at, 1);
+  recentVideos.push(videoId);
+  if (recentVideos.length > MAX_RECENT_VIDEOS) {
+    recentVideos.splice(0, recentVideos.length - MAX_RECENT_VIDEOS);
+  }
+  // Sweep every key, not just the evicted one: a job for a video we already
+  // left can finish late and re-add its entry.
+  const keep = new Set(recentVideos);
+  const sweep = (map: Map<string, unknown>, ids: Set<string>) => {
+    for (const id of [...map.keys()]) if (!ids.has(id)) map.delete(id);
+  };
+  for (const map of [
+    sessionIndex,
+    sessionSegments,
+    sessionTopics,
+    sessionComments,
+    sessionChat,
+  ] as Map<string, unknown>[]) {
+    sweep(map, keep);
+  }
+  const current = new Set([videoId]);
+  sweep(sessionHighlights, current);
+  sweep(sessionScreenshots, current);
+}
+
 /** Avoid re-importing the same YouTube playlist in one tab session */
 const importedYtPlaylists = new Set<string>();
 let chatBusy = false;
@@ -46,15 +82,17 @@ let timelineReady = false;
 async function ensureTopics(
   videoId: string,
   index: VideoIndex,
-  panel: SearchPanel,
-  force = false
+  panel: SearchPanel
 ): Promise<{
   topics: VideoTopic[];
   source: "chapters" | "llm" | "local" | "mixed";
 }> {
-  if (!force && sessionTopics.has(videoId)) {
-    return sessionTopics.get(videoId)!;
-  }
+  // Deliberately not cached on videoId alone: this only runs once per real
+  // video mount (mountPanel bails out early for re-renders of the same
+  // still-open video), so always recomputing here means revisiting a video
+  // you left and came back to re-checks for official YouTube chapters and
+  // re-derives topics, instead of replaying whatever this tab happened to
+  // cache the first time it saw the video.
 
   // Soft progress only — SearchPanel keeps search unlocked once index exists
   panel.setStatus({
@@ -526,6 +564,9 @@ async function paintHighlights(
   panel: SearchPanel,
   list?: VideoHighlight[]
 ): Promise<void> {
+  // A save that finishes after the user moved on (e.g. note popup still open
+  // during navigation) is already persisted — just don't paint it here.
+  if (activeVideoId !== videoId || activePanel !== panel) return;
   const items = list ?? sessionHighlights.get(videoId) ?? [];
   sessionHighlights.set(videoId, items);
   panel.setHighlights(items);
@@ -569,6 +610,7 @@ async function loadHighlightsForVideo(
     const { loadScreenshots } = await import("../zx/screenshotStore");
     const items = await loadHighlights(videoId);
     const shots = await loadScreenshots(videoId);
+    if (activeVideoId !== videoId || activePanel !== panel) return;
     sessionScreenshots.set(videoId, shots);
     panel.setScreenshots(shots);
     await paintHighlights(videoId, panel, items);
@@ -690,6 +732,19 @@ async function captureFrameNow(
     };
 
     // 3) Optimistic UI — open Notes + append card immediately (no full reload)
+    if (activeVideoId !== videoId || activePanel !== panel) {
+      // Navigated away while the popup was open: still keep the shot
+      await saveScreenshot(shot);
+      await addHighlight(videoId, {
+        startTime: frame.videoTime,
+        endTime: frame.videoTime + 2.5,
+        note: note || "Frame capture",
+        screenshotId: shotId,
+        color: "#38bdf8",
+      });
+      await flushSyncToVault(videoId, panel);
+      return;
+    }
     panel.openHighlightsTab();
     const prev = sessionScreenshots.get(videoId) ?? [];
     const nextShots = [...prev.filter((s) => s.id !== shotId), shot].sort(
@@ -713,7 +768,6 @@ async function captureFrameNow(
         screenshotId: shotId,
         color: "#38bdf8",
       });
-      sessionHighlights.set(videoId, list);
       await paintHighlights(videoId, panel, list);
       // Push to cloud + website vault immediately
       await flushSyncToVault(videoId, panel);
@@ -1530,7 +1584,7 @@ async function indexVideo(
     const index = sessionIndex.get(videoId)!;
     const segs = sessionSegments.get(videoId);
     if (segs?.length) panel.setTranscript(segs);
-    const { topics, source } = await ensureTopics(videoId, index, panel, false);
+    const { topics, source } = await ensureTopics(videoId, index, panel);
     panel.setStatus(readyStatus(index, true, topics, source));
     return index;
   }
@@ -1608,12 +1662,7 @@ async function indexVideo(
       );
 
       if (force) sessionTopics.delete(videoId);
-      const { topics, source } = await ensureTopics(
-        videoId,
-        index,
-        panel,
-        force
-      );
+      const { topics, source } = await ensureTopics(videoId, index, panel);
       // Re-apply ready with real topics (does not re-lock search)
       panel.setStatus(readyStatus(index, fromCache, topics, source));
       return index;
@@ -1964,6 +2013,16 @@ if (typeof window !== "undefined" && !(window as Window & { __vsaNetHook?: boole
   window.addEventListener("offline", refreshNet);
 }
 
+/** Drop the current panel and stop its loops so the old video's data can be freed. */
+function destroyActivePanel(): void {
+  try {
+    activePanel?.destroy();
+  } catch (err) {
+    console.warn(LOG, "panel destroy failed", err);
+  }
+  activePanel = null;
+}
+
 function mountPanel(videoId: string): void {
   try {
     const existing = document.getElementById(ROOT_ID);
@@ -1988,7 +2047,7 @@ function mountPanel(videoId: string): void {
     }
 
     existing?.remove();
-    activePanel = null;
+    destroyActivePanel();
 
     injectSearchPanelStyles();
 
@@ -2138,15 +2197,16 @@ function mountPanel(videoId: string): void {
       onSettingsSaved: () => {
         // Clear topic caches so LLM re-runs with new key
         sessionTopics.delete(videoId);
-        void chrome.storage.local.remove(`vsa_topics_${videoId}`);
+        void import("../topics/llmTopics").then((m) =>
+          m.clearCachedTopics(videoId)
+        );
         const index = sessionIndex.get(videoId);
         if (index) {
           void (async () => {
             const { topics, source } = await ensureTopics(
               videoId,
               index,
-              panel,
-              true
+              panel
             );
             panel.setStatus(readyStatus(index, true, topics, source));
           })();
@@ -2252,6 +2312,7 @@ function mountPanel(videoId: string): void {
 
     activePanel = panel;
     activeVideoId = videoId;
+    touchRecentVideo(videoId);
 
     wrap.appendChild(panel.root);
     wrap.classList.add("is-collapsed");
@@ -2294,7 +2355,7 @@ function removePanel(force = false): void {
   stopGuestTicker();
   removeActionsSlot();
   document.getElementById(ROOT_ID)?.remove();
-  activePanel = null;
+  destroyActivePanel();
   activeVideoId = null;
   void import("../player/resumePoint").then((m) => m.stopResumeTracking());
   void import("../youtube/descriptionLinks")
@@ -2316,6 +2377,14 @@ function injectOrUpdate(): void {
     // Hard switch when the watch id changes — drop old mood/index UI state
     if (activeVideoId && activeVideoId !== videoId) {
       console.info(LOG, "Video changed", activeVideoId, "→", videoId);
+      // Blur fires the note's save handler, which is bound to the old id
+      const focused = document.activeElement;
+      if (
+        focused instanceof HTMLElement &&
+        activePanel?.root.contains(focused)
+      ) {
+        focused.blur();
+      }
       // Cancel in-flight comment jobs for old id by clearing map
       commentJobs.clear();
       void import("../cloud/cloudSync").then(({ cancelAutoSync }) => {
@@ -2329,7 +2398,7 @@ function injectOrUpdate(): void {
       }
       removeActionsSlot();
       document.getElementById(ROOT_ID)?.remove();
-      activePanel = null;
+      destroyActivePanel();
       activeVideoId = null;
     }
     mountPanel(videoId);
@@ -2345,12 +2414,25 @@ function rootMissing(): boolean {
   return !root || !root.isConnected;
 }
 
+/**
+ * YouTube swaps videos without a page load, and our root (docked in the
+ * header or on <html> when open) usually survives that. The panel's handlers
+ * are bound to the id it was mounted for, so a stale root would show the old
+ * transcript/notes and save new notes to the old video.
+ */
+function videoChanged(): boolean {
+  const id = extractVideoId();
+  if (!id) return false;
+  const mounted = document.getElementById(ROOT_ID)?.getAttribute("data-video-id");
+  return id !== mounted || (activeVideoId !== null && id !== activeVideoId);
+}
+
 function ensureUi(): void {
   if (!isWatchPage()) {
     if (document.getElementById(ROOT_ID)) removePanel(true);
     return;
   }
-  if (rootMissing()) {
+  if (rootMissing() || videoChanged()) {
     injectOrUpdate();
     return;
   }
@@ -2370,7 +2452,7 @@ function runWatchShortcut(action: HotkeyAction): boolean {
   const now = Date.now();
   if (now < shortcutLockUntil) return false;
   shortcutLockUntil = now + 700;
-  if (rootMissing()) injectOrUpdate();
+  if (rootMissing() || videoChanged()) injectOrUpdate();
   const videoId = extractVideoId();
   const panel = activePanel;
   if (videoId && panel) {
@@ -2480,7 +2562,7 @@ function startWatchers(): void {
   // Persistent heartbeat — YouTube can detach our node after the first
   // 30s (the old boot interval used to give up). Never stop on a watch page.
   window.setInterval(() => {
-    if (activePanel?.isInputFocused()) return;
+    if (activePanel?.isInputFocused() && !videoChanged()) return;
     try {
       ensureUi();
     } catch (err) {
@@ -2525,6 +2607,18 @@ function startWatchers(): void {
   }
 
   injectOrUpdate();
+
+  // Storage housekeeping when the page is idle (never deletes user data)
+  const maintain = () => {
+    void import("../zx/videoIndexStore")
+      .then((m) => m.maintainVideoIndexes())
+      .catch(() => undefined);
+  };
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(maintain, { timeout: 10_000 });
+  } else {
+    window.setTimeout(maintain, 5000);
+  }
 }
 
 /** CRXJS loader may call this; side-effect boot also runs on import. */

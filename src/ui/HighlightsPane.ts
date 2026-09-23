@@ -152,7 +152,7 @@ export class HighlightsPane {
       <div class="vsa-hl-empty" hidden>
         <div class="vsa-hl-empty-ico" data-empty-ico></div>
         <strong>No marks yet</strong>
-        <p>Tap the red pen on the video, or Mark above. Notes stay on this device until you Save, Watch later, or add to a playlist.</p>
+        <p>Tap the red pen on the video, or Mark above. Marks, notes, and screenshots sync to your vault when you are signed in.</p>
       </div>
       <div class="vsa-hl-list" role="list"></div>
     `;
@@ -590,6 +590,13 @@ export class HighlightsPane {
       return `Saved here · not synced`;
     }
     return "Not synced yet";
+  }
+
+  destroy(): void {
+    if (this.syncTick != null) {
+      window.clearInterval(this.syncTick);
+      this.syncTick = null;
+    }
   }
 
   private startSyncTicker(): void {

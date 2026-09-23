@@ -42,6 +42,7 @@ import {
   corsOrigin,
   IS_PROD,
   MAX_SHOT_BYTES,
+  MAX_SHOTS_PER_VIDEO,
   MAX_SYNC_SHOTS,
   requireVideoId,
   safeShotId,
@@ -434,8 +435,10 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
   const list = [];
   const base = (apiBase || PUBLIC_API_BASE).replace(/\/$/, "");
 
-  const incoming = screenshots.slice(0, MAX_SYNC_SHOTS);
-  for (const raw of incoming) {
+  // Metadata (notes, times) for every shot; image bytes only for new ones,
+  // capped per request so a big backlog uploads over several syncs.
+  let imagesAccepted = 0;
+  for (const raw of screenshots.slice(0, MAX_SHOTS_PER_VIDEO)) {
     const shotId = safeShotId(raw?.id);
     if (!shotId) continue;
     raw.id = shotId;
@@ -445,13 +448,21 @@ async function processScreenshots(userId, videoId, screenshots, apiBase = PUBLIC
     let filKey = raw.filKey || prev?.filKey || "";
     let supabaseKey = raw.supabaseKey || prev?.supabaseKey || "";
     let backupPath = raw.backupPath || prev?.backupPath || "";
-    let dataUrl = raw.dataUrl || prev?.dataUrl || "";
+
+    const incomingData =
+      typeof raw.dataUrl === "string" && raw.dataUrl.startsWith("data:image")
+        ? raw.dataUrl
+        : "";
+    const isNewImage = Boolean(incomingData) && incomingData !== prev?.dataUrl;
+    const acceptImage = isNewImage && imagesAccepted < MAX_SYNC_SHOTS;
+    if (acceptImage) imagesAccepted += 1;
+    let dataUrl = acceptImage ? incomingData : prev?.dataUrl || "";
 
     if (isLocalImagePointer(imageUrl)) {
       imageUrl = isLocalImagePointer(prev?.imageUrl) ? "" : prev?.imageUrl || "";
     }
 
-    if (dataUrl && dataUrl.startsWith("data:image")) {
+    if (acceptImage) {
       let buffer = null;
       try {
         buffer = dataUrlToBuffer(dataUrl);
@@ -964,6 +975,17 @@ app.post("/api/vault/sync", authMiddleware, async (req, res) => {
       uploadedToR2: processed.uploaded,
       highlightCount: doc.highlights.length,
       screenshotCount: doc.screenshots.length,
+      // Shots whose image bytes the vault holds — the client stops resending these
+      storedShotIds: nextScreenshots
+        .filter(
+          (s) =>
+            (s.dataUrl && String(s.dataUrl).startsWith("data:")) ||
+            s.r2Key ||
+            s.filKey ||
+            s.supabaseKey ||
+            s.backupPath
+        )
+        .map((s) => String(s.id)),
       sourceLinkCount: linkN,
       sourceLinks: (doc.sourceLinks || []).filter(
         (l) => l && l.url && isUsefulVaultSource(l.url, l.kind)

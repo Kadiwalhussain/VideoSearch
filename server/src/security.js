@@ -299,7 +299,10 @@ export function aiRateLimit() {
   });
 }
 
+/** New screenshot images accepted per sync request (the rest wait for the next one). */
 export const MAX_SYNC_SHOTS = 40;
+/** Screenshots kept per video (metadata + notes). */
+export const MAX_SHOTS_PER_VIDEO = 2000;
 export const MAX_SHOT_BYTES = 8 * 1024 * 1024;
 
 export function generateResetCode() {

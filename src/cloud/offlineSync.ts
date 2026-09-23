@@ -541,7 +541,7 @@ export async function flushOfflineQueue(
     const { listLocalHighlightVideoIds, loadHighlights } = await import(
       "../zx/highlightsStore"
     );
-    const { loadAllScreenshots, loadScreenshots } = await import(
+    const { screenshotCountsByVideo, loadScreenshots } = await import(
       "../zx/screenshotStore"
     );
 
@@ -554,10 +554,9 @@ export async function flushOfflineQueue(
         if (await isPinnedToVault(id)) idSet.add(id);
       }
       try {
-        for (const s of await loadAllScreenshots()) {
-          if (s.videoId && (await isPinnedToVault(s.videoId))) {
-            idSet.add(s.videoId);
-          }
+        // One pin check per video, from index keys — never per image
+        for (const id of (await screenshotCountsByVideo()).keys()) {
+          if (!idSet.has(id) && (await isPinnedToVault(id))) idSet.add(id);
         }
       } catch {
         /* ignore */
@@ -619,6 +618,7 @@ export async function flushOfflineQueue(
           synced += 1;
           await dequeueVideoSync(videoId);
         } else if (
+          result.retryLater ||
           /offline|Failed to fetch|NetworkError|Cannot reach|device/i.test(
             result.message
           )

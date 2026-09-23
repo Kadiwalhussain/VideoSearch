@@ -76,6 +76,48 @@ export async function loadScreenshots(
   return list;
 }
 
+/**
+ * Screenshot count per video, read from the videoId index keys only — the
+ * JPEG payloads are never deserialized, so this stays cheap with thousands
+ * of shots. Use it for "which videos / how many" questions instead of
+ * loadAllScreenshots.
+ */
+export async function screenshotCountsByVideo(): Promise<Map<string, number>> {
+  const db = await openDb();
+  try {
+    return await new Promise<Map<string, number>>((resolve, reject) => {
+      const counts = new Map<string, number>();
+      const tx = db.transaction(STORE, "readonly");
+      const req = tx.objectStore(STORE).index("videoId").openKeyCursor();
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (!cur) return resolve(counts);
+        const id = String(cur.key);
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+        cur.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Number of shots for one video without loading any image data. */
+export async function countScreenshots(videoId: string): Promise<number> {
+  const db = await openDb();
+  try {
+    return await new Promise<number>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readonly");
+      const req = tx.objectStore(STORE).index("videoId").count(videoId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
 export async function loadAllScreenshots(): Promise<VideoScreenshot[]> {
   const db = await openDb();
   const list = await new Promise<VideoScreenshot[]>((resolve, reject) => {
