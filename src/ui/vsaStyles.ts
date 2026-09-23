@@ -98,9 +98,9 @@ export const VSA_STYLES = `
   max-width: none;
 }
 /*
- * Collapsed pill always lives on <html> (fixed), never inside YouTube's
- * Like/Share row — YouTube rebuilds that DOM and was destroying our button.
- * JS sets top/left via placeCollapsed(); these are the fallback coords.
+ * Collapsed pill stays on <html> (fixed). A spacer (#videosearch-ai-actions-slot)
+ * in YouTube's #top-row holds the gap so Like / Share / Ask do not sit under it.
+ * JS sets top/left via placeCollapsed().
  */
 #videosearch-ai-root.is-collapsed {
   position: fixed !important;
@@ -528,6 +528,59 @@ export const VSA_STYLES = `
   line-height: 1.55;
   color: var(--vsa-text);
 }
+#videosearch-ai-panel .vsa-answer-head {
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--vsa-faint);
+  margin-bottom: 8px;
+}
+#videosearch-ai-panel .vsa-md-p { margin: 0 0 8px; }
+#videosearch-ai-panel .vsa-md-p:last-child { margin-bottom: 0; }
+#videosearch-ai-panel .vsa-md-h {
+  margin: 0 0 8px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--vsa-text);
+  line-height: 1.3;
+}
+#videosearch-ai-panel .vsa-md-h1 { font-size: 15px; }
+#videosearch-ai-panel .vsa-md-h2 { font-size: 13.5px; }
+#videosearch-ai-panel .vsa-md-h3 { font-size: 12.5px; color: var(--vsa-muted); }
+#videosearch-ai-panel .vsa-md-ul,
+#videosearch-ai-panel .vsa-md-ol {
+  margin: 0 0 8px;
+  padding-left: 1.2em;
+}
+#videosearch-ai-panel .vsa-md-ul li,
+#videosearch-ai-panel .vsa-md-ol li { margin: 4px 0; }
+#videosearch-ai-panel .vsa-md strong { font-weight: 750; color: #fff; }
+#videosearch-ai-panel .vsa-md em { font-style: italic; }
+#videosearch-ai-panel .vsa-md-code {
+  font-family: var(--vsa-mono);
+  font-size: 11px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid var(--vsa-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+#videosearch-ai-panel .vsa-md-pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid var(--vsa-border);
+  overflow-x: auto;
+}
+#videosearch-ai-panel .vsa-md-pre code {
+  font-family: var(--vsa-mono);
+  font-size: 11px;
+  white-space: pre;
+}
+#videosearch-ai-panel .vsa-md-a { color: var(--vsa-info); text-decoration: underline; }
+#videosearch-ai-panel .vsa-chat-bubble-text.vsa-md,
+#videosearch-ai-panel .vsa-answer-body.vsa-md { display: block; }
 #videosearch-ai-panel .vsa-results {
   display: flex;
   flex-direction: column;

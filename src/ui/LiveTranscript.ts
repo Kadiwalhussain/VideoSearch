@@ -21,6 +21,8 @@ export class LiveTranscript {
   private onAskProviderChange: ((id: string) => void) | null = null;
   private raf = 0;
   private bound = false;
+  /** Set once the owning panel is gone; late setSegments calls are ignored */
+  private destroyed = false;
   private videoEl: HTMLVideoElement | null = null;
   private userScrolling = false;
   private scrollTimer = 0;
@@ -149,6 +151,7 @@ export class LiveTranscript {
   }
 
   setSegments(segments: RawCaptionSegment[]): void {
+    if (this.destroyed) return;
     this.segments = segments;
     this.activeIndex = -1;
     this.listEl.innerHTML = "";
@@ -292,7 +295,10 @@ export class LiveTranscript {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.detachVideoSync();
+    this.segments = [];
+    this.listEl.replaceChildren();
   }
 
   private applyFilter(): void {

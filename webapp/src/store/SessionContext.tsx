@@ -7,12 +7,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { fetchMe, vaultAuth, type AuthMode } from "../api/auth";
+import { applyVaultToken, fetchMe, vaultAuth, type AuthMode } from "../api/auth";
 import {
   clearSession,
   loadSession,
   saveSession,
   defaultApiUrl,
+  ApiUnreachableError,
 } from "../api/client";
 import type { Session, VaultUser } from "../types";
 
@@ -30,6 +31,11 @@ type SessionCtx = {
       code?: string;
     }
   ) => Promise<void>;
+  applyToken: (opts: {
+    token: string;
+    email?: string;
+    displayName?: string;
+  }) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
   updateUser: (u: Partial<VaultUser>) => void;
@@ -56,7 +62,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         saveSession(next);
         setSession(next);
       })
-      .catch(() => {
+      .catch((e) => {
+        // Network/server unreachable is not proof the token is invalid —
+        // keep the cached session so a wifi blip doesn't force a re-login.
+        if (e instanceof ApiUnreachableError) return;
         clearSession();
         setSession(null);
       })
@@ -74,6 +83,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     ) => {
       const s = await vaultAuth(mode, { ...opts, projectUrl: apiUrl });
+      setSession(s);
+      setApiUrl(s.url);
+    },
+    [apiUrl]
+  );
+
+  const applyToken = useCallback(
+    async (opts: { token: string; email?: string; displayName?: string }) => {
+      const s = await applyVaultToken({ ...opts, projectUrl: apiUrl });
       setSession(s);
       setApiUrl(s.url);
     },
@@ -109,11 +127,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       apiUrl,
       setApiUrl,
       login,
+      applyToken,
       logout,
       refreshUser,
       updateUser,
     }),
-    [session, loading, apiUrl, login, logout, refreshUser, updateUser]
+    [session, loading, apiUrl, login, applyToken, logout, refreshUser, updateUser]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

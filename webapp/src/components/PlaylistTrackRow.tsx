@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import {
   Bookmark,
+  Check,
   Clock,
   ExternalLink,
   StickyNote,
@@ -38,7 +39,9 @@ export function PlaylistTrackRow({
   const { libraryAction } = useVault();
   const { toast } = useDialog();
   const [busy, setBusy] = useState(false);
+  const [ticking, setTicking] = useState(false);
   const p = row.payload || {};
+  const done = Boolean(p.completed);
   const title = displayTitle(row);
   const marks = (p.highlights || []).length;
   const shots = (p.screenshots || []).length;
@@ -62,13 +65,33 @@ export function PlaylistTrackRow({
     }
   };
 
+  const toggleDone = async () => {
+    setTicking(true);
+    try {
+      await libraryAction(row.video_id, done ? "uncomplete" : "complete");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not update", "error");
+    } finally {
+      setTicking(false);
+    }
+  };
+
   return (
     <article
-      className={`pl-track glass-card ${featured ? "is-featured" : ""}`}
+      className={`pl-track glass-card ${featured ? "is-featured" : ""} ${
+        done ? "is-done" : ""
+      }`}
     >
-      <div className="pl-track-index" aria-hidden>
-        {index}
-      </div>
+      <button
+        type="button"
+        className={`pl-track-tick ${done ? "is-done" : ""}`}
+        disabled={ticking}
+        aria-pressed={done}
+        title={done ? "Watched · click to mark as not watched" : "Mark as watched"}
+        onClick={() => void toggleDone()}
+      >
+        {done ? <Check size={14} strokeWidth={3} /> : <span aria-hidden>{index}</span>}
+      </button>
       <Link to={`/video/${row.video_id}`} className="pl-track-thumb">
         <img src={ytThumb(row.video_id)} alt="" loading="lazy" />
       </Link>
@@ -80,6 +103,11 @@ export function PlaylistTrackRow({
           {meta.join(" · ") || "In this playlist"}
         </p>
         <div className="pl-track-flags">
+          {done ? (
+            <span className="pl-flag is-done">
+              <Check size={11} /> Watched
+            </span>
+          ) : null}
           {p.watchLater ? (
             <span className="pl-flag">
               <Clock size={11} /> Later

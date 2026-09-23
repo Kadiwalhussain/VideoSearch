@@ -46,6 +46,15 @@ export async function saveCachedTopics(
   }
 }
 
+/** Forget one video's topics (e.g. after the LLM key changes). */
+export async function clearCachedTopics(videoId: string): Promise<void> {
+  try {
+    await chrome.storage.local.remove(TOPIC_CACHE_PREFIX + videoId);
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Ask the model for many main topics (budget scales with length).
  * Returns null if no key / request failed (caller falls back to local).

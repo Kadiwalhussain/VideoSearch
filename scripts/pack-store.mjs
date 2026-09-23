@@ -12,7 +12,7 @@ import sharp from "sharp";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.join(root, "dist");
 const listing = path.join(root, "store", "listing");
-const version = "1.1.0";
+const version = "2.0.0";
 
 if (!existsSync(path.join(dist, "manifest.json"))) {
   console.error("dist/manifest.json missing — run npm run build first");

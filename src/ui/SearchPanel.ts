@@ -9,8 +9,8 @@ import type { RawCaptionSegment, SearchResult } from "../types/schema";
 import type { VideoTopic } from "../topics/extractTopics";
 import type { SentimentReport } from "../comments/analyzeSentiment";
 import type { ChatMessage } from "../qa/chatRag";
-import type { VideoHighlight } from "../storage/highlightsStore";
-import type { VideoScreenshot } from "../storage/screenshotStore";
+import type { VideoHighlight } from "../zx/highlightsStore";
+import type { VideoScreenshot } from "../zx/screenshotStore";
 import {
   DEFAULT_LLM_SETTINGS,
   loadLlmSettings,
@@ -37,6 +37,7 @@ import { VSA_STYLES } from "./vsaStyles";
 import { iconHtml, iconSvg, type IconName } from "./icons";
 import { isKeepableCcSource } from "../youtube/ccSources";
 import { isUsefulSourceLink } from "../youtube/descriptionLinks";
+import { renderMarkdownWithTimes } from "./renderMarkdown";
 
 export type PanelStatus =
   | { kind: "idle" }
@@ -723,6 +724,13 @@ export class SearchPanel {
       el instanceof HTMLInputElement ||
       el instanceof HTMLTextAreaElement
     );
+  }
+
+  /** Stop per-panel loops/timers so a replaced panel can be collected. */
+  destroy(): void {
+    this.liveTranscript.destroy();
+    this.highlightsPane.destroy();
+    if (this.debounceTimer != null) window.clearTimeout(this.debounceTimer);
   }
 
   isOpen(): boolean {
@@ -1917,11 +1925,11 @@ export class SearchPanel {
     const head = document.createElement("div");
     head.className = "vsa-answer-head";
     head.textContent = usedLlm
-      ? "Answer · click green times to jump"
-      : "Answer · click green times to jump";
+      ? "AI · grounded in captions"
+      : "Local sources · click a time to jump";
     const body = document.createElement("div");
     body.className = "vsa-answer-body";
-    fillAnswerWithTimeLinks(body, answer, (sec) => this.handlers.onSeek(sec));
+    renderMarkdownWithTimes(body, answer, (sec) => this.handlers.onSeek(sec));
     this.answerEl.append(head, body);
   }
 
@@ -2210,85 +2218,8 @@ function formatTimestamp(seconds: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
-/**
- * Parse m:ss / h:mm:ss (optionally wrapped in () [] or after "at ") into seconds.
- */
-function parseTimestampToken(token: string): number | null {
-  const m = token.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-  if (!m) return null;
-  if (m[3] != null) {
-    return (
-      parseInt(m[1], 10) * 3600 +
-      parseInt(m[2], 10) * 60 +
-      parseInt(m[3], 10)
-    );
-  }
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-}
-
-/**
- * Render answer text with clickable timestamp pills.
- * Matches: (3:42), [1:05:30], 3:42, at 12:05
- */
-function fillAnswerWithTimeLinks(
-  container: HTMLElement,
-  answer: string,
-  onSeek: (seconds: number) => void
-): void {
-  // Global regex — capture full timestamp tokens
-  const re =
-    /(\bat\s+)?(\[|\()?(\d{1,2}:\d{2}(?::\d{2})?)(\]|\))?/gi;
-
-  let last = 0;
-  let match: RegExpExecArray | null;
-  const text = answer;
-
-  while ((match = re.exec(text)) !== null) {
-    const full = match[0];
-    const timeStr = match[3];
-    const seconds = parseTimestampToken(timeStr);
-    if (seconds == null) continue;
-
-    // Skip bare numbers that look like ratios if no colon structure — already have colon
-    // Avoid matching version-like if needed later
-
-    if (match.index > last) {
-      container.appendChild(
-        document.createTextNode(text.slice(last, match.index))
-      );
-    }
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "vsa-time-link";
-    btn.textContent = timeStr;
-    btn.title = `Jump to ${timeStr}`;
-    let lastJumpAt = 0;
-    const jump = (e: Event) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const now = Date.now();
-      if (now - lastJumpAt < 350) return;
-      lastJumpAt = now;
-      console.info("[VideoSearch AI] Answer timestamp click →", timeStr, seconds);
-      onSeek(seconds);
-    };
-    btn.addEventListener("click", jump);
-    btn.addEventListener("pointerup", jump);
-    container.appendChild(btn);
-
-    last = match.index + full.length;
-  }
-
-  if (last < text.length) {
-    container.appendChild(document.createTextNode(text.slice(last)));
-  }
-
-  // If no timestamps found, still show plain text
-  if (!container.childNodes.length) {
-    container.textContent = answer;
-  }
-}
+// unused — answers use renderMarkdownWithTimes() in renderMarkdown.ts
+// function parseTimestampToken / fillAnswerWithTimeLinks
 
 function commentInitials(author: string): string {
   const parts = (author || "?").trim().split(/[\s@._-]+/).filter(Boolean);

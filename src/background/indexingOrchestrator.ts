@@ -11,7 +11,7 @@ import { embedChunks } from "../embedding/embedChunks";
 import {
   getValidVideoIndex,
   saveVideoIndex,
-} from "../storage/videoIndexStore";
+} from "../zx/videoIndexStore";
 import {
   fetchTranscript,
   NoCaptionsError,

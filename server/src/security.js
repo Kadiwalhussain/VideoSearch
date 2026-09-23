@@ -135,6 +135,62 @@ export function corsOrigin(origin, cb) {
   cb(null, false);
 }
 
+/**
+ * Inline <script> hashes from the built SPA, so CSP can stay on 'self'
+ * without ever needing 'unsafe-inline'. Filled in at boot by configureCsp().
+ */
+let inlineScriptHashes = [];
+let cspValue = "";
+
+const IMG_HOSTS = [
+  "https://i.ytimg.com",
+  "https://*.ytimg.com",
+  "https://*.ggpht.com",
+  "https://*.googleusercontent.com",
+  "https://*.r2.dev",
+  "https://*.r2.cloudflarestorage.com",
+  "https://*.supabase.co",
+];
+
+function buildCsp() {
+  const script = ["'self'", ...inlineScriptHashes].join(" ");
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'self'",
+    "form-action 'self'",
+    `script-src ${script}`,
+    // React sets element style attributes; inline <style> stays blocked by
+    // script-src being strict, and inline CSS is a far weaker vector.
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    `img-src 'self' data: blob: ${IMG_HOSTS.join(" ")}`,
+    `connect-src 'self' ${IMG_HOSTS.join(" ")}`,
+    "worker-src 'self' blob:",
+    "media-src 'self' blob: data:",
+  ].join("; ");
+}
+
+/**
+ * Hash every inline script in the built index.html so the CSP keeps working
+ * when the SPA's pre-paint theme script changes.
+ */
+export function configureCsp(indexHtml) {
+  const found = [];
+  const re = /<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = re.exec(String(indexHtml || ""))) !== null) {
+    const body = m[1];
+    if (!body.trim()) continue;
+    const digest = crypto.createHash("sha256").update(body, "utf8").digest("base64");
+    found.push(`'sha256-${digest}'`);
+  }
+  inlineScriptHashes = found;
+  cspValue = buildCsp();
+  return found.length;
+}
+
 export function securityHeaders(req, res, next) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -145,6 +201,18 @@ export function securityHeaders(req, res, next) {
     "camera=(), microphone=(), geolocation=()"
   );
   res.setHeader("X-DNS-Prefetch-Control", "off");
+  res.setHeader("Content-Security-Policy", cspValue || buildCsp());
+
+  const https =
+    req.secure ||
+    String(req.get("x-forwarded-proto") || "").split(",")[0].trim() === "https";
+  if (IS_PROD && https) {
+    res.setHeader(
+      "Strict-Transport-Security",
+      "max-age=15552000; includeSubDomains"
+    );
+  }
+
   if (req.path.startsWith("/api/auth")) {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Pragma", "no-cache");
@@ -231,7 +299,10 @@ export function aiRateLimit() {
   });
 }
 
+/** New screenshot images accepted per sync request (the rest wait for the next one). */
 export const MAX_SYNC_SHOTS = 40;
+/** Screenshots kept per video (metadata + notes). */
+export const MAX_SHOTS_PER_VIDEO = 2000;
 export const MAX_SHOT_BYTES = 8 * 1024 * 1024;
 
 export function generateResetCode() {

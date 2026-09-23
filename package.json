@@ -1,8 +1,8 @@
 {
   "name": "videosearch-ai",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Search what was said, not just what was titled — local semantic video transcript search",
+  "description": "Search what was said, not just what was titled \u2014 local semantic video transcript search",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,10 +11,14 @@
     "preview": "vite preview",
     "studio:dev": "npm run dev --prefix webapp",
     "studio:build": "npm run build --prefix webapp",
-    "vault": "npm run start:always --prefix server"
+    "vault": "npm run start:always --prefix server",
+    "tester:link": "bash tester/link.sh",
+    "test": "esbuild src/topics/topics.test.ts --bundle --platform=node --format=esm --outfile=.test-build/topics.test.mjs && node --test .test-build/topics.test.mjs",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.28",
+    "@playwright/test": "^1.63.0",
     "@types/chrome": "^0.0.287",
     "typescript": "^5.7.2",
     "vite": "^5.4.11"
